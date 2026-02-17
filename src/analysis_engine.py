@@ -13,41 +13,96 @@ class AnalysisEngine:
         Runs Slither analysis on the given repository path.
         Handles solc version mismatches by installing and switching versions.
         """
+        import traceback
         if not os.path.exists(repo_path):
             print(f"Error: Path {repo_path} does not exist.")
             return None
 
+        print(f"Starting Slither analysis on: {repo_path}")
+        original_cwd = os.getcwd()
         try:
-            # Try initializing Slither directly
-            slither = Slither(repo_path)
-            return slither
-        except Exception as e:
-            error_msg = str(e)
-            print(f"Slither initialization failed: {error_msg}")
+            os.chdir(repo_path)
+            print(f"Changed CWD to {os.getcwd()}")
             
-            # Check for solc version error
-            # Slither often throws error related to solc version if it doesn't match
-            # e.g., "Solc version 0.8.0 is not installed" or similar
-            # Or sometimes it just fails to compile.
-            
-            # Let's try to detect the required version from the files in the repo
-            version = self._detect_solc_version(repo_path)
-            if version:
-                print(f"Detected required solc version: {version}")
-                if self._switch_solc_version(version):
-                    print("Retrying Slither analysis...")
-                    try:
-                        slither = Slither(repo_path)
-                        return slither
-                    except Exception as e2:
-                        print(f"Retry failed: {e2}")
+            # Check solc version
+            try:
+                res = subprocess.run(["solc", "--version"], capture_output=True, text=True)
+                print(f"Current solc version: {res.stdout.strip()}")
+            except Exception as e:
+                print(f"Could not check solc version: {e}")
+
+            # Try initializing Slither directly with '.'
+            try:
+                slither = Slither('.')
+                print("Slither initialized successfully on first try.")
+                return slither
+            except Exception as e:
+                error_msg = str(e)
+                print(f"Slither initialization failed: {error_msg}")
+                
+                # Check for solc version error but also try fallback to per-file compilation
+                # if it was a directory compilation error.
+                
+                # Fallback: try per-file if it's a directory
+                # This works around CryticCompile/SoLC issues with raw directories
+                if os.path.exists('Vulnerable.sol') or any(f.endswith('.sol') for f in os.listdir('.')):
+                     print("Attempting per-file compilation fallback...")
+                     sol_files = [f for f in os.listdir('.') if f.endswith('.sol')]
+                     combined_slither = None
+                     for f in sol_files:
+                         try:
+                             print(f"Compiling {f}...")
+                             s = Slither(f)
+                             if combined_slither is None:
+                                 combined_slither = s
+                             else:
+                                 combined_slither.contracts.extend(s.contracts)
+                         except Exception as ex:
+                             print(f"Failed to compile {f}: {ex}")
+                     
+                     if combined_slither:
+                         print("Per-file compilation successful.")
+                         return combined_slither
+
+                # Check for solc version error (original logic)
+                version = self._detect_solc_version('.')
+                if version:
+                    print(f"Detected required solc version: {version}")
+                    if self._switch_solc_version(version):
+                        print("Retrying Slither analysis...")
+                        
+                        try:
+                            slither = Slither('.')
+                            print("Slither initialized successfully after version switch.")
+                            return slither
+                        except Exception as e2:
+                             # Try per-file compilation AGAIN after version switch
+                             print(f"Retry failed: {e2}. Trying per-file fallback with new version...")
+                             sol_files = [f for f in os.listdir('.') if f.endswith('.sol')]
+                             combined_slither = None
+                             for f in sol_files:
+                                 try:
+                                     s = Slither(f)
+                                     if combined_slither is None:
+                                         combined_slither = s
+                                     else:
+                                         combined_slither.contracts.extend(s.contracts)
+                                 except Exception as ex:
+                                     print(f"Failed to compile {f}: {ex}")
+                            
+                             if combined_slither:
+                                 return combined_slither
+                                 
+                             return None
+                    else:
+                        print("Failed to switch solc version.")
                         return None
                 else:
-                    print("Failed to switch solc version.")
+                    print("Could not detect solc version from files.")
                     return None
-            else:
-                print("Could not detect solc version from files.")
-                return None
+        finally:
+            os.chdir(original_cwd)
+            print(f"Restored CWD to {original_cwd}")
 
     def _detect_solc_version(self, repo_path: str) -> Optional[str]:
         """

@@ -1,9 +1,9 @@
 import os
 import sys
-from analysis_engine import AnalysisEngine
-
 # Add src to sys.path to ensure imports work if run from root
-sys.path.append(os.path.join(os.getcwd(), 'src'))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+
+from analysis_engine import AnalysisEngine
 
 def test_analysis_engine():
     # Point to the specific file for testing on host without framework

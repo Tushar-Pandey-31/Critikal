@@ -1,0 +1,24 @@
+# Environment
+.env
+
+# Data directories
+data/
+temp_solidity/
+
+# Debug files
+debug_*.py
+logs.txt
+
+# Python cache
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

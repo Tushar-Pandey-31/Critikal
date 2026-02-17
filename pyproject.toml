@@ -8,8 +8,16 @@ packages = [{include = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"
+ipython = "^8.12.0"
 slither-analyzer = "^0.10.0"
 networkx = "^3.0"
+langchain-chroma = "^0.1.0"
+chromadb = "^0.4.0"
+pypdf = "^3.0.0"
+sentence-transformers = "^2.2.0"
+langchain-huggingface = "^0.0.1"
+python-dotenv = "^1.0.0"
+langchain-community = "^0.0.1"
 
 [build-system]
 requires = ["poetry-core"]
