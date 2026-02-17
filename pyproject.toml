@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "penteam"
+version = "0.1.0"
+description = "Penteam: AI-Assisted Smart Contract Security System"
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+packages = [{include = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+slither-analyzer = "^0.10.0"
+networkx = "^3.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

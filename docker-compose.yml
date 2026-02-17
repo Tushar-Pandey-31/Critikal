@@ -1,0 +1,8 @@
+services:
+  penteam:
+    build: .
+    volumes:
+      - .:/app
+    tty: true
+    stdin_open: true
+    command: /bin/bash
