@@ -40,8 +40,15 @@ class GraphBuilder:
         # Story 3.2: Classify external calls for reentrancy modeling
         self._classify_external_calls(slither_obj)
         
+        # Story 3.4: Combine everything for Deterministic Reentrancy Rule
+        self._detect_reentrancy_risks()
+        
         self._detect_privileged_roles()
         self._detect_unprotected_mutators()
+        
+        # Story 3.5: Privilege Propagation
+        self._enrich_state_variable_reverse_mapping()
+        self._detect_privilege_escalation()
 
 
     def _add_contract_node(self, contract):
@@ -678,8 +685,19 @@ class GraphBuilder:
             for cond in conditions:
                 cv = cond.get("compared_variable", "")
                 if cv:
-                    underlying_var = cv
-                    break
+                    # Search for the state variable node that matches this name in this contract
+                    var_id = f"{contract_name}::{cv}"
+                    if self.graph.has_node(var_id):
+                        underlying_var = var_id
+                    else:
+                        # Try searching in inherited contracts
+                        for node_idx, data in self.graph.nodes(data=True):
+                            if data.get("type") == "state_variable" and data.get("name") == cv:
+                                # Simple heuristic: if it matches name, use it
+                                underlying_var = node_idx
+                                break
+                    if underlying_var: break
+            
             # Fallback: use accessed state variables
             if not underlying_var:
                 state_vars = node_data.get("accesses_state_variables", [])
@@ -1069,6 +1087,117 @@ class GraphBuilder:
             node_data["external_call_nodes"] = [ev[3] for ev in external_call_events]
             node_data["external_call_type"] = sorted(list(set(ev[2] for ev in external_call_events)))
             node_data["state_write_after_external_call"] = state_write_after
+
+    # ================================================================
+    # Story 3.4 — Deterministic Reentrancy Rule
+    # ================================================================
+    def _detect_reentrancy_risks(self):
+        """
+        Combines structural properties to identify reentrancy-vulnerable functions.
+        
+        A function F is reentrancy-risk if:
+        1. reachable_from_external_entry == True (Attackable surface)
+        2. makes_external_call == True (Interactions)
+        3. propagated_state_variables not empty (Effects)
+        4. state_write_after_external_call == True (Structural Violation)
+        
+        Note: The user requested 'external_call_before_state_write', which is 
+        equivalent to our 'state_write_after_external_call'.
+        
+        Attaches:
+        - reentrancy_risk: bool
+        - reentrancy_risk_score: int
+        """
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            
+            is_reachable = node_data.get("reachable_from_external_entry", False)
+            makes_call = node_data.get("makes_external_call", False)
+            has_state_vars = len(node_data.get("propagated_state_variables", [])) > 0
+            has_violation = node_data.get("state_write_after_external_call", False)
+            
+            is_risk = is_reachable and makes_call and has_state_vars and has_violation
+            
+            score = 0
+            if is_risk:
+                # Base score for matching the structural vulnerability pattern
+                score = 10
+                # Increase score based on the number of state variables written (impact)
+                score += 2 * len(node_data.get("propagated_state_variables", []))
+            
+            node_data["reentrancy_risk"] = is_risk
+            node_data["reentrancy_risk_score"] = score
+
+    # ================================================================
+    # Story 3.5 — Privilege Propagation
+    # ================================================================
+    def _enrich_state_variable_reverse_mapping(self):
+        """
+        Populates state variables with reverse mappings: roles using them
+        and functions modifying them.
+        """
+        for var_id, var_data in self.graph.nodes(data=True):
+            if var_data.get("type") != "state_variable":
+                continue
+            
+            # Roles using this variable
+            roles_using = []
+            for contract_id, contract_data in self.graph.nodes(data=True):
+                if contract_data.get("type") == "contract":
+                    for role in contract_data.get("privileged_roles", []):
+                        if role.get("underlying_variable") == var_id:
+                            roles_using.append({
+                                "contract": contract_id,
+                                "role": role.get("role_name"),
+                                "modifier": role.get("modifier_name")
+                            })
+            
+            # Functions modifying this variable (propagated)
+            modifying_functions = []
+            for node_idx, node_data in self.graph.nodes(data=True):
+                if node_data.get("type") == "function":
+                    if var_id in node_data.get("propagated_state_variables", []):
+                        modifying_functions.append(node_idx)
+            
+            var_data["roles_using_variable"] = roles_using
+            var_data["functions_modifying_variable"] = modifying_functions
+
+    def _detect_privilege_escalation(self):
+        """
+        Flags variables and functions involved in privilege escalation risks.
+        """
+        # First, ensure all functions have the flag initialized to False
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") == "function":
+                node_data["can_escalate_privileges"] = False
+
+        for var_id, var_data in self.graph.nodes(data=True):
+            if var_data.get("type") != "state_variable":
+                continue
+            
+            roles_using = var_data.get("roles_using_variable", [])
+            modifiers = var_data.get("functions_modifying_variable", [])
+            
+            # Check if any unprotected mutator can modify this var
+            is_at_risk = False
+            risky_mutators_for_this_var = []
+            
+            if roles_using: # Only care if the variable controls a role
+                for func_id in modifiers:
+                    func_data = self.graph.nodes.get(func_id, {})
+                    if func_data.get("is_unprotected_mutator", False):
+                        is_at_risk = True
+                        risky_mutators_for_this_var.append(func_id)
+                        # Flag the function: it can escalate privileges because it modifies THIS var
+                        self.graph.nodes[func_id]["can_escalate_privileges"] = True
+            
+            if is_at_risk:
+                var_data["privilege_escalation_risk"] = True
+                var_data["risky_mutators"] = risky_mutators_for_this_var
+            else:
+                var_data["privilege_escalation_risk"] = False
+                var_data["risky_mutators"] = []
 
     def export_json(self, output_path: str):
         """

@@ -1,129 +1,101 @@
+"""
+Lead Agent — Pure Coordinator.
+
+The Lead Agent no longer performs direct analysis. It:
+  1. Maintains global state & strategy
+  2. Calls get_high_risk_hotspots() to identify targets
+  3. Spawns specialist workers (via pending_workers state)
+  4. Synthesizes worker outputs into prioritised vulnerability leads
+  5. Decides human escalation when confidence is ambiguous
+"""
+
 import os
+import json
 from datetime import datetime
-from typing import List, Any
+from typing import List, Any, Optional
 from dotenv import load_dotenv
 
-load_dotenv() # Load environment variables from .env if present
+load_dotenv()
 
 from langchain_core.messages import SystemMessage, HumanMessage
 from src.agents.state import AgentState
+from src.agents.base_worker import WorkerOutput, WorkerTask
+from src.agents.workers.recon_worker import ReconWorker
+from src.agents.workers.attack_hypothesis_worker import AttackHypothesisWorker
+from src.models.finding import Finding
+from src.utils.graph_queries import get_high_risk_hotspots
+from src.tools.etherscan_client import EtherscanClient
+import asyncio
 
-# Optional import to avoid hard crash if not installed, though it should be.
 try:
     from langchain_google_genai import ChatGoogleGenerativeAI
 except ImportError:
     ChatGoogleGenerativeAI = None
 
-SYSTEM_PROMPT = """You are the Lead Security Analyst for Penteam, an AI-assisted smart contract vulnerability hunting system. Your role is to identify real, exploitable vulnerabilities in Solidity smart contracts by reasoning over a structured Knowledge Graph — not by guessing.
 
-You are NOT a generalist chatbot. You are a precision instrument. Every claim you make must be traceable to a node in the Knowledge Graph or a chunk from the Security Knowledge Base. If you cannot ground a claim, you do not make it.
+# ════════════════════════════════════════════════════════════
+#  COORDINATOR SYSTEM PROMPT
+# ════════════════════════════════════════════════════════════
+
+COORDINATOR_SYSTEM_PROMPT = """You are the Lead Security Coordinator for Penteam, an AI-assisted smart contract vulnerability hunting system.
+
+You are NOT an analyst. You are the ORCHESTRATOR. You do not read source code directly. Instead you:
+  1. Assess risk signals from the Knowledge Graph
+  2. Formulate analysis strategy
+  3. Delegate detailed work to specialist workers
+  4. Synthesize results into a prioritised vulnerability report
+  5. Decide when human review is needed
 
 ═══════════════════════════════════════════════════════════
-SECTION 1: YOUR TOOLS AND WHEN TO USE THEM
+SECTION 1: YOUR TOOLS
 ═══════════════════════════════════════════════════════════
 
-You have access to the following tools. Use them in the order defined by the Reasoning Protocol below.
+  - get_high_risk_hotspots()
+      → Returns a consolidated risk summary: reentrancy risks, unprotected
+        state mutators, privilege escalation vectors, external calls.
+      → THIS IS YOUR PRIMARY TOOL. Call it first to understand the landscape.
 
-GRAPH TOOLS (deterministic — always trust these):
-  - get_function_context(node_id)
-      → Get source code + callers + callees for a specific function.
-      → node_id format: "ContractName::functionName"
-      → This is your primary investigation tool. Use it to read code and trace call paths.
-  - find_state_mutators(variable_name)
-      → Who writes to a specific state variable?
-      → variable_name format: "ContractName::variableName"
-  - get_modifiers(function_id)
-      → List all security modifiers (like onlyOwner, nonReentrant) applied to a function.
-      → Use this to check for access control or reentrancy guards.
-
-RAG TOOLS (probabilistic — use for pattern matching and precedent):
   - search_security_knowledge(query)
       → Search audit reports and docs for known vulnerability patterns.
-      → Use AFTER graph investigation, not before.
-      → Query format: "reentrancy via external call before state update"
-        not "what is reentrancy"
+      → Use AFTER reviewing hotspot data to validate patterns.
 
 ═══════════════════════════════════════════════════════════
-SECTION 2: THE REASONING PROTOCOL (MANDATORY)
+SECTION 2: THE COORDINATION PROTOCOL (MANDATORY)
 ═══════════════════════════════════════════════════════════
 
-You MUST follow this protocol for every analysis. Do not skip steps.
+─── STEP 1: ASSESS RISK LANDSCAPE ─────────────────────────
 
-─── STEP 1: INVESTIGATE FUNCTIONS ─────────────────────────
+Call get_high_risk_hotspots() to get the full risk map.
+From the results, identify:
+  - Functions with reentrancy risk (external call + state mutation)
+  - Unprotected state mutators (no access control)
+  - Privilege escalation vectors (writable admin variables)
+  - High-value external call targets
 
-The user message will tell you which contract(s) to analyze.
-For each function mentioned or suspected, call:
-  get_function_context("ContractName::functionName")
+─── STEP 2: FORMULATE STRATEGY ────────────────────────────
 
-From the results, note:
-  - The source code of the function
-  - Its callers (who calls it — upstream context)
-  - Its callees (what it calls — downstream execution)
+Based on the risk map, formulate your analysis strategy:
+  - Rank targets by severity (CRITICAL > HIGH > MEDIUM > LOW)
+  - Group related risks (e.g., multiple functions sharing a variable)
+  - Identify which specialist workers to deploy
 
-Identify functions that:
-  - Are public or external (externally reachable)
-  - Modify state variables
-  - Handle ETH transfers (msg.value, .call, .transfer, .send)
+─── STEP 3: SYNTHESIZE & REPORT ───────────────────────────
 
-These are your PRIMARY TARGETS.
+If worker_outputs are present in the conversation, synthesize them.
+Otherwise, produce your own assessment based on the hotspot data.
 
-─── STEP 2: CHECK ACCESS CONTROL ──────────────────────────
-
-For each PRIMARY TARGET, call:
-  get_modifiers("ContractName::functionName")
-
-Ask yourself:
-  (a) Does the function have a modifier (e.g., onlyOwner, onlyAdmin)?
-      If yes → the function has some access control.
-  (b) If no modifiers → check the source code from Step 1 for inline
-      require(msg.sender == owner) patterns.
-  (c) If no modifiers AND no inline checks → this is an UNPROTECTED
-      state mutator and a high-priority finding.
-
-─── STEP 3: TRACE STATE VARIABLES ────────────────────────
-
-For any state variable involved in a suspicious function, call:
-  find_state_mutators("ContractName::variableName")
-
-You are looking for:
-  - Who else writes to the same variable (cross-function interference)
-  - Whether the variable is written AFTER an external call (reentrancy)
-  - Whether user-controlled input flows into state writes without validation
-
-VULNERABILITY PATTERNS TO LOOK FOR:
-  REENTRANCY: External call BEFORE state update in the same function
-  ACCESS_CONTROL: State-mutating function with no modifiers and no inline checks
-  PRIVILEGE_ESCALATION: Owner/admin variable writable without protection
-  ARITHMETIC: Unchecked math in pre-0.8.0 contracts
-  LOGIC: State variables modifiable in adversarial order
-
-─── STEP 4: VALIDATE WITH PRECEDENT ──────────────────────
-
-Once you have a candidate vulnerability, call:
-  search_security_knowledge("brief description of the pattern you found")
-
-Use the results to confirm the pattern has been exploited before.
-
-Do NOT use RAG results to generate new hypotheses. Use them only to
-validate and enrich hypotheses already grounded in the graph.
-
-═══════════════════════════════════════════════════════════
-SECTION 3: OUTPUT FORMAT (STRICT)
-═══════════════════════════════════════════════════════════
-
-After completing the Reasoning Protocol, output ONLY the following JSON.
-Do not output prose, markdown headers, or explanations outside the JSON.
+Output ONLY the following JSON:
 
 {
   "analysis_summary": {
     "contracts_analyzed": ["ContractName1"],
-    "functions_investigated": <integer>,
-    "total_leads": <integer>
+    "total_risks_identified": <integer>,
+    "strategy": "<brief strategy description>"
   },
   "vulnerability_leads": [
     {
       "id": "LEAD-001",
-      "title": "<Short title — e.g., 'Unprotected withdraw() allows arbitrary drain'>",
+      "title": "<Short title>",
       "vulnerability_class": "<REENTRANCY | ACCESS_CONTROL | PRIVILEGE_ESCALATION | ARITHMETIC | LOGIC | OTHER>",
       "severity_estimate": "<CRITICAL | HIGH | MEDIUM | LOW>",
       "affected_contract": "<ContractName>",
@@ -132,76 +104,53 @@ Do not output prose, markdown headers, or explanations outside the JSON.
       "root_cause": "<One sentence: the exact condition that enables this>",
       "impact": "<One sentence: what an attacker achieves if exploited>",
       "confidence": "<HIGH | MEDIUM | LOW>",
-      "confidence_rationale": "<Why this confidence level>"
+      "confidence_rationale": "<Why this confidence level>",
+      "source": "<hotspot_analysis | worker_output | synthesis>"
     }
   ],
-  "false_positive_candidates": [
-    {
-      "id": "FP-001",
-      "function": "<functionName>",
-      "initial_concern": "<What looked suspicious>",
-      "mitigation_found": "<What refutes the concern>"
-    }
-  ],
+  "escalation_needed": <true|false>,
+  "escalation_reason": "<Why human review is needed, or null>",
   "investigation_gaps": [
-    "<Anything you could not verify with the available tools>"
+    "<Anything that could not be verified>"
   ]
 }
 
-SEVERITY GUIDE:
-  CRITICAL — Direct, permissionless fund drain or protocol takeover
-  HIGH     — Significant fund loss or access control bypass
-  MEDIUM   — Partial impact, requires preconditions
-  LOW      — Informational, DoS potential, or inefficiency
-
 ═══════════════════════════════════════════════════════════
-SECTION 4: BEHAVIOR RULES
+SECTION 3: BEHAVIOR RULES
 ═══════════════════════════════════════════════════════════
 
-1. NEVER use search_security_knowledge as your first tool. Investigate the graph first.
-2. NEVER generate a hypothesis based on function names alone. Always read the source code.
+1. ALWAYS call get_high_risk_hotspots() as your first tool.
+2. NEVER attempt to read source code. That is the workers' job.
 3. PREFER fewer, high-confidence leads over many low-confidence ones.
-4. ALWAYS populate false_positive_candidates to show you considered alternatives.
-5. IF the graph returns empty results, do not fabricate findings. Report 0 leads and explain in investigation_gaps.
+4. RECOMMEND human escalation when confidence is ambiguous (30-70 range).
+5. IF the hotspot data shows zero risks, report 0 leads honestly.
+"""
 
-═══════════════════════════════════════════════════════════
-SECTION 5: EXAMPLE REASONING TRACE (INTERNAL — DO NOT OUTPUT)
-═══════════════════════════════════════════════════════════
-
-EXAMPLE:
-  → get_function_context("Vault::withdraw")
-  → Source shows: sends ETH via address.call{value}() THEN sets balance[msg.sender] = 0
-  → CEI violation identified. External call before state update.
-  → get_modifiers("Vault::withdraw")
-  → Result: [] (no modifiers)
-  → No access control on a state-mutating function!
-  → find_state_mutators("Vault::balances")
-  → Result: ["Vault::deposit", "Vault::withdraw"] — only deposit and withdraw touch it
-  → search_security_knowledge("reentrancy external call before state update")
-  → Result: matches The DAO pattern
-  → Output LEAD-001: REENTRANCY, CRITICAL, HIGH confidence
-
-═══════════════════════════════════════════════════════════
-
-You are now ready to begin analysis. Use your tools to investigate the contract."""
+# Keep the old prompt around for backward compat reference
+SYSTEM_PROMPT = COORDINATOR_SYSTEM_PROMPT
 
 
-_TOOLS = []
+# ════════════════════════════════════════════════════════════
+#  LLM SETUP
+# ════════════════════════════════════════════════════════════
+
+_TOOLS: List[Any] = []
+
 
 def set_tools(tools: List[Any]):
     """Sets the tools available to the Lead Agent."""
     global _TOOLS
     _TOOLS = tools
 
-def get_llm(model_name: str = os.getenv("MODEL_NAME", "gemini-2.5-flash"), temperature: float = 0.0):
-    """
-    Returns a configured LLM instance. 
-    Defaults to Gemini 2.5 Flash, but can be configured.
-    """
+
+def get_llm(
+    model_name: str = os.getenv("MODEL_NAME", "gemini-2.5-flash"),
+    temperature: float = 0.0,
+):
+    """Returns a configured LLM instance."""
     if not ChatGoogleGenerativeAI:
-        raise ImportError("langchain-google-genai is not installed. Please install it.")
-    
-    # Ensure api key is set in env or let langchain handle it
+        raise ImportError("langchain-google-genai is not installed.")
+
     if "GOOGLE_API_KEY" not in os.environ:
         print("WARNING: GOOGLE_API_KEY not found in environment. LLM calls may fail.")
 
@@ -210,54 +159,269 @@ def get_llm(model_name: str = os.getenv("MODEL_NAME", "gemini-2.5-flash"), tempe
         return llm.bind_tools(_TOOLS)
     return llm
 
-def lead_researcher_node(state: AgentState):
+
+# ════════════════════════════════════════════════════════════
+#  SYNTHESIS & ESCALATION
+# ════════════════════════════════════════════════════════════
+
+def synthesize_worker_outputs(worker_outputs: List[Any]) -> List[dict]:
     """
-    The Lead Agent node.
-    Analyzes the current state (graph summary) and generates vulnerability leads.
+    Merge worker outputs into a deduplicated, prioritised list of
+    vulnerability leads.
+    """
+    if not worker_outputs:
+        return []
+
+    # Index by evidence node IDs for deduplication
+    leads_by_target: dict[str, dict] = {}
+
+    for i, wo in enumerate(worker_outputs):
+        # Convert Pydantic model to dict if necessary
+        wo_dict = wo.model_dump() if hasattr(wo, "model_dump") else wo
+        
+        lead_id = f"LEAD-{i + 1:03d}"
+        evidence = wo_dict.get("evidence_node_ids", [])
+        key = "|".join(sorted(evidence)) if evidence else f"__worker_{i}"
+
+        existing = leads_by_target.get(key)
+        wo_confidence = wo_dict.get("confidence", 0)
+
+        if existing is None or wo_confidence > existing.get("confidence", 0):
+            leads_by_target[key] = {
+                "id": lead_id,
+                "worker_type": wo_dict.get("worker_type", "unknown"),
+                "hypothesis": wo_dict.get("hypothesis"),
+                "evidence_node_ids": evidence,
+                "attack_path": wo_dict.get("attack_path", []),
+                "confidence": wo_confidence,
+                "raw_output": wo_dict.get("raw_output", {}),
+            }
+
+    # Sort by confidence descending
+    leads = sorted(leads_by_target.values(), key=lambda x: x["confidence"], reverse=True)
+
+    # Re-number after sort
+    for i, lead in enumerate(leads):
+        lead["id"] = f"LEAD-{i + 1:03d}"
+
+    return leads
+
+
+def should_escalate_to_human(
+    worker_outputs: List[dict],
+    low_threshold: int = 30,
+    high_threshold: int = 70,
+) -> tuple[bool, str | None]:
+    """
+    Decide whether the coordinator should request human review.
+
+    Escalation is recommended when:
+      - Any worker confidence is in the ambiguous zone (30–70)
+      - Workers disagree (high variance in confidence)
+      - Zero findings despite non-trivial codebase
+
+    Returns:
+        (should_escalate, reason)
+    """
+    if not worker_outputs:
+        return False, None
+
+    confidences = [
+        wo.get("confidence", 0) if isinstance(wo, dict) else getattr(wo, "confidence", 0)
+        for wo in worker_outputs
+    ]
+    avg_conf = sum(confidences) / len(confidences) if confidences else 0
+
+    # Ambiguous confidence zone
+    ambiguous = [c for c in confidences if low_threshold <= c <= high_threshold]
+    if ambiguous:
+        return True, (
+            f"{len(ambiguous)} worker(s) returned ambiguous confidence "
+            f"(range {low_threshold}–{high_threshold}). Human review recommended."
+        )
+
+    # High variance — workers disagree
+    if len(confidences) >= 2:
+        conf_range = max(confidences) - min(confidences)
+        if conf_range > 50:
+            return True, (
+                f"Workers show high disagreement (confidence range: {conf_range}). "
+                f"Human review recommended."
+            )
+
+    return False, None
+
+
+# ════════════════════════════════════════════════════════════
+#  COORDINATOR NODE
+# ════════════════════════════════════════════════════════════
+
+async def coordinator_node(state: AgentState):
+    """
+    The Coordinator (Lead Agent) node.
+
+    Reads global state, invokes summary tools, synthesizes worker outputs,
+    and produces the final vulnerability report.
     """
     messages = state.get("messages", [])
-    
+    worker_outputs = state.get("worker_outputs", [])
+
     llm = get_llm()
-    
-    # Construct the prompt
-    prompt = [SystemMessage(content=SYSTEM_PROMPT)]
+
+    # Step 1 — Always run Recon first
+    etherscan = EtherscanClient()  # Auto-stubs if no ETHERSCAN_API_KEY in env
+    recon_worker = ReconWorker(
+        graph=state["graph"],
+        llm_client=llm,
+        etherscan_client=etherscan,
+    )
+    recon_task = WorkerTask(
+        task_id="recon_protocol",
+        task_type="recon",
+        context={
+            "contract_names": state.get("contract_names", []),
+            "contract_addresses": state.get("contract_addresses", {}),
+            "repo_url": state.get("repo_url"),
+        }
+    )
+    recon_output = await recon_worker.run(recon_task)
+
+    # Store recon context — Attack Workers receive this
+    recon_context = recon_output.raw_output
+    state["recon_context"] = recon_context
+
+    # Step 2 — Log what Recon found
+    if recon_context.get("onchain_risk_signals", {}).get("previous_exploits_detected"):
+        print("[Coordinator] ⚠️  Prior exploit detected by Recon. Escalating priority.")
+
+    # Step 2 — Get hotspots (Coordinator-only query)
+    hotspots = get_high_risk_hotspots(state["graph"], min_score=70)
+
+    if not hotspots:
+        state["findings"] = []
+        state["escalate"] = False
+        # (Optional: continue to Synthesis even if no hotspots)
+    else:
+        # Step 3 — Spawn Attack Workers in parallel (one per hotspot)
+        attack_worker = AttackHypothesisWorker(
+            graph=state["graph"],
+            llm_client=llm,
+        )
+
+        def _budget_for_priority(priority: str) -> int:
+            """Token budget per worker based on hotspot priority."""
+            return {"CRITICAL": 8000, "HIGH": 5000, "MEDIUM": 3000}.get(priority, 3000)
+
+        # Build tasks — inject recon_context into each
+        tasks = [
+            WorkerTask(
+                task_id=f"attack_{hotspot.node_id}",
+                task_type="attack_analysis",
+                hotspot=hotspot,
+                context={"recon_context": state.get("recon_context", {})},
+                budget_tokens=_budget_for_priority(hotspot.priority),
+            )
+            for hotspot in hotspots
+        ]
+
+        # Run all in parallel
+        worker_outputs_parallel = await asyncio.gather(
+            *[attack_worker.run(task) for task in tasks],
+            return_exceptions=True
+        )
+
+        # Step 4 — Convert non-zero outputs to Findings
+        findings = []
+        for output, hotspot in zip(worker_outputs_parallel, hotspots):
+            if isinstance(output, Exception):
+                print(f"[Coordinator] Worker error on {hotspot.node_id}: {output}")
+                continue
+            if output.confidence > 0 and output.attack_path:
+                finding = Finding.from_worker_output(output, hotspot)
+                findings.append(finding)
+            
+            # Add to global worker_outputs for synthesis
+            if not isinstance(output, Exception):
+                wo_dict = output.model_dump() if hasattr(output, "model_dump") else output
+                worker_outputs.append(wo_dict)
+
+        state["findings"] = findings
+        state["escalate"] = len(findings) > 0
+
+    # Step 5 — Synthesis & Final Response
+    # Build prompt
+    prompt = [SystemMessage(content=COORDINATOR_SYSTEM_PROMPT)]
+
+    # Inject worker results context if available
+    if worker_outputs:
+        synthesis = synthesize_worker_outputs(worker_outputs)
+        escalate_human, reason = should_escalate_to_human(worker_outputs)
+
+        worker_context = (
+            f"\n\n=== WORKER RESULTS ===\n"
+            f"Received {len(worker_outputs)} worker output(s).\n"
+            f"Synthesised into {len(synthesis)} unique lead(s).\n"
+            f"Escalation needed: {escalate_human}"
+        )
+        if reason:
+            worker_context += f"\nEscalation reason: {reason}"
+        worker_context += f"\n\nSynthesised leads:\n{json.dumps(synthesis, indent=2)}"
+
+        prompt.append(HumanMessage(content=worker_context))
+
     if messages:
         prompt.extend(messages)
     else:
-        # Fallback if no messages yet
-        prompt.append(HumanMessage(content="Please analyze the available graph summary."))
+        prompt.append(
+            HumanMessage(content="Assess the risk landscape using get_high_risk_hotspots().")
+        )
 
     # Invoke LLM
     response = llm.invoke(prompt)
-    
-    # Check if the LLM decided to call a tool
-    if response.tool_calls:
-        return {"messages": [response]}
 
-    # Parsing logic for final answer (if not calling a tool)
-    import json
+    # Tool call → let LangGraph route
+    if response.tool_calls:
+        return {"messages": [response], "worker_outputs": worker_outputs}
+
+    # Parse final answer
     try:
         content = response.content
-        # Strip code blocks if present
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0].strip()
         elif "```" in content:
             content = content.split("```")[1].split("```")[0].strip()
-            
+
         data = json.loads(content)
-        
+
         leads = data.get("vulnerability_leads", [])
-        targets = data.get("target_nodes", [])
-        
+        target_nodes = data.get("target_nodes", [])
+        strategy = data.get("analysis_summary", {}).get("strategy", "")
+        escalation = data.get("escalation_needed", False)
+
         return {
             "vulnerability_leads": leads,
-            "target_nodes": targets,
-            "messages": [response]
+            "target_nodes": target_nodes,
+            "strategy": strategy,
+            "messages": [response],
+            "findings": state.get("findings", []),
+            "worker_outputs": worker_outputs,
+            "escalate": escalation or state.get("escalate", False)
         }
-    except Exception as e:
-        # If it's just a text response or tool call that wasn't caught (unlikely with .tool_calls check)
-        # We might want to just return the message
-        return {
-            "messages": [response]
-        }
+    except Exception:
+        return {"messages": [response], "worker_outputs": worker_outputs}
 
+
+import warnings
+
+async def lead_researcher_node(state: AgentState):
+    """
+    DEPRECATED ALIAS — scheduled for removal at Phase 6 merge.
+    Use coordinator_node() directly.
+    """
+    warnings.warn(
+        "lead_researcher_node is a deprecated alias for coordinator_node. "
+        "Remove all calls to lead_researcher_node before Phase 6.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    return await coordinator_node(state)

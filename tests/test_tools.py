@@ -13,7 +13,7 @@ def test_create_graph_tools():
     G.add_edge("FuncB", "VarX", relationship="WRITES")
     
     tools = create_graph_tools(G)
-    assert len(tools) == 2
+    assert len(tools) == 4
     
     tool_map = {t.name: t for t in tools}
     assert "get_function_context" in tool_map

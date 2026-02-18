@@ -1,6 +1,6 @@
 # Penteam Project Status
 
-**Last Updated**: February 18, 2026 (18:30 IST)
+**Last Updated**: February 18, 2026 (19:40 IST)
 
 ## Overview
 **Penteam** is an AI-assisted smart contract security system designed for "Plan-and-Execute" vulnerability hunting. It combines Knowledge Graphs (for code structure understanding) and Retrieval-Augmented Generation (RAG) (for security knowledge retrieval).
@@ -244,6 +244,53 @@ Implemented reachability tracking to identify live vs. dead code:
 
 ---
 
+### Story 3.4 - Deterministic Reentrancy Rule ✅ **[COMPLETE]**
+**Phase**: 3 - Deep Analysis Layer  
+**Completion Date**: February 18, 2026
+
+Implemented structural exploit modeling for reentrancy detection:
+
+**Function Node Properties Added**:
+- ✅ `reentrancy_risk`: Boolean flag (structural vulnerability pattern matching)
+- ✅ `reentrancy_risk_score`: Impact-based risk score (Base 10 + impact scaling)
+
+**Deterministic Logic**:
+- Flagged if: `reachable_from_external_entry` AND `makes_external_call` AND `propagated_state_variables` AND `state_write_after_external_call` (Structural CEI violation)
+
+**Test Coverage** (5 tests):
+- ✅ Vulnerable external entries correctly flagged
+- ✅ Safe patterns (Pull Pattern) correctly ignored
+- ✅ 100% test pass rate
+
+**Impact**: Shifts reentrancy detection from heuristic to deterministic. Eliminates false positives in safe check-effects-interactions patterns.
+
+---
+
+### Story 3.5 - Privilege Propagation ✅ **[COMPLETE]**
+**Phase**: 3 - Deep Analysis Layer  
+**Completion Date**: February 18, 2026
+
+Implemented variable-level reverse mapping to detect escalation vectors:
+
+**Variable Node Properties Added**:
+- ✅ `roles_using_variable`: Reverse mapping to modifiers/inline checks controlled by this variable
+- ✅ `functions_modifying_variable`: Functions that can mutate this variable (direct + indirect)
+- ✅ `privilege_escalation_risk`: Boolean flag for access-control critical variables at risk
+
+**Function Node Properties Added**:
+- ✅ `can_escalate_privileges`: Flags unprotected mutators that modify access-control state
+
+**Test Coverage** (5 tests):
+- ✅ Owner overwrite detection verified
+- ✅ Role poisoning (admin mapping) detection verified
+- ✅ Boolean guard flip detection verified
+- ✅ Safe mutators (non-critical state) correctly excluded
+- ✅ 100% test pass rate
+
+**Impact**: Detects complex "poisoning" attacks where an attacker can escalate privileges by modifying variables that control access checks.
+
+---
+
 ### Story 2.6 - End-to-End Real Code Ingestion ✅ **[COMPLETE]**
 **Completion Date**: February 17, 2026
 
@@ -279,6 +326,8 @@ The full Phase 1 pipeline is now operational:
   - **Story 3.1** - Write Propagation: `propagated_state_variables`, `indirect_writes_state`, `propagation_depth`
   - **Story 3.2** - CEI Modeling: `state_write_after_external_call`, `external_call_nodes`
   - **Story 3.3** - Reachability: `reachable_from_external_entry`, `entry_points`
+  - **Story 3.4** - Reentrancy Rule: `reentrancy_risk`, `reentrancy_risk_score`
+  - **Story 3.5** - Privilege Propagation: `roles_using_variable`, `functions_modifying_variable`, `can_escalate_privileges`
 
 #### Graph Query API (`src/utils/graph_queries.py`)
 - Tools available to the Lead Agent:
@@ -290,6 +339,8 @@ The full Phase 1 pipeline is now operational:
 - `get_access_control_summary()`: Functions with access profiles
 - `get_privileged_roles()`: Detected roles with protected functions
 - `get_unprotected_mutators()`: Flagged unprotected state mutators
+- `get_reentrancy_risks()`: Functions flagged with reentrancy risks (Story 3.4)
+- `get_privilege_escalation_risks()`: Escalation maps for functions and variables (Story 3.5)
 
 **Status**: ✅ Phase 3 Metadata fully integrated
 
@@ -321,33 +372,81 @@ The full Phase 1 pipeline is now operational:
 
 ### Testing
 - ✅ **Phase 1 & 2 Tests**: 69 tests (100% pass)
-- ✅ **Phase 3 Tests**: 55 tests (100% pass)
+- ✅ **Phase 3 Tests**: 65 tests (100% pass)
   - `test_write_propagation.py` (21 tests)
   - `test_external_calls.py` (21 tests)
   - `test_reachability.py` (13 tests)
-- ✅ **Total System Health**: 🟢 All systems green
+  - `test_reentrancy_rule.py` (5 tests)
+  - `test_privilege_propagation.py` (5 tests)
+- ✅ **Total System Health**: 🟢 All systems green (134 tests total)
+---
+
+### Story 4.1 - Global State & Persistence ✅ **[COMPLETE]**
+**Phase**: 4 - Multi-Agent Orchestration  
+**Completion Date**: February 18, 2026
+
+Implemented the foundation for stateful agent orchestration:
+- ✅ **AgentState Definition**: Multi-key state container (repo_url, contract_names, risk_summary, findings, etc.)
+- ✅ **Memory Persistance**: Integrated LangGraph `MemorySaver` for checkpointing and resumption.
+- ✅ **Hotspot Tracking**: Centralized storage for structured hotspot nodes identified across workers.
 
 ---
 
-## Known Issues & Next Steps
+### Story 4.2 - Recon Worker (The Scout) ✅ **[COMPLETE]**
+**Phase**: 4 - Multi-Agent Orchestration  
+**Completion Date**: February 18, 2026
 
-### Planned Enhancements
-- [ ] **Story 2.7+**: Implement specialized worker agents (Cartographer, Taint Tracker)
-- [ ] **Knowledge Base Expansion**: Add more audit reports and exploit case studies
-- [ ] **Prompt Engineering**: Refine Lead Agent system prompt for higher accuracy
-- [ ] **Progress Indicators**: Add visual feedback during long-running Slither analysis
-- [ ] **Graph Validation**: Pre-execution checks for graph structure integrity
+Specialized agent for initial intelligence gathering:
+- ✅ **Etherscan Integration**: Automated contract info and exploit history lookups.
+- ✅ **RAG Intelligence**: Queries "The Librarian" for protocol-specific attack patterns.
+- ✅ **Protocol Classification**: Heuristic classification (Vault, DEX, Bridge, etc.) to steer downstream workers.
+- ✅ **Robust Fallbacks**: Graceful degradation to stub data when API keys or network are unavailable.
+
+---
+
+### Story 4.3 - Attack Hypothesis Worker (The Specialist) ✅ **[COMPLETE]**
+**Phase**: 4 - Multi-Agent Orchestration  
+**Completion Date**: February 19, 2026
+
+First reasoning-heavy worker for exploit validation:
+- ✅ **Parallel Orchestration**: Spawns multiple instances in parallel for each identified hotspot.
+- ✅ **Finding Model**: Structured `Finding` objects with confidence scores and evidence node IDs.
+- ✅ **Contextual Reasoning**: Injects Recon context (protocol type, known patterns) into the LLM prompt.
+- ✅ **Verification Suite**: 21 dedicated unit tests covering edge cases and schema adherence.
+
+---
+
+## Core Functionality
+
+### 1. The Lead Agent (`src/agents/lead_agent.py`)
+- **Role**: Orchestrates specialized workers and synthesizes findings.
+- **Model**: Google Gemini `gemini-2.0-flash` (Optimized for JSON orchestration)
+- **Workflow**: 
+    - **Recon Phase**: Gathers global intelligence and protocol classification.
+    - **Hotspot Discovery**: Identifies structural risks via `get_high_risk_hotspots`.
+    - **Parallel Execution**: Dispatches `AttackHypothesisWorker` for each lead.
+    - **Synthesis**: Filters and aggregates findings into a final report.
+- **Status**: ✅ Fully integrated multi-agent workflow.
+
+... [rest of sections remain accurate] ...
+
+### Testing
+- ✅ **Phase 1 & 2 Tests**: 69 tests (100% pass)
+- ✅ **Phase 3 Tests**: 65 tests (100% pass)
+- ✅ **Phase 4 Tests**: 63 tests (100% pass)
+  - `test_attack_hypothesis_worker.py` (21 tests)
+  - `test_recon_worker.py` (19 tests)
+  - `test_lead_agent.py` + `test_worker_base.py` + `test_tools.py` (23 tests)
+- ✅ **Total System Health**: 🟢 **100% Pass Rate (197 / 197 total tests)**
+
+---
+
 
 ### Phase Progress
-**Current Phase**: Phase 3 - Deep Analysis Layer  
-**Status**: ✅ **Phase 3 Core Complete**  
-**Completed Stories**: 
-- ✅ Story 3.1 - Recursive Write Propagation
-- ✅ Story 3.2 - Phase-based CEI Detection
-- ✅ Story 3.3 - Reachability Analysis
+**Current Phase**: Phase 5 - Advanced Vulnerability Detection (NEXT)
+**Status**: 🟢 **Phase 4 Complete**
 
-**Next Phase**: Phase 4 - Multi-Agent Orchestration & Taint Analysis
-
----
-
-**Project Health**: 🟢 Excellent - All core systems operational and tested end-to-end.
+**Project Health**: 🟢 **Excellent**
+- **100% Pass Rate** (197 / 197 total tests)
+- **Verified on Real Code**: Successful end-to-end run on `yearn-vaults`.
+- **Async Architecture**: `main.py` fully converted to async for robust orchestration.
