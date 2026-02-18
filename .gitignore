@@ -1,24 +1,41 @@
 # Environment
 .env
+.venv/
+env/
+venv/
+ENV/
 
-# Data directories
+# Data and Temporary directories
 data/
 temp_solidity/
+scratch/
 
-# Debug files
+# Debug and Output files
 debug_*.py
-logs.txt
+*.txt
+*.log
+*.json
+!pyproject.toml
+!package.json
+!tsconfig.json
+!README.md
+vulnerability_leads.json
 
 # Python cache
 __pycache__/
 .pytest_cache/
 *.pyc
 *.pyo
+*.pyd
+.ipynb_checkpoints/
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini

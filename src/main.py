@@ -81,16 +81,29 @@ def main():
     checkpointer = get_checkpointer()
     app = workflow.compile(checkpointer=checkpointer)
 
-    print("\n--- Starting Security Analysis ---")
+    # Build initial message from graph data
+    contracts = set()
+    functions = []
+    for node_id, data in graph.nodes(data=True):
+        if data.get("type") == "contract":
+            contracts.add(data.get("name", node_id))
+        elif data.get("type") == "function":
+            functions.append(node_id)
     
-    initial_message = HumanMessage(content="""
-    Please analyze this codebase. 
-    Start by understanding the high-level architecture.
-    Then, identify potential vulnerabilities, focusing on:
-    1. Missing access control
-    2. Reentrancy
-    3. Unsafe external calls
-    """)
+    contract_list = ", ".join(contracts) if contracts else "Unknown"
+    function_list = "\n".join(f"  - {f}" for f in functions) if functions else "  (none found)"
+    
+    initial_message = HumanMessage(content=f"""Analyze the following smart contract(s): {contract_list}
+
+The Knowledge Graph contains these function nodes:
+{function_list}
+
+Investigate each function using get_function_context, check modifiers with get_modifiers, 
+and trace state variables with find_state_mutators. Focus on:
+1. Missing access control on state-mutating functions
+2. Reentrancy (external calls before state updates)
+3. Unsafe external calls
+""")
     
     config = {"configurable": {"thread_id": "live_run_1"}}
     

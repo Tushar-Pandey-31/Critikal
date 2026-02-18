@@ -4,7 +4,7 @@
 
 Penteam is a "Plan-and-Execute" vulnerability hunting system that combines Knowledge Graphs for code structure understanding and Retrieval-Augmented Generation (RAG) for security knowledge retrieval.
 
-[![Phase 2 Complete](https://img.shields.io/badge/Phase%202-Foundation%20Complete-success)]()
+[![Phase 3 Complete](https://img.shields.io/badge/Phase%203-Analysis%20Complete-success)]()
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)]()
 
@@ -30,7 +30,31 @@ Penteam is a "Plan-and-Execute" vulnerability hunting system that combines Knowl
 - ✅ Deterministic call relationships between functions
 - ✅ Modifier function body capture
 - ✅ Leaf function identification
-- ✅ Enables future recursive analysis and propagation
+
+#### Story 2.4 - Access Control Modeling
+- ✅ Extracts modifier logic and pattern classification
+- ✅ Maps function access profiles (protected vs. unprotected)
+- ✅ Detects privileged roles (owner, admin, etc.)
+- ✅ Identifies unprotected state mutators
+
+---
+
+### Phase 3 - Deep Analysis Layer ✅ **COMPLETE**
+
+#### Story 3.1 - Recursive Write Propagation
+- ✅ Tracks state mutations through deep call chains
+- ✅ Handles cycle/recursion safety in propagation
+- ✅ Calculates min-depth to state-writing callees
+
+#### Story 3.2 - Phase-based External Call Classification
+- ✅ Production-grade CEI (Checks-Effects-Interactions) analysis
+- ✅ Models execution in 3 phases (Pre-Modifier, Body, Post-Modifier)
+- ✅ Understands modifier stacking and complex write order
+
+#### Story 3.3 - Reachability Analysis
+- ✅ DFS-based reachability from all external entry points
+- ✅ Identifies live code vs. dead code in the attack surface
+- ✅ Maps reachability paths through internal call graph
 
 ---
 
@@ -56,7 +80,7 @@ Penteam is a "Plan-and-Execute" vulnerability hunting system that combines Knowl
         │  │ Nodes: Contracts, Functions, Vars  │  │
         │  │ Edges: DEFINES, CALLS, READS,      │  │
         │  │        WRITES, INHERITS            │  │
-        │  │ Metadata: Security signals (2.1-3) │  │
+        │  │ Metadata: Phase 2/3 Security Sig.  │  │
         │  └────────────────────────────────────┘  │
         └──────────────┬───────────────────────────┘
                        │
@@ -65,7 +89,9 @@ Penteam is a "Plan-and-Execute" vulnerability hunting system that combines Knowl
         │     Query API (Tools)        │
         │  - get_external_entry_points │
         │  - get_state_mutators        │
+        │  - get_external_call_functions│
         │  - get_internal_calls        │
+        │  - get_access_control_summary│
         │  - get_callers               │
         │  - get_call_graph            │
         └──────────────┬───────────────┘
@@ -103,7 +129,7 @@ pip install slither-analyzer
 cp .env.example .env
 # Add your GOOGLE_API_KEY to .env
 
-# (Optional) Ingest security knowledge
+# (Optional) Ingest security knowledge base for RAG
 python -m src.knowledge.ingest
 ```
 
@@ -127,10 +153,10 @@ python -m src.main --repo https://github.com/user/contract-repo
 # All tests
 pytest tests/ -v
 
-# Specific phase
-pytest tests/test_external_entry.py -v      # Story 2.1
-pytest tests/test_state_mutation.py -v      # Story 2.2
-pytest tests/test_internal_call_graph.py -v # Story 2.3
+# Specific components
+pytest tests/test_reachability.py -v       # Story 3.3
+pytest tests/test_external_calls.py -v     # Story 3.2
+pytest tests/test_write_propagation.py -v  # Story 3.1
 ```
 
 ---
@@ -141,26 +167,29 @@ pytest tests/test_internal_call_graph.py -v # Story 2.3
 
 - **Contract**: Smart contract definitions
 - **Function**: Contract functions with comprehensive metadata
+- **Modifier**: Access control modifiers as first-class nodes
 - **StateVariable**: Persistent storage variables
 
-### Function Metadata (Phase 2 Complete)
+### Function Metadata (Phase 3 Complete)
 
 ```python
 {
-    # Story 2.1 - External Attack Surface
+    # Story 2.1-3 Core
     "is_external_entry": bool,      # Externally callable?
-    "is_view_or_pure": bool,        # Read-only?
     "is_payable": bool,             # Accepts Ether?
-    
-    # Story 2.2 - Storage Mutation
     "writes_state": bool,           # Mutates storage?
-    "num_state_writes": int,        # How many variables?
-    "state_variables_written": [],  # Which variables?
     
-    # Story 2.3 - Internal Call Graph
-    "internal_calls": [],           # What does it call?
-    "num_internal_calls": int,      # How many calls?
-    "is_leaf_function": bool        # No internal calls?
+    # Story 3.1 - Recursive Writes
+    "propagated_state_variables": [],# List of ALL written vars (direct+indirect)
+    "indirect_writes_state": bool,  # Writes ONLY via callees?
+    
+    # Story 3.2 - CEI Violation
+    "state_write_after_external_call": bool, # Violation found?
+    "makes_external_call": bool,    # Performs external call?
+    
+    # Story 3.3 - Reachability
+    "reachable_from_external_entry": bool, # Alive in attack surface?
+    "entry_points": ["Vault::deposit"]     # Reachable from these entries
 }
 ```
 
@@ -178,12 +207,11 @@ pytest tests/test_internal_call_graph.py -v # Story 2.3
 
 ### Test Coverage
 
-- ✅ **Story 2.1**: External attack surface detection (12 test cases)
-- ✅ **Story 2.2**: Storage mutation detection (8 test cases)
-- ✅ **Story 2.3**: Internal call graph (8 test cases)
-- ✅ Integration tests for end-to-end pipeline
+- ✅ **Story 2.1-4**: Foundation layer (69 tests)
+- ✅ **Story 3.1-3**: Deep analysis layer (55 tests)
+- ✅ **Integration**: End-to-end repository ingestion pipeline
 
-All tests maintain **100% pass rate** for Phase 2 functionality.
+All tests maintain **100% pass rate** for Phase 3 functionality.
 
 ---
 
@@ -205,9 +233,9 @@ penteam/
 │   └── main.py                # Entry point
 ├── tests/
 │   ├── contracts/             # Test Solidity contracts
-│   ├── test_external_entry.py
-│   ├── test_state_mutation.py
-│   └── test_internal_call_graph.py
+│   ├── test_reachability.py
+│   ├── test_external_calls.py
+│   └── test_write_propagation.py
 ├── data/
 │   ├── knowledge/             # RAG source documents
 │   │   ├── audits/           # PDF audit reports
@@ -222,23 +250,16 @@ penteam/
 
 ## 🔮 Roadmap
 
-### ✅ Phase 2 - Structural Intelligence Layer (COMPLETE)
-- [x] Story 2.1: External Attack Surface Detection
-- [x] Story 2.2: Storage State Mutation Detection
-- [x] Story 2.3: Internal Call Graph Construction
+### ✅ Phase 3 - Deep Analysis Layer (COMPLETE)
+- [x] Story 3.1: Recursive Write Propagation
+- [x] Story 3.2: Phase-based CEI Detection
+- [x] Story 3.3: Reachability Analysis
 
-### 📋 Phase 3 - Recursive Analysis & Propagation (NEXT)
-- [ ] Recursive write propagation through call chains
-- [ ] Reentrancy path detection
-- [ ] Privilege escalation modeling
-- [ ] Entry → mutation path analysis
-- [ ] Attack surface reachability modeling
-
-### 🔜 Future Enhancements
+### 📋 Phase 4 - Multi-Agent Orchestration & Taint Analysis (NEXT)
 - [ ] Specialized worker agents (Cartographer, Taint Tracker)
-- [ ] Enhanced RAG knowledge base
-- [ ] Improved agent prompting
-- [ ] Web UI for graph visualization
+- [ ] Automated taint analysis for user-controlled inputs
+- [ ] Cross-contract reentrancy modeling
+- [ ] Enhanced RAG knowledge base for specific exploit patterns
 
 ---
 
@@ -261,7 +282,7 @@ MIT License - see LICENSE file for details
 
 For detailed technical documentation, see:
 - **[project_status.md](./project_status.md)**: Complete project status and implementation details
-- **Story Walkthroughs**: Located in `.gemini/antigravity/brain/` (if available)
+- **Walkthroughs**: Narrative documentation of major feature implementations
 
 ---
 

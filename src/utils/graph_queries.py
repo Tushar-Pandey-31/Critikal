@@ -225,3 +225,176 @@ class GraphQueries:
             "nodes": nodes,
             "edges": edges
         }
+
+    # ================================================================
+    # Access Control Query API (Stories 2.2.1-2.2.4)
+    # ================================================================
+
+    def get_modifier_details(self, modifier_name: str, contract_name: str | None = None) -> Dict[str, Any]:
+        """
+        Returns full modifier structure with conditions and pattern classification.
+        
+        Args:
+            modifier_name: Name of the modifier (e.g., 'onlyOwner')
+            contract_name: Optional contract to scope the search
+        
+        Returns:
+            Modifier metadata dict or error dict if not found
+        """
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "modifier":
+                continue
+            if node_data.get("name") != modifier_name:
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+            
+            return {
+                "node_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "conditions": node_data.get("conditions", []),
+                "accesses_state_variables": node_data.get("accesses_state_variables", []),
+                "is_access_control": node_data.get("is_access_control", False),
+                "access_control_pattern": node_data.get("access_control_pattern", "none")
+            }
+        
+        return {"error": f"Modifier '{modifier_name}' not found"}
+
+    def get_access_control_summary(self, contract_name: str | None = None) -> List[Dict[str, Any]]:
+        """
+        Returns all functions with their access control profiles.
+        
+        Args:
+            contract_name: Optional filter by specific contract
+        
+        Returns:
+            List of function metadata with access control info
+        """
+        results = []
+        
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+            
+            results.append({
+                "function_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "visibility": node_data.get("visibility"),
+                "modifiers": node_data.get("modifiers", []),
+                "has_access_control": node_data.get("has_access_control", False),
+                "access_control_modifiers": node_data.get("access_control_modifiers", []),
+                "has_inline_access_check": node_data.get("has_inline_access_check", False),
+                "is_protected": node_data.get("is_protected", False),
+                "writes_state": node_data.get("writes_state", False),
+                "is_external_entry": node_data.get("is_external_entry", False)
+            })
+        
+        return results
+
+    def get_privileged_roles(self, contract_name: str | None = None) -> List[Dict[str, Any]]:
+        """
+        Returns all detected privileged roles with their protected functions.
+        
+        Args:
+            contract_name: Optional filter by specific contract
+        
+        Returns:
+            List of RoleProfile dicts with role_name, protected_functions,
+            underlying_variable, how_verified, and pattern
+        """
+        roles = []
+        
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "contract":
+                continue
+            if contract_name and node_data.get("name") != contract_name:
+                continue
+            
+            contract_roles = node_data.get("privileged_roles", [])
+            for role in contract_roles:
+                roles.append({
+                    "contract": node_data.get("name"),
+                    **role
+                })
+        
+        return roles
+
+    def get_unprotected_mutators(self, contract_name: str | None = None) -> List[Dict[str, Any]]:
+        """
+        Returns functions flagged as unprotected state mutators.
+        
+        These are externally callable functions that mutate state without
+        any access control modifier or inline check.
+        
+        Args:
+            contract_name: Optional filter by specific contract
+        
+        Returns:
+            List of function metadata with risk information:
+            - function_id, name, contract, state_variables_written,
+              risk_level, visibility, is_payable
+        """
+        results = []
+        
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            if not node_data.get("is_unprotected_mutator"):
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+            
+            results.append({
+                "function_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "state_variables_written": node_data.get("state_variables_written", []),
+                "risk_level": node_data.get("unprotected_risk_level", "MEDIUM"),
+                "visibility": node_data.get("visibility"),
+                "is_payable": node_data.get("is_payable", False)
+            })
+        
+        return results
+
+    # ================================================================
+    # External Call Classification Query API (Story 3.2)
+    # ================================================================
+
+    def get_external_call_functions(self, contract_name: str | None = None) -> List[Dict[str, Any]]:
+        """
+        Returns all functions that make external calls.
+        
+        Args:
+            contract_name: Optional filter by specific contract
+        
+        Returns:
+            List of function metadata with external call info:
+            - function_id, name, contract, external_call_type,
+              external_call_nodes, state_write_after_external_call
+        """
+        results = []
+        
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            if not node_data.get("makes_external_call"):
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+            
+            results.append({
+                "function_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "external_call_type": node_data.get("external_call_type", []),
+                "external_call_nodes": node_data.get("external_call_nodes", []),
+                "state_write_after_external_call": node_data.get("state_write_after_external_call", False),
+                "visibility": node_data.get("visibility"),
+                "is_payable": node_data.get("is_payable", False)
+            })
+        
+        return results
