@@ -24,6 +24,12 @@ class AnalysisEngine:
         elif isinstance(targets, str):
             targets = [targets]
 
+        if os.path.isfile(repo_path):
+            file_target = os.path.basename(repo_path)
+            repo_path = os.path.dirname(repo_path)
+            if targets == ['.']:
+                targets = [file_target]
+
         original_cwd = os.getcwd()
         try:
             os.chdir(repo_path)

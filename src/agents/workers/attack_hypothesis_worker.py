@@ -298,7 +298,11 @@ Return JSON only."""
             response = await self.llm.ainvoke(messages)
             # Handle both string responses and message objects
             if hasattr(response, "content"):
-                return response.content
+                content = response.content
+                if isinstance(content, list):
+                    # Handle list content (e.g. multimodal or unexpected format)
+                    return "".join(str(x) for x in content)
+                return str(content)
             return str(response)
         except Exception as e:
             return f'{{"error": "{str(e)}", "confidence": 0}}'

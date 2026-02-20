@@ -49,6 +49,9 @@ class GraphBuilder:
         # Story 3.5: Privilege Propagation
         self._enrich_state_variable_reverse_mapping()
         self._detect_privilege_escalation()
+        
+        # Story 4.2: Compute final risk scores
+        self._compute_global_risk_scores()
 
 
     def _add_contract_node(self, contract):
@@ -1198,6 +1201,44 @@ class GraphBuilder:
             else:
                 var_data["privilege_escalation_risk"] = False
                 var_data["risky_mutators"] = []
+
+    # ================================================================
+    # Story 4.2 — Global Risk Scoring
+    # ================================================================
+    def _compute_global_risk_scores(self):
+        """
+        Aggregates individual risk factors into a global risk_score for each function.
+        Used by HotspotEngine to prioritize analysis.
+        """
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            
+            score = 0
+            
+            # 1. Reentrancy Risk (High structural risk)
+            # Base score 70 ensures it hits the hotspot threshold
+            if node_data.get("reentrancy_risk"):
+                score += max(70, node_data.get("reentrancy_risk_score", 0) + 50)
+            
+            # 2. Privilege Escalation (Critical)
+            if node_data.get("can_escalate_privileges"):
+                score += 90
+            
+            # 3. Unprotected State Mutation
+            if node_data.get("is_unprotected_mutator"):
+                level = node_data.get("unprotected_risk_level", "MEDIUM")
+                if level == "HIGH":
+                    score += 80 # Payable + Unprotected = Critical/High
+                else:
+                    score += 50 # Standard unprotected write
+            
+            # 4. CEI Violation (without full reentrancy pattern)
+            # Structural warning
+            if node_data.get("state_write_after_external_call") and not node_data.get("reentrancy_risk"):
+                score += 30
+            
+            node_data["risk_score"] = score
 
     def export_json(self, output_path: str):
         """

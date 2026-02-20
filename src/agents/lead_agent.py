@@ -22,6 +22,7 @@ from src.agents.state import AgentState
 from src.agents.base_worker import WorkerOutput, WorkerTask
 from src.agents.workers.recon_worker import ReconWorker
 from src.agents.workers.attack_hypothesis_worker import AttackHypothesisWorker
+from src.agents.workers.test_writer_worker import TestWriterWorker
 from src.models.finding import Finding
 from src.utils.graph_queries import get_high_risk_hotspots
 from src.tools.etherscan_client import EtherscanClient
