@@ -1,324 +1,157 @@
-# Penteam 🛡️
+# Penteam v2.0
 
-**AI-Assisted Smart Contract Security System**
+**AI-Powered Smart Contract Security System**  
+*Human-in-the-loop • Multi-Agent • Graph-Powered • Hallucination-Resistant*
 
-Penteam is a "Plan-and-Execute" vulnerability hunting system that combines Knowledge Graphs for code structure understanding and Retrieval-Augmented Generation (RAG) for security knowledge retrieval.
+**Last Updated**: February 20, 2026
 
-[![Phase 4 Complete](https://img.shields.io/badge/Phase%204-Orchestration%20Complete-success)]()
-[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)]()
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)]()
+## Overview & Vision
 
----
+Penteam is a **human-in-the-loop multi-agent system** designed for high-signal Web3 bug bounty hunting and smart contract security analysis.
 
-## 🚀 Features
+Instead of a single generalist LLM, Penteam uses a **Mixture of Experts (MoE)** architecture where specialized agents work together under a central **Coordinator**. The system is built on a rich **Knowledge Graph** to ground every claim in deterministic facts, eliminating hallucinations.
 
-### Phase 2 - Structural Intelligence Layer ✅ **COMPLETE**
-
-#### Story 2.1 - External Attack Surface Detection
-- ✅ Identifies ALL externally callable functions (public, external, fallback, receive)
-- ✅ Payable function detection for Ether-receiving analysis
-- ✅ Inheritance support for proxy contracts
-- ✅ Read-only vs state-changing classification
-
-#### Story 2.2 - Storage State Mutation Detection
-- ✅ Tracks functions that mutate persistent storage
-- ✅ Distinguishes state variables from local variables
-- ✅ Mapping and struct write detection
-- ✅ Foundation for reentrancy and access control analysis
-
-#### Story 2.3 - Internal Call Graph Construction
-- ✅ Deterministic call relationships between functions
-- ✅ Modifier function body capture
-- ✅ Leaf function identification
-
-#### Story 2.4 - Access Control Modeling
-- ✅ Extracts modifier logic and pattern classification
-- ✅ Maps function access profiles (protected vs. unprotected)
-- ✅ Detects privileged roles (owner, admin, etc.)
-- ✅ Identifies unprotected state mutators
+**Core Philosophy**:
+- Signal-to-noise ratio > Autonomy
+- Graph memory + deterministic rules first
+- Adversarial Jury layer (different model families)
+- Compiler (Foundry) as the ultimate truth oracle
+- Human always in the loop for final validation
 
 ---
 
-### Phase 3 - Deep Analysis Layer ✅ **COMPLETE**
+## Architecture
 
-#### Story 3.1 - Recursive Write Propagation
-- ✅ Tracks state mutations through deep call chains
-- ✅ Handles cycle/recursion safety in propagation
-- ✅ Calculates min-depth to state-writing callees
+Penteam is divided into clear phases:
 
-#### Story 3.2 - Phase-based External Call Classification
-- ✅ Production-grade CEI (Checks-Effects-Interactions) analysis
-- ✅ Models execution in 3 phases (Pre-Modifier, Body, Post-Modifier)
-- ✅ Understands modifier stacking and complex write order
-
-#### Story 3.3 - Reachability Analysis
-- ✅ DFS-based reachability from all external entry points
-- ✅ Identifies live code vs. dead code in the attack surface
-- ✅ Maps reachability paths through internal call graph
+- **Phase 1–3**: Structural Intelligence Layer (Knowledge Graph + deterministic security signals)
+- **Phase 4**: Multi-Agent Orchestration (Lead Coordinator + specialized Workers)
+- **Phase 5**: Jury System (adversarial validation — in progress)
+- **Phase 6**: Exploit Proof Layer (Test Writer Worker — **live**)
+- **Phase 7+**: Confidence Scoring, Reports, SaaS (planned)
 
 ---
 
-### Phase 4 - Multi-Agent Orchestration ✅ **COMPLETE**
+## Core Components
 
-#### Story 4.1 - Global State & Persistence
-- ✅ Stateful agent orchestration with LangGraph
-- ✅ Memory persistence for pause/resume capabilities
-- ✅ Centralized hotspot tracking across workers
+### 1. Knowledge Graph (The Brain)
+- Built from **Slither** IR analysis
+- **NetworkX** DiGraph with 4000+ nodes typical
+- Nodes: Contracts, Functions, State Variables, Modifiers
+- Edges: `CALLS`, `READS`, `WRITES`, `HAS_MODIFIER`, `INHERITS`, etc.
+- Rich security metadata:
+  - Reentrancy risk, CEI violations, unprotected mutators, privilege escalation, reachability, write propagation, etc.
+- Query API used by all agents (`get_high_risk_hotspots`, `get_function_context`, etc.)
 
-#### Story 4.2 - Recon Worker (The Scout)
-- ✅ Automated protocol intelligence gathering
-- ✅ Etherscan integration for exploit history
-- ✅ RAG-enhanced security pattern matching
+### 2. Lead Coordinator
+- Pure orchestrator (never analyzes code directly)
+- Maintains global state using LangGraph
+- Spawns workers in parallel
+- Synthesizes findings
+- Decides escalation to human
+- Uses only high-level summary tools
 
-#### Story 4.3 - Attack Hypothesis Worker (The Specialist)
-- ✅ Parallel execution of security hypothesis testing
-- ✅ Structured finding generation with confidence scoring
-- ✅ Context-aware reasoning using Recon data
+### 3. Workers (Mixture of Experts)
 
+**Recon Worker**
+- Gathers protocol intelligence (RAG + Etherscan history)
+- Classifies protocol type (Vault, DEX, Lending, etc.)
+- Produces Security Dossier for downstream workers
 
-## 🏗️ Architecture
+**Attack Hypothesis Worker**
+- Takes hotspots + recon context
+- Generates structured vulnerability hypotheses
+- Must cite real node IDs from the graph
+- Produces `attack_path` and confidence score
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        Main Pipeline                         │
-│  Repository → Slither Analysis → Knowledge Graph → Agent    │
-└─────────────────────────────────────────────────────────────┘
+**Test Writer Worker** (Live)
+- Receives a finding
+- Generates Foundry test code
+- Runs isolated compile → test → fix loop (max 6 attempts)
+- Uses real `forge build` and `forge test`
+- Returns proven exploit or detailed failure reason
+- Sandboxed using `tempfile` + `SandboxManager`
 
-┌────────────────┐     ┌──────────────────┐     ┌─────────────┐
-│  Repo Manager  │────▶│ Analysis Engine  │────▶│   Graph     │
-│  (Clone/Copy)  │     │  (Slither + IR)  │     │  Builder    │
-└────────────────┘     └──────────────────┘     └──────┬──────┘
-                                                        │
-                       ┌────────────────────────────────┘
-                       │
-                       ▼
-        ┌──────────────────────────────────────────┐
-        │       NetworkX Knowledge Graph           │
-        │  ┌────────────────────────────────────┐  │
-        │  │ Nodes: Contracts, Functions, Vars  │  │
-        │  │ Edges: DEFINES, CALLS, READS,      │  │
-        │  │        WRITES, INHERITS            │  │
-        │  │ Metadata: Phase 2/3 Security Sig.  │  │
-        │  └────────────────────────────────────┘  │
-        └──────────────┬───────────────────────────┘
-                       │
-                       ▼
-        ┌──────────────────────────────┐
-        │     Query API (Tools)        │
-        │  - get_external_entry_points │
-        │  - get_state_mutators        │
-        │  - get_external_call_functions│
-        │  - get_internal_calls        │
-        │  - get_access_control_summary│
-        │  - get_callers               │
-        │  - get_call_graph            │
-        └──────────────┬───────────────┘
-                       │
-                       ▼
-        ┌──────────────────────────────┐
-        │      Lead Agent (LangGraph)  │
-        │   Gemini 2.5 Flash + RAG     │
-        └──────────────────────────────┘
-```
+### 4. Tools & Infrastructure
+- **Graph Tools**: `get_high_risk_hotspots`, `get_function_context`, etc.
+- **RAG Librarian**: ChromaDB + embeddings for audit reports & docs
+- **Etherscan Client**: On-chain history + exploit heuristics
+- **AnalysisEngine**: Slither + auto solc version switching
+- **RepoManager**: Git clone + Foundry/Hardhat dependency handling
+- **SandboxManager**: Isolated Foundry environment per test attempt
+
+### 5. Jury System (In Progress)
+- Multi-model adversarial validation
+- Sanity Jury (grounding)
+- Logic Jury ("Prove this vulnerability is FALSE")
+- Uses different model families (Gemini, GPT-5, Claude 4.6, Grok 4)
 
 ---
 
-## 📦 Installation
+## Tech Stack
 
-### Prerequisites
-- Python 3.13+
-- Solidity compiler (`solc-select` for version management)
-- Slither analyzer
+- **Language**: Python 3.13
+- **Orchestration**: LangGraph + LangChain
+- **Graph**: NetworkX
+- **Static Analysis**: Slither
+- **Testing**: Foundry (Forge)
+- **Vector DB**: ChromaDB
+- **Embeddings**: all-MiniLM-L6-v2
+- **LLMs**:
+  - Lead & most workers: Gemini 2.5 / 3.0 Pro
+  - Reasoning: GPT-5 / o3, Claude 4.6 Sonnet, Grok 4 Reasoning
+- **Models**: Pydantic for strict schemas
+- **Testing**: pytest (214+ tests, 100% pass)
 
-### Setup
+---
+
+## How It Works (End-to-End Flow)
+
+1. **Ingestion** → Clone repo → Run Slither → Build Knowledge Graph
+2. **Recon** → Gather protocol intelligence
+3. **Hotspot Detection** → `get_high_risk_hotspots()`
+4. **Attack Hypothesis** → Parallel workers generate leads with node IDs
+5. **Test Writer** → Generate & validate Foundry PoC (retry loop)
+6. **Jury** → Adversarial validation (planned)
+7. **Coordinator Synthesis** → Final report + human escalation
+
+---
+
+## Quick Start
 
 ```bash
-# Clone repository
+# 1. Clone & install
 git clone https://github.com/yourusername/penteam.git
 cd penteam
-
-# Install Python dependencies
 pip install -e .
 
-# Install Slither
-pip install slither-analyzer
+# 2. Add API keys to .env
+GOOGLE_API_KEY=...
+XAI_API_KEY=...        # for Grok
+# OPENAI_API_KEY=...
 
-# Set up environment
-cp .env.example .env
-# Add your GOOGLE_API_KEY to .env
-
-# (Optional) Ingest security knowledge base for RAG
-python -m src.knowledge.ingest
+# 3. Run on any repo
+python -m src.main --repo https://github.com/theredguild/damn-vulnerable-defi
 ```
 
----
+## Current Status (February 20, 2026)
 
-## 🎯 Quick Start
+- **Phase 1–3**: Complete (Rich Knowledge Graph + all security signals)
+- **Phase 4**: Complete (MoE + Coordinator + Recon + Attack Hypothesis)
+- **Phase 6**: 60% Complete (Test Writer Worker live with sandbox + retry loop)
+- **Total Tests**: 214 passing
+- **Key Achievement**: Successfully generates real vulnerability hypotheses + Foundry tests on live protocols
 
-### Analyze a Smart Contract
+## Roadmap
 
-```bash
-# Local directory
-python -m src.main --repo ./path/to/solidity/project
-
-# GitHub repository
-python -m src.main --repo https://github.com/user/contract-repo
-```
-
-### Run Tests
-
-```bash
-# All tests
-pytest tests/ -v
-
-# Specific components
-pytest tests/test_reachability.py -v       # Story 3.3
-pytest tests/test_external_calls.py -v     # Story 3.2
-pytest tests/test_write_propagation.py -v  # Story 3.1
-```
+- [x] Phase 4 — Multi-Agent Orchestration
+- [x] Phase 6.1–6.3 — Test Writer Core + Sandbox + Loop
+- [ ] Story 6.4 — Confidence Adjustment & Integration
+- [ ] Phase 5 — Full Jury System
+- [ ] Phase 7 — Confidence Scoring & Reports
+- [ ] SaaS / Hosted Version
 
 ---
 
-## 📊 Knowledge Graph Schema
-
-### Node Types
-
-- **Contract**: Smart contract definitions
-- **Function**: Contract functions with comprehensive metadata
-- **Modifier**: Access control modifiers as first-class nodes
-- **StateVariable**: Persistent storage variables
-
-### Function Metadata (Phase 3 Complete)
-
-```python
-{
-    # Story 2.1-3 Core
-    "is_external_entry": bool,      # Externally callable?
-    "is_payable": bool,             # Accepts Ether?
-    "writes_state": bool,           # Mutates storage?
-    
-    # Story 3.1 - Recursive Writes
-    "propagated_state_variables": [],# List of ALL written vars (direct+indirect)
-    "indirect_writes_state": bool,  # Writes ONLY via callees?
-    
-    # Story 3.2 - CEI Violation
-    "state_write_after_external_call": bool, # Violation found?
-    "makes_external_call": bool,    # Performs external call?
-    
-    # Story 3.3 - Reachability
-    "reachable_from_external_entry": bool, # Alive in attack surface?
-    "entry_points": ["Vault::deposit"]     # Reachable from these entries
-}
-```
-
-### Edge Types
-
-- `DEFINES`: Contract → Function/Variable
-- `INHERITS`: Contract → Parent Contract
-- `CALLS`: Function → Function (internal)
-- `READS`: Function → State Variable
-- `WRITES`: Function → State Variable
-
----
-
-## 🧪 Testing
-
-### Test Coverage
-
-- ✅ **Story 2.1-4**: Foundation layer (69 tests)
-- ✅ **Story 3.1-3**: Deep analysis layer (55 tests)
-- ✅ **Integration**: End-to-end repository ingestion pipeline
-
-All tests maintain **100% pass rate** for Phase 3 functionality.
-
----
-
-## 📁 Project Structure
-
-```
-penteam/
-├── src/
-│   ├── agents/
-│   │   ├── lead_agent.py      # Main AI agent (Gemini)
-│   │   └── tools.py           # Graph query tools
-│   ├── knowledge/
-│   │   └── ingest.py          # RAG knowledge ingestion
-│   ├── utils/
-│   │   └── graph_queries.py   # Query API
-│   ├── analysis_engine.py     # Slither wrapper
-│   ├── graph_builder.py       # Knowledge graph construction
-│   ├── repo_manager.py        # Repository handling
-│   └── main.py                # Entry point
-├── tests/
-│   ├── contracts/             # Test Solidity contracts
-│   ├── test_reachability.py
-│   ├── test_external_calls.py
-│   └── test_write_propagation.py
-├── data/
-│   ├── knowledge/             # RAG source documents
-│   │   ├── audits/           # PDF audit reports
-│   │   └── docs/             # Solidity documentation
-│   └── chroma_db/            # Vector database
-├── pyproject.toml
-├── .env.example
-└── README.md
-```
-
----
-
-## 🔮 Roadmap
-
-### ✅ Phase 3 - Deep Analysis Layer (COMPLETE)
-- [x] Story 3.1: Recursive Write Propagation
-- [x] Story 3.2: Phase-based CEI Detection
-- [x] Story 3.3: Reachability Analysis
-
-### ✅ Phase 4 - Multi-Agent Orchestration (COMPLETE)
-- [x] Story 4.1: Global State & Persistence
-- [x] Story 4.2: Recon Worker
-- [x] Story 4.3: Attack Hypothesis Worker
-
-### 📋 Phase 5 - Advanced Vulnerability Detection (NEXT)
-- [ ] Automated Taint Analysis
-- [ ] Cross-Contract Reentrancy Simulation
-- [ ] Symbolic Execution Integration
-
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please ensure:
-- All tests pass: `pytest tests/ -v`
-- Code follows existing patterns
-- New features include comprehensive tests
-
----
-
-## 📄 License
-
-MIT License - see LICENSE file for details
-
----
-
-## 📚 Documentation
-
-For detailed technical documentation, see:
-- **[project_status.md](./project_status.md)**: Complete project status and implementation details
-- **Walkthroughs**: Narrative documentation of major feature implementations
-
----
-
-## 🙏 Acknowledgments
-
-Built with:
-- [Slither](https://github.com/crytic/slither) - Smart contract static analyzer
-- [LangGraph](https://github.com/langchain-ai/langgraph) - Agent orchestration
-- [Google Gemini](https://ai.google.dev/) - Large language model
-- [NetworkX](https://networkx.org/) - Graph data structures
-
----
-
-**Status**: 🟢 Phase 4 Orchestration Complete - Ready for Phase 5 Development
-
-**Last Updated**: February 19, 2026
+*Penteam — Turning AI into a real smart contract security weapon.*  
+*Built with ❤️ for the Web3 security community.*
