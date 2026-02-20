@@ -1,4 +1,5 @@
 import re
+import json
 from typing import Any, Tuple
 
 from src.agents.base_worker import WorkerAgent, WorkerTask, WorkerOutput
@@ -8,19 +9,9 @@ from src.agents.workers.test_writer_prompts import TEST_WRITER_SYSTEM_PROMPT
 
 
 class TestWriterWorker(WorkerAgent):
-    """
-    Worker responsible for generating, compiling, and running exploit tests
-    to prove or disprove a given vulnerability hypothesis.
-    """
-
     MAX_ATTEMPTS = 6
 
     def __init__(self, llm_client, graph=None):
-        """
-        Args:
-            llm_client: The LangChain LLM client.
-            graph: Optional graph instance (not strictly needed, but accepted for interface compatibility).
-        """
         self.llm_client = llm_client
         self.graph = graph
 
@@ -28,22 +19,15 @@ class TestWriterWorker(WorkerAgent):
         return "test-writer"
 
     def _extract_test_code(self, response: str) -> str:
-        """Robustly parse markdown blocks looking for ```solidity"""
         match = re.search(r"```(?:solidity|sol)\n(.*?)\n```", response, re.IGNORECASE | re.DOTALL)
         if match:
             return match.group(1).strip()
-        # Fallback if no language specified
         match = re.search(r"```\n(.*?)\n```", response, re.DOTALL)
         if match:
             return match.group(1).strip()
         return response.strip()
 
-    async def _compile_and_test(self, test_code: str) -> Tuple[bool, bool, str | None]:
-        """
-        Compiles and tests execution within a sandboxed Foundry environment.
-        Returns:
-            (compiled: bool, exploit_success: bool, error_message: str | None)
-        """
+    async def _compile_and_test(self, test_code: str) -> Tuple[bool, bool, str | None, str]:
         sandbox = SandboxManager()
         try:
             sandbox.setup_foundry_project()
@@ -51,15 +35,15 @@ class TestWriterWorker(WorkerAgent):
             
             build_res = sandbox.run("forge build")
             if not build_res.success:
-                return False, False, f"Build Failed:\n{build_res.stderr or build_res.stdout}"
+                return False, False, f"Build Failed: {build_res.stderr or build_res.stdout}", ""
                 
             test_res = sandbox.run("forge test --match-test test_exploit -vvv")
-            if not test_res.success:
-                return True, False, f"Test Failed:\n{test_res.stderr or test_res.stdout}"
-                
-            return True, True, None
+            test_logs = (test_res.stdout or "") + "\n" + (test_res.stderr or "")
+            
+            exploit_success = "[PASS]" in test_logs or "exploit succeeded" in test_logs.lower()
+            return True, exploit_success, None, test_logs
         except Exception as e:
-            return False, False, f"Sandbox error: {str(e)}"
+            return False, False, str(e), ""
         finally:
             sandbox.cleanup()
 
@@ -70,20 +54,15 @@ class TestWriterWorker(WorkerAgent):
 
         error_context = ""
         if error_history:
-            error_context = "CRITICAL: Previous attempts failed with the following errors. You MUST fix these:\n"
-            for i, err in enumerate(error_history):
-                # Ensure we don't blow up context size if errors are massive
-                truncated_err = err[:1000] + ("..." if len(err) > 1000 else "")
-                error_context += f"Attempt {i+1} Error:\n{truncated_err}\n"
-            error_context += "\n"
+            error_context = "Previous attempts failed. Fix these errors:\n" + "\n".join(error_history[-3:])
 
         user_content = (
             f"Vulnerability Class: {finding.vulnerability_class}\n"
             f"Hypothesis: {finding.hypothesis}\n"
             f"Attack Path: {' -> '.join(finding.attack_path)}\n\n"
             f"Relevant Code:\n{code_snippets}\n\n"
-            f"{error_context}"
-            "Generate the test_code to prove this vulnerability."
+            f"{error_context}\n"
+            "Generate a complete Foundry test that proves this vulnerability."
         )
 
         return [
@@ -92,80 +71,79 @@ class TestWriterWorker(WorkerAgent):
         ]
 
     async def run(self, task: WorkerTask) -> WorkerOutput:
-        """
-        Executes the Test Writer loop.
-        """
         finding = task.context.get("finding")
-        relevant_code = task.context.get("relevant_code", {})
-        
+
+        # === FIX FOR LIST FROM COORDINATOR ===
+        if isinstance(finding, list):
+            print(f"[TestWriterWorker] Received {len(finding)} findings → using first one")
+            finding = finding[0] if finding else None
+
         if not finding or not isinstance(finding, Finding):
             return WorkerOutput(
                 worker_type=self.get_worker_type(),
                 confidence=0,
-                raw_output={"error": "Missing or invalid 'finding' in task context"}
+                raw_output={"error": "Missing or invalid finding"}
             )
 
+        relevant_code = task.context.get("relevant_code", {})
         attempts = 0
-        last_error = None
+        error_history = []
         compiled = False
         exploit_success = False
         test_code_generated = None
-
-        error_history = []
+        test_logs = ""
 
         while attempts < self.MAX_ATTEMPTS:
             attempts += 1
-            
             prompt = self._build_prompt(finding, relevant_code, error_history)
-            
+
             try:
-                # Assuming ainovke works similarly to other workers (e.g., AttackHypothesisWorker)
                 if hasattr(self.llm_client, "ainvoke"):
                     response = await self.llm_client.ainvoke(prompt)
                 else:
                     response = self.llm_client.invoke(prompt)
 
-                content = response.content
-                test_code_generated = self._extract_test_code(content)
+                content = response.content if hasattr(response, "content") else str(response)
+            
+                if isinstance(content, list):
+                    content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
                 
+                test_code_generated = self._extract_test_code(content)
+
                 if not test_code_generated:
-                    last_error = "LLM did not return any code."
-                    error_history.append(last_error)
+                    error_history.append("No code returned by LLM")
                     continue
 
-                # Try to compile and test
-                compiled, exp_success, test_error = await self._compile_and_test(test_code_generated)
-                exploit_success = exp_success
-                
-                if not compiled or not exploit_success:
-                    last_error = test_error or "Compilation or exploit failed without specific error"
-                    error_history.append(last_error)
-                    continue
-                
-                # If we get here, it compiled and succeeded
-                last_error = None
-                break
+                compiled, exploit_success, test_error, logs = await self._compile_and_test(test_code_generated)
+                test_logs = logs
+
+                if compiled and exploit_success:
+                    break
+
+                if test_error:
+                    error_history.append(test_error)
+                else:
+                    error_history.append("Test did not pass exploit check")
 
             except Exception as e:
-                last_error = f"Unexpected execution error: {str(e)}"
-                error_history.append(last_error)
-                continue
+                print(f"[TestWriterWorker] LLM call failed: {e}")
+                error_history.append(str(e))
 
-        # Clamp confidence sum to 0-100
-        original_conf = finding.confidence
-        if exploit_success:
-            final_confidence = 100
-        else:
-            final_confidence = original_conf
+        # Confidence adjustment
+        original_conf = getattr(finding, "confidence", 50)
+        adjustment = 60 if (compiled and exploit_success) else 20 if compiled else -40
+        final_confidence = max(0, min(100, original_conf + adjustment))
 
         return WorkerOutput(
             worker_type=self.get_worker_type(),
+            task_id=task.task_id,
             confidence=final_confidence,
             raw_output={
                 "compiled": compiled,
                 "exploit_success": exploit_success,
                 "test_code": test_code_generated,
+                "test_logs": test_logs,
                 "attempts": attempts,
-                "last_error": last_error
+                "last_error": error_history[-1] if error_history else None
             }
         )

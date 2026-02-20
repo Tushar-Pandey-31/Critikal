@@ -4,6 +4,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 import logging
+import os
+import stat
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +70,14 @@ class SandboxManager:
                 stderr=str(e)
             )
 
+
     def cleanup(self) -> None:
-        """Removes the temporary directory completely."""
         try:
             if self.tmp_dir.exists():
-                shutil.rmtree(self.tmp_dir)
+                import stat
+                def handle_remove_readonly(func, path, exc):
+                    os.chmod(path, stat.S_IWRITE)
+                    func(path)
+                shutil.rmtree(self.tmp_dir, onerror=handle_remove_readonly)
         except Exception as e:
             logger.warning(f"Failed to cleanup temp dir {self.tmp_dir}: {e}")

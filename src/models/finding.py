@@ -26,7 +26,7 @@ class EvidenceNode:
 
 @dataclass
 class Finding:
-    finding_id: str
+    id: str
     hotspot_node_id: str
     vulnerability_class: str
     title: str
@@ -37,6 +37,10 @@ class Finding:
     confidence: int                # 0–100
     impact: str
     preconditions: list[str]
+    affected_contract: str
+    affected_function: str
+    severity_estimate: str         # "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
+    severity: str                  # DEPRECATED: use severity_estimate instead
     sanity_verdict: dict | None = None
     logic_verdict: dict | None = None
     test_result: dict | None = None
@@ -51,10 +55,10 @@ class Finding:
         """
         raw = output.raw_output or {}
         return cls(
-            finding_id=str(uuid.uuid4()),
+            id=str(uuid.uuid4()),
             hotspot_node_id=hotspot.node_id,
             vulnerability_class=raw.get("vulnerability_class", "unknown"),
-            title=raw.get("title", "Untitled Finding"),
+            title=raw.get("title", "Unnamed Lead"),
             hypothesis=output.hypothesis or "",
             evidence_nodes=[
                 EvidenceNode(
@@ -71,4 +75,8 @@ class Finding:
             confidence=output.confidence,
             impact=raw.get("impact", "Unknown"),
             preconditions=raw.get("preconditions", []),
+            affected_contract=hotspot.contract,
+            affected_function=hotspot.function,
+            severity_estimate=hotspot.priority,
+            severity=hotspot.priority,
         )

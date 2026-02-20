@@ -25,6 +25,10 @@ def dummy_finding():
         status=FindingStatus.DRAFT,
         confidence=50,
         impact="High",
+        severity="HIGH",
+        severity_estimate="HIGH",
+        affected_contract="Contract",
+        affected_function="vuln",
         preconditions=[]
     )
 
@@ -48,7 +52,7 @@ async def test_happy_path(mock_llm, dummy_finding):
     mock_llm.ainvoke.return_value = MagicMock(content="```solidity\ncontract Exploit { }\n```")
     
     worker = TestWriterWorker(llm_client=mock_llm)
-    worker._compile_and_test = AsyncMock(return_value=(True, True, None))
+    worker._compile_and_test = AsyncMock(return_value=(True, True, None, "Test result: PASS"))
     
     task = WorkerTask(
         task_id="t1", 
@@ -58,10 +62,11 @@ async def test_happy_path(mock_llm, dummy_finding):
     
     output = await worker.run(task)
     
-    assert output.confidence == 100  # exploit success -> 100
+    assert output.confidence == 100  # exploit success -> 50 + 60 = 110 clamp 100
     assert output.raw_output["compiled"] is True
     assert output.raw_output["exploit_success"] is True
     assert output.raw_output["test_code"] == "contract Exploit { }"
+    assert output.raw_output["test_logs"] == "Test result: PASS"
     assert output.raw_output["attempts"] == 1
     assert output.raw_output["last_error"] is None
 
@@ -77,8 +82,8 @@ async def test_compile_fail_then_succeed(mock_llm, dummy_finding):
     worker = TestWriterWorker(llm_client=mock_llm)
     # Stub compilation to fail first time, succeed second time
     worker._compile_and_test = AsyncMock(side_effect=[
-        (False, False, "Syntax error"),
-        (True, True, None)
+        (False, False, "Syntax error", "compiler output"),
+        (True, True, None, "Output has PASS inside")
     ])
     
     task = WorkerTask(task_id="t1", task_type="test", context={"finding": dummy_finding})
@@ -95,7 +100,7 @@ async def test_max_attempts_exceeded(mock_llm, dummy_finding):
     mock_llm.ainvoke.return_value = MagicMock(content="```sol\nbad code\n```")
     
     worker = TestWriterWorker(llm_client=mock_llm)
-    worker._compile_and_test = AsyncMock(return_value=(False, False, "Compiler Error"))
+    worker._compile_and_test = AsyncMock(return_value=(False, False, "Compiler Error", "syntax error log"))
     
     task = WorkerTask(task_id="t1", task_type="test", context={"finding": dummy_finding})
     output = await worker.run(task)
@@ -103,7 +108,7 @@ async def test_max_attempts_exceeded(mock_llm, dummy_finding):
     assert output.raw_output["attempts"] == 6
     assert output.raw_output["compiled"] is False
     assert output.raw_output["last_error"] == "Compiler Error"
-    assert output.confidence == 50  # Original confidence because we failed
+    assert output.confidence == 10  # 50 - 40 = 10
 
 @pytest.mark.asyncio
 async def test_extract_code_fallback(mock_llm, dummy_finding):
@@ -116,8 +121,8 @@ async def test_extract_code_fallback(mock_llm, dummy_finding):
     
     worker = TestWriterWorker(llm_client=mock_llm)
     worker._compile_and_test = AsyncMock(side_effect=[
-        (False, False, "Syntax error"),
-        (True, True, None)
+        (False, False, "Syntax error", "Logs1"),
+        (True, True, None, "Logs2 with PASS")
     ])
     
     task = WorkerTask(task_id="t1", task_type="test", context={"finding": dummy_finding})
@@ -134,7 +139,7 @@ async def test_exploit_fails_but_compiles(mock_llm, dummy_finding):
     
     worker = TestWriterWorker(llm_client=mock_llm)
     # Compiles fine, but assertion fails in test
-    worker._compile_and_test = AsyncMock(return_value=(True, False, "Test failed: Assertion Error"))
+    worker._compile_and_test = AsyncMock(return_value=(True, False, "Test failed: Assertion Error", "FAIL: revert"))
     
     task = WorkerTask(task_id="t1", task_type="test", context={"finding": dummy_finding})
     output = await worker.run(task)
@@ -143,7 +148,7 @@ async def test_exploit_fails_but_compiles(mock_llm, dummy_finding):
     assert output.raw_output["compiled"] is True
     assert output.raw_output["exploit_success"] is False
     assert output.raw_output["last_error"] == "Test failed: Assertion Error"
-    assert output.confidence == 50  # Original confidence preserved
+    assert output.confidence == 70  # 50 + 20 = 70
 
 @pytest.mark.asyncio
 async def test_missing_test_code_key(mock_llm, dummy_finding):

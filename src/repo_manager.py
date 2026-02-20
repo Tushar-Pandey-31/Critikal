@@ -33,7 +33,20 @@ class RepoManager:
         
         if os.path.exists(target_path):
             print(f"Directory {target_path} already exists. Removing it to clone fresh...")
-            shutil.rmtree(target_path, onerror=self._handle_remove_readonly)
+            try:
+                shutil.rmtree(target_path, onerror=self._handle_remove_readonly)
+            except Exception as e:
+                print(f"shutil.rmtree failed: {e}. Trying system command...")
+                abs_target = os.path.abspath(target_path)
+                if os.name == 'nt':
+                    # Windows specific robust delete. Use powershell for better path handling.
+                    subprocess.run(["powershell", "-Command", f"Remove-Item -Recurse -Force '{abs_target}'"], check=False)
+                else:
+                    subprocess.run(["rm", "-rf", abs_target], check=False)
+            
+            # Double check
+            if os.path.exists(target_path):
+                print(f"Warning: Failed to completely remove {target_path}. Clone may fail.")
             
         # Check if local directory
         if os.path.isdir(url):
@@ -41,10 +54,11 @@ class RepoManager:
             shutil.copytree(url, target_path)
             print("Copy successful.")
         else:
-            print(f"Cloning {url} to {target_path}...")
             try:
-                subprocess.run(["git", "clone", "--recursive", url, target_path], check=True, capture_output=True)
-                print("Clone successful.")
+                # Clone without --recursive initially to avoid submodule failures during clone
+                # Foundry dependencies will be handled by 'forge install' or manual submodule update
+                subprocess.run(["git", "clone", url, target_path], check=True, capture_output=True)
+                print("Clone successful (non-recursive).")
             except subprocess.CalledProcessError as e:
                 print(f"Error cloning repository: {e.stderr.decode()}")
                 raise

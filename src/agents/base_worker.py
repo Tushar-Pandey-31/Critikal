@@ -24,6 +24,7 @@ class WorkerOutput(BaseModel):
     """Uniform output contract for every worker agent."""
 
     worker_type: str
+    task_id: str | None = None
     hypothesis: str | None = None
     
     # Unordered set of ALL graph nodes cited as evidence
