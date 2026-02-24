@@ -1,5 +1,6 @@
 import json
 from src.agents.base_worker import WorkerAgent, WorkerOutput, WorkerTask
+from src.utils.node_ids import normalize_node_id
 from src.utils.graph_queries import (
     get_function_context,
     get_internal_calls,
@@ -47,7 +48,7 @@ Return ONLY valid JSON. No markdown fences, no preamble, no explanation.
   "vulnerability_class": "reentrancy" | "unprotected_mutator" | "privilege_escalation" | "cei_violation" | "unknown",
   "title": "Short one-line title of the vulnerability",
   "hypothesis": "2-4 sentence narrative of HOW to exploit this. Be specific about the attack steps.",
-  "attack_path": ["ContractName.functionName", "ContractName.otherFunction"],
+  "attack_path": ["ContractName::functionName", "ContractName::otherFunction"],
   "evidence_node_ids": [],
   "confidence": <integer 35-100>,
   "impact": "What an attacker gains if this succeeds",
@@ -56,10 +57,10 @@ Return ONLY valid JSON. No markdown fences, no preamble, no explanation.
 }
 
 ## attack_path Rules
-- Use the format "ContractName.functionName" (dot notation, not ::)
+- Use the format "ContractName::functionName" (double colon)
 - Start with the external entry point, end with the vulnerable function
 - Minimum 1 element. If only one function is involved, just list that one.
-- Do NOT use :: notation. Do NOT leave this empty. Always include at least the target function.
+- Do NOT leave this empty. Always include at least the target function.
 
 ## Common Vulnerability Patterns (trust graph signals heavily)
 
@@ -129,7 +130,7 @@ class AttackHypothesisWorker(WorkerAgent):
                 task_id=task.task_id,
                 confidence=35,
                 hypothesis=f"Static analysis flagged {hotspot.function} as high-risk but LLM response was unparseable.",
-                attack_path=[f"{hotspot.contract}.{hotspot.function}"],
+                attack_path=[f"{hotspot.contract}::{hotspot.function}"],
                 raw_output={
                     "vulnerability_class": "unknown",
                     "title": f"Suspected issue in {hotspot.function}",
@@ -158,7 +159,7 @@ class AttackHypothesisWorker(WorkerAgent):
         # Fix empty attack_path — LLM often returns [] even with a valid hypothesis
         attack_path = parsed.get("attack_path", [])
         if not attack_path:
-            attack_path = [f"{hotspot.contract}.{hotspot.function}"]
+            attack_path = [f"{hotspot.contract}::{hotspot.function}"]
             print(f"[AttackWorker] attack_path was empty → defaulting to [{attack_path[0]}]")
 
         if confidence < threshold:
@@ -229,7 +230,7 @@ class AttackHypothesisWorker(WorkerAgent):
         if hotspot.signals.get("makes_external_call"):
             try:
                 ext = get_external_call_functions(self.graph)
-                context["external_call_detail"] = [e for e in ext if e.get("node_id") == node_id]
+                context["external_call_detail"] = [e for e in ext if e.get("function_id") == node_id]
             except Exception:
                 context["external_call_detail"] = []
 
@@ -237,6 +238,7 @@ class AttackHypothesisWorker(WorkerAgent):
 
     def _build_prompt(self, hotspot, graph_context: dict, recon_context: dict) -> list[dict]:
         fn_ctx = graph_context.get("function_context", {})
+        source_code = fn_ctx.get("source_code") or fn_ctx.get("code", "Source code not available")
         signals = graph_context.get("signals_summary", {})
 
         # Determine expected vulnerability class from signals
@@ -256,7 +258,7 @@ Risk Score: {hotspot.risk_score}
 Expected Vulnerability Class (from static analysis): {expected_class}
 
 ## Source Code
-{fn_ctx.get("source_code", "Source code not available — rely on graph signals")}
+{source_code}
 
 ## Graph Signals (deterministic — trust these completely)
 - reentrancy_risk: {signals.get("reentrancy_risk")}
@@ -281,7 +283,7 @@ Known Attack Patterns: {recon_context.get("known_attack_patterns", [])}
 2. If state_write_after_external_call=True, assume CEI violation is real.
 3. If is_unprotected_mutator=True, assume access control is missing.
 4. Generate the strongest exploit hypothesis you can based on available evidence.
-5. attack_path must use dot notation: "ContractName.functionName"
+5. attack_path must use "ContractName::functionName" (double colon)
 6. Return ONLY the JSON object, no markdown, no prose."""
 
         return [
@@ -315,6 +317,8 @@ Known Attack Patterns: {recon_context.get("known_attack_patterns", [])}
                 parsed["attack_path"] = []
             if not isinstance(parsed.get("evidence_node_ids"), list):
                 parsed["evidence_node_ids"] = []
+            parsed["attack_path"] = [normalize_node_id(p) for p in parsed["attack_path"] if isinstance(p, str)]
+            parsed["evidence_node_ids"] = [normalize_node_id(n) for n in parsed["evidence_node_ids"] if isinstance(n, str)]
 
             return parsed
         except Exception as e:

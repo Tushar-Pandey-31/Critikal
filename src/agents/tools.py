@@ -7,23 +7,30 @@ Two categories:
 """
 
 from typing import List, Dict, Any
+from pathlib import Path
 from langchain_core.tools import tool, StructuredTool
 import networkx as nx
 
 from src.utils.graph_queries import GraphQueries
+from src.knowledge.paths import CHROMA_DB_PATH
 
 # ────────────────────────────────────────────────────────────
 #  RAG Setup (shared across coordinator and workers)
 # ────────────────────────────────────────────────────────────
 
-DB_PATH = "./data/chroma_db"
+DB_PATH = str(CHROMA_DB_PATH)
 try:
     from langchain_chroma import Chroma
     from langchain_huggingface import HuggingFaceEmbeddings
 
-    _embedding_function = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    vector_db = Chroma(persist_directory=DB_PATH, embedding_function=_embedding_function)
-    HAS_RAG = True
+    if Path(DB_PATH).exists():
+        _embedding_function = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        vector_db = Chroma(persist_directory=DB_PATH, embedding_function=_embedding_function)
+        HAS_RAG = True
+    else:
+        print(f"Warning: RAG DB not found at {DB_PATH}. Running without security knowledge search.")
+        vector_db = None
+        HAS_RAG = False
 except Exception as e:
     print(f"Warning: RAG system not initialized (missing dependencies or DB): {e}")
     vector_db = None
@@ -77,8 +84,20 @@ def create_coordinator_tools(graph: nx.DiGraph) -> List[StructuredTool]:
         escalation = queries.get_privilege_escalation_risks()
         entry_points = queries.get_external_entry_points()
         external_calls = queries.get_external_call_functions()
+        hotspots = queries.get_high_risk_hotspots(min_score=70)
 
         return {
+            "hotspots": [
+                {
+                    "node_id": h.node_id,
+                    "contract": h.contract,
+                    "function": h.function,
+                    "risk_score": h.risk_score,
+                    "priority": h.priority,
+                    "risk_categories": h.risk_categories,
+                }
+                for h in hotspots
+            ],
             "total_entry_points": len(entry_points),
             "reentrancy_risks": reentrancy,
             "unprotected_mutators": unprotected,
@@ -90,6 +109,7 @@ def create_coordinator_tools(graph: nx.DiGraph) -> List[StructuredTool]:
                 "escalation_risky_functions": len(escalation.get("risky_functions", [])),
                 "escalation_risky_variables": len(escalation.get("risky_variables", [])),
                 "external_call_count": len(external_calls),
+                "hotspot_count": len(hotspots),
             }
         }
 

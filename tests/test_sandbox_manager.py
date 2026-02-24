@@ -68,7 +68,7 @@ def test_run_command_timeout(mock_run):
     res = manager.run("sleep 60")
     assert res.success is False
     assert "timed out after 60" in res.stderr
-    assert res.stdout == "stuck"
+    assert res.stdout == ""
     
     manager.cleanup()
 

@@ -2,23 +2,43 @@
 name = "penteam"
 version = "0.1.0"
 description = "Penteam: AI-Assisted Smart Contract Security System"
-authors = ["Your Name <you@example.com>"]
+authors = ["tuxsharx <tuxsharx@gmail.com>"]
 readme = "README.md"
-packages = [{include = "src"}]
+packages = [{ include = "src" }]
 
 [tool.poetry.dependencies]
-python = "^3.10"
-ipython = "^8.12.0"
-slither-analyzer = "^0.10.0"
-networkx = "^3.0"
-langchain-chroma = "^0.1.0"
-chromadb = "^0.4.0"
-pypdf = "^3.0.0"
-sentence-transformers = "^2.2.0"
-langchain-huggingface = "^0.0.1"
-python-dotenv = "^1.0.0"
-langchain-community = "^0.0.1"
+python = ">=3.12.1,<3.13"
+ipython = "^8.18"
+
+# Security tooling
+slither-analyzer = "0.10.3"
+networkx = "3.2.1"
+
+# Vector DB
+chromadb = "^0.6.0"
+langchain-chroma = "0.2.3"
+
+# LangChain ecosystem (all 0.3.x family)
+langchain = "^0.3.0"
+langchain-core = "^0.3.0"
+langchain-community = "^0.3.0"
+langchain-huggingface = "^0.1.0"
+langchain-google-genai = "^2.1.0"
+langgraph = "^0.3.0"
+
+# Embeddings
+sentence-transformers = "^3.0.0"
+
+# Utilities
+pypdf = "^4.0.0"
+python-dotenv = "1.0.1"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "pytest (>=9.0.2,<10.0.0)",
+    "pytest-asyncio (>=1.3.0,<2.0.0)"
+]

@@ -1,15 +1,21 @@
-import os
 from typing import List, Dict, Any
+from pathlib import Path
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
+from src.knowledge.paths import CHROMA_DB_PATH
 
-DB_PATH = os.path.join(os.getcwd(), "data", "chroma_db")
+DB_PATH = str(CHROMA_DB_PATH)
 
 # Initialize shared components
 try:
-    _embedding_function = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    vector_db = Chroma(persist_directory=DB_PATH, embedding_function=_embedding_function)
-    HAS_RAG = True
+    if Path(DB_PATH).exists():
+        _embedding_function = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        vector_db = Chroma(persist_directory=DB_PATH, embedding_function=_embedding_function)
+        HAS_RAG = True
+    else:
+        print(f"Warning: RAG DB not found at {DB_PATH}. Running without RAG results.")
+        vector_db = None
+        HAS_RAG = False
 except Exception as e:
     print(f"Warning: RAG system not initialized: {e}")
     vector_db = None

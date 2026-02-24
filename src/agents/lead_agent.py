@@ -11,10 +11,13 @@ The Lead Agent no longer performs direct analysis. It:
 
 import os
 import json
+import shutil
+import tempfile
 from datetime import datetime
 from typing import List, Any, Optional
 import uuid
 from dotenv import load_dotenv
+from pathlib import Path
 
 load_dotenv()
 
@@ -25,7 +28,8 @@ from src.agents.workers.recon_worker import ReconWorker
 from src.agents.workers.attack_hypothesis_worker import AttackHypothesisWorker
 from src.agents.workers.test_writer_worker import TestWriterWorker
 from src.models.finding import Finding, FindingStatus
-from src.utils.graph_queries import get_high_risk_hotspots, get_function_context
+from src.utils.graph_queries import get_high_risk_hotspots, get_function_context, get_contract_signatures
+from src.utils.node_ids import normalize_node_id
 from src.tools.etherscan_client import EtherscanClient
 import asyncio
 
@@ -33,6 +37,12 @@ try:
     from langchain_google_genai import ChatGoogleGenerativeAI
 except ImportError:
     ChatGoogleGenerativeAI = None
+
+
+def _finding_priority(f: Finding) -> tuple:
+    """Sort key: highest confidence first, tie-break by severity (CRITICAL > HIGH > MEDIUM > LOW)."""
+    sev_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+    return (-f.confidence, sev_order.get(f.severity_estimate, 4))
 
 
 # ════════════════════════════════════════════════════════════
@@ -123,12 +133,13 @@ Output ONLY valid JSON with this exact structure:
 SECTION 3: BEHAVIOR RULES
 ═══════════════════════════════════════════════════════════
 
-1. ALWAYS call get_high_risk_hotspots() as your first tool.
+1. Use the provided hotspot and worker context from the programmatic pipeline.
 2. NEVER attempt to read source code. That is the workers' job.
 3. Report ALL leads that workers flagged with confidence > 0, even if confidence is low.
 4. Do NOT filter out leads. More leads is better than fewer. The user can triage.
 5. IF the hotspot data shows zero risks, report 0 leads honestly.
-6. Output ONLY the JSON block. No prose, no markdown fences, no preamble.
+6. Do NOT call tools in this final synthesis step.
+7. Output ONLY the JSON block. No prose, no markdown fences, no preamble.
 """
 
 SYSTEM_PROMPT = COORDINATOR_SYSTEM_PROMPT
@@ -139,6 +150,15 @@ SYSTEM_PROMPT = COORDINATOR_SYSTEM_PROMPT
 # ════════════════════════════════════════════════════════════
 
 _TOOLS: List[Any] = []
+
+
+def _repo_name_from_url(repo_url: str) -> str:
+    if not repo_url:
+        return ""
+    repo_name = repo_url.rstrip("/").split("/")[-1]
+    if repo_name.endswith(".git"):
+        repo_name = repo_name[:-4]
+    return repo_name
 
 
 def set_tools(tools: List[Any]):
@@ -170,11 +190,23 @@ def get_worker_llm(
     """
     Returns a CLEAN LLM with NO tools bound.
     Workers MUST use this. Never pass coordinator_llm to workers.
+
+    Uses transport="rest" so sync invoke() respects timeout (gRPC often ignores it).
+    TestWriter should use invoke() via asyncio.to_thread, not ainvoke().
     """
     if not ChatGoogleGenerativeAI:
         raise ImportError("langchain-google-genai is not installed.")
-    llm = ChatGoogleGenerativeAI(model=model_name, temperature=temperature)
-    print(f"[get_worker_llm] Created worker LLM: {llm.model} (no tools)", flush=True)
+    timeout = float(os.getenv("WORKER_LLM_TIMEOUT", "180"))
+    max_retries = int(os.getenv("WORKER_LLM_MAX_RETRIES", "0"))
+    transport = os.getenv("WORKER_LLM_TRANSPORT", "rest")
+    llm = ChatGoogleGenerativeAI(
+        model=model_name,
+        temperature=temperature,
+        timeout=timeout,
+        max_retries=max_retries,
+        transport=transport,
+    )
+    print(f"[get_worker_llm] Created worker LLM: {llm.model} (no tools, timeout={timeout}s, transport={transport})", flush=True)
     return llm
 
 
@@ -194,7 +226,6 @@ def synthesize_worker_outputs(worker_outputs: List[Any]) -> List[dict]:
 
         lead_id = f"LEAD-{i + 1:03d}"
         evidence = wo_dict.get("evidence_node_ids", [])
-        # Use task_id as key if evidence is empty (prevents all empty-evidence outputs colliding)
         key = "|".join(sorted(evidence)) if evidence else wo_dict.get("task_id", f"__worker_{i}")
 
         wo_confidence = wo_dict.get("confidence", 0)
@@ -272,8 +303,7 @@ async def coordinator_node(state: AgentState):
     worker_outputs = state.get("worker_outputs", [])
 
     # ── LLM instances ──────────────────────────────────────
-    coordinator_llm = get_llm()       # tool-bound, for LangGraph routing + synthesis
-    worker_llm = get_worker_llm()     # clean, for all workers
+    worker_llm = get_worker_llm()
 
     # ── Step 1: Recon ──────────────────────────────────────
     etherscan = EtherscanClient()
@@ -292,6 +322,15 @@ async def coordinator_node(state: AgentState):
         }
     )
     recon_output = await recon_worker.run(recon_task)
+    repo_url = state.get("repo_url", "")
+    repo_name = _repo_name_from_url(repo_url)
+    repo_path = None
+    if repo_name:
+        candidate = Path("data/scratch") / repo_name
+        if candidate.exists():
+            repo_path = str(candidate)
+            print(f"[Coordinator] Real repo path resolved: {repo_path}")
+
     recon_context = recon_output.raw_output
     state["recon_context"] = recon_context
 
@@ -339,13 +378,11 @@ async def coordinator_node(state: AgentState):
                 print(f"  [{i}] confidence={o.confidence} attack_path={o.attack_path} hypothesis={str(o.hypothesis)[:80] if o.hypothesis else None}")
 
         # ── Step 4: Build Findings ─────────────────────────
-        # FIX: removed `and output.attack_path` — attack_path is always [] because
-        # the LLM can't reference graph node IDs it hasn't seen. Confidence is enough.
         for output, hotspot in zip(worker_outputs_parallel, hotspots):
             if isinstance(output, Exception):
                 print(f"[Coordinator] Worker error on {hotspot.node_id}: {output}")
                 continue
-            if output.confidence > 0:  # <-- FIXED: was: output.confidence > 0 and output.attack_path
+            if output.confidence > 0:
                 finding = Finding.from_worker_output(output, hotspot)
                 findings.append(finding)
 
@@ -356,7 +393,23 @@ async def coordinator_node(state: AgentState):
         print(f"[Debug] Findings that passed filter: {len(findings)}")
 
     # ── Step 5: Coordinator LLM Synthesis ─────────────────
+    # The programmatic pipeline (Recon → Hotspots → Attack → TestWriter) has
+    # already run above. The LLM's ONLY job here is to produce the final JSON
+    # report. NEVER bind tools — avoids Gemini thought_signature errors and
+    # prevents the LangGraph tool loop from re-running the entire pipeline.
+    coordinator_llm = get_llm(bind_tools=False)
+
     prompt = [SystemMessage(content=COORDINATOR_SYSTEM_PROMPT)]
+
+    # Build context for LLM: either worker results or hotspot summary
+    hotspot_summary = ""
+    if hotspots:
+        hotspot_summary = f"\n\n=== HOTSPOT DATA (from programmatic analysis) ===\n"
+        hotspot_summary += f"Found {len(hotspots)} high-risk function(s):\n"
+        for h in hotspots[:15]:
+            hotspot_summary += (
+                f"  - {h.node_id} | risk_score={h.risk_score} | priority={h.priority}\n"
+            )
 
     if worker_outputs:
         synthesis = synthesize_worker_outputs(worker_outputs)
@@ -370,16 +423,29 @@ async def coordinator_node(state: AgentState):
         )
         if reason:
             worker_context += f"\nEscalation reason: {reason}"
-        worker_context += f"\n\nSynthesised leads:\n{json.dumps(synthesis, indent=2)}"
+        worker_context += (
+            f"\n\nSynthesised leads:\n{json.dumps(synthesis, indent=2)}\n\n"
+            "Your task: Output the JSON block only. Do NOT call any tools."
+        )
         prompt.append(HumanMessage(content=worker_context))
+    else:
+        no_findings_context = (
+            f"{hotspot_summary}\n\n"
+            f"No high-risk hotspots exceeded the threshold (min_score=70). "
+            f"The Knowledge Graph has {state['graph'].number_of_nodes()} nodes "
+            f"and {state['graph'].number_of_edges()} edges across "
+            f"{len(state.get('contract_names', []))} contract(s).\n\n"
+            "Produce the JSON report. If no risks were found, report 0 vulnerability_leads honestly."
+        )
+        prompt.append(HumanMessage(content=no_findings_context))
 
     if messages:
         prompt.extend(messages)
-    else:
-        prompt.append(HumanMessage(content="Assess the risk landscape using get_high_risk_hotspots()."))
 
     response = coordinator_llm.invoke(prompt)
 
+    # With tools disabled, the LLM should never make tool_calls.
+    # If it somehow does, return early so LangGraph routes to ToolNode.
     if response.tool_calls:
         return {"messages": [response], "worker_outputs": worker_outputs}
 
@@ -409,8 +475,6 @@ async def coordinator_node(state: AgentState):
         strategy = "Failed to parse LLM response"
 
     # ── Step 5b: Synthetic Fallback for TestWriter ─────────
-    # If workers returned findings but LLM didn't produce leads, or
-    # if findings list is empty but LLM leads exist at high confidence
     if not findings and leads:
         for lead in leads:
             if (lead.get("confidence", 0) >= 65 and
@@ -437,57 +501,98 @@ async def coordinator_node(state: AgentState):
         if findings:
             print(f"[Coordinator] Synthesized {len(findings)} findings from LLM leads for TestWriter")
 
-    # ── Step 6: TestWriter ────────────────────────────────
+    # ── Step 6: TestWriter ─────────────────────────────────
     test_tasks = []
     target_findings = []
-    for finding in findings:
-        if finding.confidence >= 65 and finding.severity_estimate in ("CRITICAL", "HIGH"):
-            relevant_code = {}
-            for node_id in finding.attack_path:
-                try:
-                    ctx = get_function_context(state["graph"], node_id)
-                    if "source_code" in ctx:
-                        relevant_code[node_id] = ctx["source_code"]
-                except Exception:
-                    pass
 
-            if not relevant_code:
-                for ep in finding.evidence_nodes:
-                    try:
-                        ctx = get_function_context(state["graph"], ep.node_id)
-                        if "source_code" in ctx:
-                            relevant_code[ep.node_id] = ctx["source_code"]
-                    except Exception:
-                        pass
+    # ── Copy repo to Linux fs ONCE before spawning all TestWriters ──
+    # This avoids N parallel copies of the repo (one per finding).
+    # All sandboxes will symlink lib/ from this shared Linux-fs copy.
+    linux_repo_path = None
+    if repo_path:
+        try:
+            tmp_base = tempfile.mkdtemp()
+            linux_repo_path = os.path.join(tmp_base, Path(repo_path).name)
+            print(f"[Coordinator] Copying repo to Linux fs once: {linux_repo_path}")
+            shutil.copytree(repo_path, linux_repo_path, symlinks=False)
+            print(f"[Coordinator] Repo copy complete.")
+        except Exception as e:
+            print(f"[Coordinator] Failed to copy repo to Linux fs: {e}, falling back to original path")
+            linux_repo_path = repo_path
 
-            # Fallback: use hotspot_node_id directly
-            if not relevant_code and finding.hotspot_node_id:
-                try:
-                    ctx = get_function_context(state["graph"], finding.hotspot_node_id)
-                    if "source_code" in ctx:
-                        relevant_code[finding.hotspot_node_id] = ctx["source_code"]
-                except Exception:
-                    pass
+    # Sort findings by confidence descending; tie-break by severity (highest first)
+    sorted_findings = sorted(
+        [f for f in findings if f.confidence >= 65 and f.severity_estimate in ("CRITICAL", "HIGH", "MEDIUM")],
+        key=_finding_priority,
+    )
 
-            task = WorkerTask(
-                task_id=f"test_{finding.id}",
-                task_type="test_writer",
-                context={
-                    "finding": finding,
-                    "relevant_code": relevant_code,
-                    "recon_context": state.get("recon_context", {})
-                }
-            )
-            test_tasks.append(task)
-            target_findings.append(finding)
+    for finding in sorted_findings:
+        # === FIXED: Robust relevant_code lookup (fixes BUG-001, 002, 003) ===
+        relevant_code = {}
+
+        # 1. From attack_path
+        for raw_id in finding.attack_path:
+            norm_id = normalize_node_id(raw_id)
+            try:
+                ctx = get_function_context(state["graph"], norm_id)
+                code = ctx.get("source_code") or ctx.get("code")
+                if code:
+                    relevant_code[norm_id] = code
+            except Exception:
+                pass
+
+        # 2. From evidence nodes
+        for ep in finding.evidence_nodes:
+            norm_id = normalize_node_id(ep.node_id)
+            try:
+                ctx = get_function_context(state["graph"], norm_id)
+                code = ctx.get("source_code") or ctx.get("code")
+                if code and norm_id not in relevant_code:
+                    relevant_code[norm_id] = code
+            except Exception:
+                pass
+
+        # 3. Fallback to hotspot
+        if not relevant_code and finding.hotspot_node_id:
+            norm_id = normalize_node_id(finding.hotspot_node_id)
+            try:
+                ctx = get_function_context(state["graph"], norm_id)
+                code = ctx.get("source_code") or ctx.get("code")
+                if code:
+                    relevant_code[norm_id] = code
+            except Exception:
+                pass
+
+        contract_signatures = get_contract_signatures(state["graph"], finding.affected_contract)
+
+        task = WorkerTask(
+            task_id=f"test_{finding.id}",
+            task_type="test_writer",
+            context={
+                "finding": finding,
+                "relevant_code": relevant_code,
+                "recon_context": state.get("recon_context", {}),
+                "repo_path": linux_repo_path,  # shared Linux-fs copy
+                "contract_signatures": contract_signatures,
+            }
+        )
+        test_tasks.append(task)
+        target_findings.append(finding)
 
     if test_tasks:
-        print(f"[Coordinator] Spawning TestWriter for {len(test_tasks)} finding(s)...")
-        test_writer = TestWriterWorker(llm_client=worker_llm, graph=state["graph"])
-        test_outputs = await asyncio.gather(
-            *[test_writer.run(task) for task in test_tasks],
-            return_exceptions=True
-        )
+        print(f"[Coordinator] Spawning TestWriter for {len(test_tasks)} finding(s) (sequential, highest confidence first)...")
+        test_writer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"))
+        test_writer_llm = get_worker_llm(model_name=test_writer_model)
+        test_writer = TestWriterWorker(llm_client=test_writer_llm, graph=state["graph"])
+        test_outputs = []
+        for i, (task, finding) in enumerate(zip(test_tasks, target_findings)):
+            print(f"[Coordinator] TestWriter {i+1}/{len(test_tasks)}: {finding.hotspot_node_id} (confidence={finding.confidence})")
+            try:
+                output = await test_writer.run(task)
+                test_outputs.append(output)
+            except Exception as e:
+                print(f"[Coordinator] TestWriterWorker error on {finding.hotspot_node_id}: {e}")
+                test_outputs.append(e)
 
         for output, finding in zip(test_outputs, target_findings):
             if isinstance(output, Exception):
@@ -505,7 +610,11 @@ async def coordinator_node(state: AgentState):
                       f"compiled={raw.get('compiled')}, success=False, attempts={raw.get('attempts')}")
 
             for lead in leads:
-                if lead.get("affected_function_node_id") == finding.hotspot_node_id:
+                lead_id = normalize_node_id(lead.get("affected_function_node_id", ""))
+                finding_id = normalize_node_id(finding.hotspot_node_id)
+
+                if lead_id == finding_id:
+                    raw = output.raw_output or {}
                     lead.update({
                         "confidence": finding.confidence,
                         "test_code": raw.get("test_code"),
@@ -513,10 +622,16 @@ async def coordinator_node(state: AgentState):
                         "compiled": raw.get("compiled"),
                         "attempts": raw.get("attempts"),
                     })
-                    title = lead.get("title", "")
-                    if raw.get("exploit_success") and not title.startswith("[PROVEN]"):
-                        lead.update({"title": f"[PROVEN] {title}"})
+                    if raw.get("exploit_success") and not lead.get("title", "").startswith("[PROVEN]"):
+                        lead["title"] = f"[PROVEN] {lead.get('title', '')}"
                     break
+
+    # Cleanup shared Linux-fs repo copy
+    if linux_repo_path and linux_repo_path != repo_path:
+        try:
+            shutil.rmtree(os.path.dirname(linux_repo_path))
+        except Exception:
+            pass
 
     state["findings"] = findings
     state["escalate"] = len(findings) > 0 or escalation

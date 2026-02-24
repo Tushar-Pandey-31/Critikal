@@ -53,16 +53,28 @@ class RepoManager:
             print(f"Copying local directory {url} to {target_path}...")
             shutil.copytree(url, target_path)
             print("Copy successful.")
+            _init_submodules(target_path)
         else:
             try:
-                # Clone without --recursive initially to avoid submodule failures during clone
-                # Foundry dependencies will be handled by 'forge install' or manual submodule update
-                subprocess.run(["git", "clone", url, target_path], check=True, capture_output=True)
-                print("Clone successful (non-recursive).")
-            except subprocess.CalledProcessError as e:
-                print(f"Error cloning repository: {e.stderr.decode()}")
-                raise
-            
+                # Clone with --depth 1 to avoid pulling full history
+                # Use --recurse-submodules so lib/ dependencies (solmate, forge-std, etc.) are populated
+                subprocess.run(
+                    ["git", "clone", "--depth", "1", "--recurse-submodules", "--shallow-submodules", url, target_path],
+                    check=True,
+                    capture_output=True,
+                    timeout=120,
+                )
+                print("Clone successful (with submodules).")
+            except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+                if isinstance(e, subprocess.CalledProcessError):
+                    print("Warning: Clone with submodules failed. Retrying without submodules...")
+                else:
+                    print("Warning: Clone timed out. Retrying without submodules...")
+                subprocess.run(["git", "clone", "--depth", "1", url, target_path], check=True, capture_output=True)
+                _init_submodules(target_path)
+            # Ensure submodules are populated even if clone claimed success (some hosts skip them)
+            _init_submodules(target_path)
+
         return target_path
 
     def install_dependencies(self, repo_path: str):
@@ -75,9 +87,7 @@ class RepoManager:
         if os.path.exists(os.path.join(repo_path, "foundry.toml")):
             print("Foundry project detected.")
             try:
-                # Run forge install
-                # Note: 'forge install' might require git submodules which are handled by forge but we need to ensure we're inside the repo
-                subprocess.run(["forge", "install"], cwd=repo_path, check=True, capture_output=True)
+                subprocess.run(["forge", "install", "--shallow"], cwd=repo_path, check=True, capture_output=True)
                 print("Foundry dependencies installed.")
             except subprocess.CalledProcessError as e:
                 print(f"Error installing Foundry dependencies: {e.stderr.decode()}")
@@ -97,3 +107,21 @@ class RepoManager:
                 print("Warning: 'npm' executable not found. Skipping Hardhat dependency installation.")
 
         print("Dependency installation checking complete.")
+
+
+def _init_submodules(repo_path: str) -> None:
+    """Initialize git submodules when .gitmodules exists (e.g. lib/solmate, lib/forge-std)."""
+    gitmodules = os.path.join(repo_path, ".gitmodules")
+    if not os.path.exists(gitmodules):
+        return
+    try:
+        subprocess.run(
+            ["git", "submodule", "update", "--init", "--recursive"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+            timeout=180,
+        )
+        print("Git submodules initialized.")
+    except Exception as e:
+        print(f"Warning: Could not initialize submodules: {e}")

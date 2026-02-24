@@ -1,6 +1,19 @@
 # Penteam Project Status
 
-**Last Updated**: February 20, 2026 (18:50 IST)
+**Last Updated**: February 24, 2026
+
+## Remediation Update (February 24, 2026)
+
+- Normalized node ID handling (`Contract::function`) is enforced across attack worker parsing, finding creation, and lead matching.
+- Coordinator synthesis prompt now reflects no-tool final synthesis mode.
+- CLI now supports `--contract-addresses` (or `CONTRACT_ADDRESSES_JSON`) for live recon enrichment.
+- Test Writer hardening shipped:
+  - exact `test_exploit()` enforcement
+  - exit-code-first exploit success decision
+  - stronger non-code response retry behavior
+- Sandbox reliability improved with Windows symlink fallback to copy mode.
+- RAG DB pathing unified via shared project-root path resolver (`src/knowledge/paths.py`).
+- Finding timestamps now use timezone-aware UTC serialization.
 
 ## Overview
 **Penteam** is an AI-assisted smart contract security system designed for "Plan-and-Execute" vulnerability hunting. It combines Knowledge Graphs (for code structure understanding) and Retrieval-Augmented Generation (RAG) (for security knowledge retrieval).

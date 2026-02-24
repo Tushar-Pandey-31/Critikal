@@ -101,6 +101,8 @@ class GraphBuilder:
         # is_view_or_pure: For risk scoring - read-only vs state-changing
         is_view_or_pure = function.view or function.pure
 
+        signature = self._extract_function_signature(function)
+
         metadata = {
             "type": "function",
             "name": function.name,
@@ -114,10 +116,24 @@ class GraphBuilder:
             "is_external_entry": is_external_entry,
             "is_view_or_pure": is_view_or_pure,
             "source_code": source_code,
-            "modifiers": modifiers
-            # "source_mapping": str(function.source_mapping)
+            "modifiers": modifiers,
+            "signature": signature or "",
         }
         self.graph.add_node(node_id, **metadata)
+
+    def _extract_function_signature(self, function) -> str:
+        """Extract Solidity-style signature: name(type1,type2) for Test Writer context."""
+        try:
+            params = getattr(function, "parameters", None) or getattr(function, "parameters_", [])
+            if not params:
+                return f"{function.name}()" if not function.is_constructor else "constructor()"
+            param_types = []
+            for p in params:
+                t = getattr(p, "type", None)
+                param_types.append(str(t) if t else "???")
+            return f"{function.name}({','.join(param_types)})" if not function.is_constructor else f"constructor({','.join(param_types)})"
+        except Exception:
+            return ""
 
     def _add_edge_defines(self, contract, function):
         contract_id = contract.name

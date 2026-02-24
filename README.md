@@ -3,7 +3,7 @@
 **AI-Powered Smart Contract Security System**  
 *Human-in-the-loop • Multi-Agent • Graph-Powered • Hallucination-Resistant*
 
-**Last Updated**: February 20, 2026
+**Last Updated**: February 24, 2026
 
 ## Overview & Vision
 
@@ -90,7 +90,7 @@ Penteam is divided into clear phases:
 
 ## Tech Stack
 
-- **Language**: Python 3.13
+- **Language**: Python 3.12+
 - **Orchestration**: LangGraph + LangChain
 - **Graph**: NetworkX
 - **Static Analysis**: Slither
@@ -134,7 +134,7 @@ XAI_API_KEY=...        # for Grok
 python -m src.main --repo https://github.com/theredguild/damn-vulnerable-defi
 ```
 
-## Current Status (February 20, 2026)
+## Current Status (February 24, 2026)
 
 - **Phase 1–3**: Complete (Rich Knowledge Graph + all security signals)
 - **Phase 4**: Complete (MoE + Coordinator + Recon + Attack Hypothesis)

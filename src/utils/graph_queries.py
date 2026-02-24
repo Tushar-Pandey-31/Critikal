@@ -2,36 +2,43 @@
 import networkx as nx
 from typing import List, Dict, Any
 
+from src.utils.node_ids import normalize_node_id
+
+
 class GraphQueries:
     def __init__(self, graph: nx.DiGraph):
         self.graph = graph
 
     def get_function_context(self, node_id: str) -> Dict[str, Any]:
         """
-        Returns a function's code PLUS its immediate neighbors (callers and callees).
+        Returns function context with consistent keys.
+        Now supports both dot and :: notation via normalization.
         """
-        if not self.graph.has_node(node_id):
-             return {"error": "Node not found"}
-        
-        node_data = self.graph.nodes[node_id]
+        normalized = normalize_node_id(node_id)
+
+        if not self.graph.has_node(normalized):
+            return {"error": "Node not found", "normalized_id": normalized}
+
+        node_data = self.graph.nodes[normalized]
         if node_data.get("type") != "function":
-             return {"error": "Node is not a function"}
+            return {"error": "Node is not a function"}
 
-        # Callers: nodes that have a CALLS edge to this node
         callers = [
-            n for n in self.graph.predecessors(node_id) 
-            if self.graph.get_edge_data(n, node_id).get("relationship") == "CALLS"
+            n for n in self.graph.predecessors(normalized)
+            if self.graph.get_edge_data(n, normalized).get("relationship") == "CALLS"
         ]
 
-        # Callees: nodes that this node has a CALLS edge to
         callees = [
-            n for n in self.graph.successors(node_id) 
-            if self.graph.get_edge_data(node_id, n).get("relationship") == "CALLS"
+            n for n in self.graph.successors(normalized)
+            if self.graph.get_edge_data(normalized, n).get("relationship") == "CALLS"
         ]
+
+        source_code = node_data.get("source_code", "")
 
         return {
-            "node_id": node_id,
-            "code": node_data.get("source_code", ""),
+            "node_id": normalized,
+            "source_code": source_code,
+            "code": source_code,
             "callers": callers,
             "callees": callees
         }
@@ -41,12 +48,13 @@ class GraphQueries:
         Traces all functions with a WRITES edge to that variable.
         variable_name should be the node_id of the state variable, e.g., "Contract::VaName"
         """
-        if not self.graph.has_node(variable_name):
+        normalized = normalize_node_id(variable_name)
+        if not self.graph.has_node(normalized):
             return []
         
         mutators = [
-            n for n in self.graph.predecessors(variable_name) 
-            if self.graph.get_edge_data(n, variable_name).get("relationship") == "WRITES"
+            n for n in self.graph.predecessors(normalized)
+            if self.graph.get_edge_data(n, normalized).get("relationship") == "WRITES"
         ]
         return mutators
 
@@ -54,10 +62,11 @@ class GraphQueries:
         """
         List all security modifiers (like onlyOwner or nonReentrant) applied to a node.
         """
-        if not self.graph.has_node(function_id):
+        normalized = normalize_node_id(function_id)
+        if not self.graph.has_node(normalized):
             return []
         
-        node_data = self.graph.nodes[function_id]
+        node_data = self.graph.nodes[normalized]
         return node_data.get("modifiers", [])
 
     def verify_existence(self, node_name: str) -> bool:
@@ -480,6 +489,23 @@ class GraphQueries:
             "risky_variables": risky_variables
         }
 
+    def get_contract_signatures(self, contract_name: str) -> Dict[str, str]:
+        """
+        Returns { function_name: signature } for all functions in a contract.
+        Used by Test Writer to generate correct constructor/function calls.
+        """
+        result = {}
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            if node_data.get("contract") != contract_name:
+                continue
+            name = node_data.get("name", "")
+            sig = node_data.get("signature", "")
+            if name and sig:
+                result[name] = sig
+        return result
+
     def get_high_risk_hotspots(self, min_score: int = 70) -> List[Any]:
         """
         Coordinator-only query to identify targets for worker analysis.
@@ -551,3 +577,7 @@ def get_external_call_functions(graph: nx.DiGraph, contract_name: str | None = N
 
 def get_privilege_escalation_risks(graph: nx.DiGraph, contract_name: str | None = None) -> Dict[str, Any]:
     return GraphQueries(graph).get_privilege_escalation_risks(contract_name)
+
+
+def get_contract_signatures(graph: nx.DiGraph, contract_name: str) -> Dict[str, str]:
+    return GraphQueries(graph).get_contract_signatures(contract_name)

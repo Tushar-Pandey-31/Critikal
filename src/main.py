@@ -2,6 +2,7 @@ import sys
 import os
 import argparse
 import asyncio
+import json
 import networkx as nx
 from dotenv import load_dotenv
 
@@ -9,7 +10,7 @@ load_dotenv()
 
 from langchain_core.messages import HumanMessage
 from langgraph.graph import StateGraph, START, END
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import ToolNode
 
 from src.agents.state import AgentState, get_checkpointer
 from src.agents.lead_agent import coordinator_node, lead_researcher_node, set_tools
@@ -19,6 +20,29 @@ from src.analysis_engine import AnalysisEngine
 from src.graph_builder import GraphBuilder
 
 
+def _parse_contract_addresses(raw: str | None) -> dict[str, str]:
+    """
+    Parse contract address mapping from JSON.
+    Example: {"Vault":"0x1234...","Token":"0xabcd..."}
+    """
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except Exception as e:
+        raise ValueError(f"Invalid contract address JSON: {e}") from e
+
+    if not isinstance(parsed, dict):
+        raise ValueError("contract addresses must be a JSON object mapping contract names to addresses")
+
+    normalized: dict[str, str] = {}
+    for name, addr in parsed.items():
+        if not isinstance(name, str) or not isinstance(addr, str):
+            raise ValueError("contract address entries must be string:string pairs")
+        normalized[name.strip()] = addr.strip()
+    return normalized
+
+
 
 
 def build_agent_workflow(coordinator_tools) -> StateGraph:
@@ -26,22 +50,18 @@ def build_agent_workflow(coordinator_tools) -> StateGraph:
     Builds the LangGraph workflow for the Coordinator + Worker architecture.
 
     Graph topology:
-        START → Coordinator → tools → Coordinator → END
+        START → Coordinator → END
+
+    The Coordinator runs the entire pipeline programmatically
+    (Recon → Hotspots → Attack Workers → TestWriter → LLM Synthesis).
+    No LangGraph tool loop is needed — all graph queries and worker
+    dispatch happen inside coordinator_node via direct Python calls.
     """
     workflow = StateGraph(AgentState)
 
-    # Core nodes
     workflow.add_node("Coordinator", coordinator_node)
-    workflow.add_node("tools", ToolNode(coordinator_tools))
-
-    # Entry
     workflow.add_edge(START, "Coordinator")
-
-    # Coordinator → tools (for get_high_risk_hotspots, search_security_knowledge)
-    workflow.add_conditional_edges("Coordinator", tools_condition)
-
-    # tools → back to Coordinator
-    workflow.add_edge("tools", "Coordinator")
+    workflow.add_edge("Coordinator", END)
 
     return workflow
 
@@ -55,9 +75,24 @@ def build_agent_workflow(coordinator_tools) -> StateGraph:
 async def async_main():
     parser = argparse.ArgumentParser(description="Penteam Lead Agent - End-to-End Ingestion")
     parser.add_argument("--repo", type=str, help="Path to local folder or GitHub URL of the smart contract repo", required=True)
+    parser.add_argument(
+        "--contract-addresses",
+        type=str,
+        default=None,
+        help='Optional JSON mapping for on-chain recon, e.g. \'{"Vault":"0x...","Token":"0x..."}\'',
+    )
     args = parser.parse_args()
 
     print("Initializing Penteam Coordinator Workflow...")
+
+    contract_addresses_input = args.contract_addresses or os.getenv("CONTRACT_ADDRESSES_JSON")
+    try:
+        contract_addresses = _parse_contract_addresses(contract_addresses_input)
+    except ValueError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+    if contract_addresses:
+        print(f"Loaded {len(contract_addresses)} contract address mapping(s) for recon.")
 
     # 1. Setup Environment
     if "GOOGLE_API_KEY" not in os.environ:
@@ -137,9 +172,12 @@ Use get_high_risk_hotspots() to identify the highest-priority targets, then form
         "strategy": None,
         "pending_workers": [],
         "graph": graph,
+        "recon_context": {},
+        "findings": [],
         "contract_names": list(contracts),
-        "contract_addresses": {}, # Initialize empty if recon not done yet
-        "repo_url": args.repo
+        "contract_addresses": contract_addresses,
+        "repo_url": args.repo,
+        "escalate": False,
     }
     
     events = app.astream(initial_state, config, stream_mode="values")

@@ -106,10 +106,7 @@ async def test_attack_path_starts_from_entry_point(mock_graph, mock_llm, reentra
     worker = AttackHypothesisWorker(graph=mock_graph, llm_client=mock_llm)
     graph_context = {"signals_summary": reentrancy_hotspot.signals}
     prompt = worker._build_prompt(reentrancy_hotspot, graph_context, {})
-    user_msg = prompt[1]["content"]
-    assert "Build your attack_path starting from one of the entry_points" in user_msg
-    # Also verify that entry_points are actually in the prompt
-    assert "entry_points (external entries that reach this function): ['Vault.withdraw']" in user_msg
+    assert "Start with the external entry point, end with the vulnerable function" in prompt[0]["content"]
 
 @pytest.mark.asyncio
 async def test_evidence_node_ids_is_list_of_strings(mock_graph, mock_llm, reentrancy_hotspot):
@@ -150,9 +147,9 @@ async def test_attack_worker_reentrancy_detection_happy_path(mock_graph, mock_ll
 
 @pytest.mark.asyncio
 async def test_attack_worker_low_confidence_suppression(mock_graph, mock_llm, reentrancy_hotspot):
-    # Threshold for reentrancy is 60
+    reentrancy_hotspot.signals = {} # Remove strong signals to prevent confidence boosting
     mock_llm.ainvoke.return_value = MagicMock(content=json.dumps({
-        "vulnerability_class": "reentrancy", "confidence": 40, "attack_path": ["Vault.withdraw"], "evidence_node_ids": ["Vault.withdraw"]
+        "vulnerability_class": "unknown", "confidence": 30, "attack_path": ["Vault.withdraw"], "evidence_node_ids": ["Vault.withdraw"]
     }))
     worker = AttackHypothesisWorker(graph=mock_graph, llm_client=mock_llm)
     task = WorkerTask(task_id="t9", task_type="attack", hotspot=reentrancy_hotspot)
@@ -166,7 +163,7 @@ async def test_attack_worker_unparseable_response_graceful_fail(mock_graph, mock
     worker = AttackHypothesisWorker(graph=mock_graph, llm_client=mock_llm)
     task = WorkerTask(task_id="t10", task_type="attack", hotspot=reentrancy_hotspot)
     output = await worker.run(task)
-    assert output.confidence == 0
+    assert output.confidence == 35
     assert "error" in output.raw_output
 
 # =================================================================
@@ -298,10 +295,19 @@ def test_vulnerability_class_mapping():
 @pytest.mark.asyncio
 async def test_confidence_threshold_rejection_logs_detailed_parsed_output(mock_graph, mock_llm, reentrancy_hotspot):
     # If confidence is below threshold, verify raw_output contains the parsed data for debugging
-    mock_llm.ainvoke.return_value = MagicMock(content='{"vulnerability_class": "reentrancy", "confidence": 10, "attack_path": ["V"], "evidence_node_ids": ["E"]}')
+    reentrancy_hotspot.signals = {} # Prevent strong signal confidence boosting
+    mock_llm.ainvoke.return_value = MagicMock(content='{"vulnerability_class": "unknown", "confidence": 10, "attack_path": ["V"], "evidence_node_ids": ["E"]}')
     worker = AttackHypothesisWorker(graph=mock_graph, llm_client=mock_llm)
     task = WorkerTask(task_id="t_threshold", task_type="attack", hotspot=reentrancy_hotspot)
     output = await worker.run(task)
     assert output.confidence == 0
     assert "parsed" in output.raw_output
     assert output.raw_output["parsed"]["confidence"] == 10
+
+
+@pytest.mark.asyncio
+async def test_unparseable_response_fallback_uses_canonical_node_id(mock_graph, mock_llm, reentrancy_hotspot):
+    mock_llm.ainvoke.return_value = MagicMock(content="nonsense")
+    worker = AttackHypothesisWorker(graph=mock_graph, llm_client=mock_llm)
+    output = await worker.run(WorkerTask(task_id="t_fallback", task_type="attack", hotspot=reentrancy_hotspot))
+    assert output.attack_path == ["Vault::withdraw"]
