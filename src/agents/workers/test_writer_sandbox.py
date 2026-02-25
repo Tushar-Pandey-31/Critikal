@@ -28,36 +28,117 @@ class SandboxManager:
         else:
             self._setup_forge_init()
 
+    def _resolve_foundry_root(self, base: Path) -> Path:
+        """
+        Find the directory that actually contains foundry.toml, starting from base.
+
+        Handles repos where the Foundry project lives in a subdirectory, e.g.:
+            ethernaut/             <- base (repo root)
+            ethernaut/contracts/   <- actual Foundry root (has foundry.toml + lib/)
+
+        Priority:
+            1. base itself has foundry.toml -> return base
+            2. A well-known subdirectory name has foundry.toml -> return that
+            3. Any immediate child directory has foundry.toml -> return first match
+            4. Fallback: return base and warn
+        """
+        if (base / "foundry.toml").exists():
+            return base
+
+        for name in ("contracts", "src", "protocol", "packages"):
+            candidate = base / name
+            if candidate.is_dir() and (candidate / "foundry.toml").exists():
+                return candidate
+
+        try:
+            for child in sorted(base.iterdir()):
+                if child.is_dir() and (child / "foundry.toml").exists():
+                    return child
+        except PermissionError:
+            pass
+
+        logger.warning(
+            f"[Sandbox] Could not find foundry.toml under {base}. "
+            f"Using base path as-is -- lib/ may not be found."
+        )
+        return base
+
     def _setup_from_real_repo(self) -> None:
         logger.info(f"[Sandbox] Setting up sandbox from {self.repo_path}")
 
-        for item in self.repo_path.iterdir():
+        # Resolve the actual Foundry project root -- may differ from repo root.
+        # e.g. ethernaut repo root -> ethernaut/contracts (where foundry.toml lives)
+        foundry_root = self._resolve_foundry_root(self.repo_path)
+        if foundry_root != self.repo_path:
+            logger.info(
+                f"[Sandbox] Foundry project root resolved to subdirectory: "
+                f"{foundry_root}  (repo root was {self.repo_path})"
+            )
+
+        original_lib = foundry_root / "lib"
+        sandbox_lib = self.tmp_dir / "lib"
+
+        # Copy everything from the Foundry root except lib/
+        for item in foundry_root.iterdir():
             if item.name == "lib":
-                continue  # handled separately below
+                continue
             dest = self.tmp_dir / item.name
             if item.is_dir():
                 shutil.copytree(str(item), str(dest), dirs_exist_ok=True, symlinks=False)
             else:
                 shutil.copy2(str(item), str(dest))
 
-        # Symlink lib/ — works because repo_path is now on /tmp/ (Linux fs)
-        original_lib = self.repo_path / "lib"
-        sandbox_lib = self.tmp_dir / "lib"
+        # Symlink lib/ -- fast and correct on Linux
         if original_lib.exists():
-            try:
-                sandbox_lib.symlink_to(original_lib.resolve())
-                logger.info(f"[Sandbox] Symlinked lib/ from {original_lib.resolve()}")
-            except OSError as e:
-                # Windows commonly blocks symlink creation without elevated privileges.
-                if os.name == "nt":
-                    shutil.copytree(str(original_lib), str(sandbox_lib), dirs_exist_ok=True, symlinks=False)
-                    logger.info(f"[Sandbox] Symlink unavailable on Windows, copied lib/ instead: {e}")
-                else:
-                    raise
-        
-        test_dir = self.tmp_dir / "test"
-        test_dir.mkdir(exist_ok=True)
-        print(f"[Sandbox] Ready at {self.tmp_dir}, lib exists: {sandbox_lib.exists()}")
+            resolved = original_lib.resolve()
+            if not resolved.exists():
+                logger.warning(
+                    f"[Sandbox] lib/ symlink target does not exist after resolve: "
+                    f"{resolved}. Falling back to copytree."
+                )
+                shutil.copytree(str(original_lib), str(sandbox_lib),
+                                dirs_exist_ok=True, symlinks=False)
+            else:
+                try:
+                    sandbox_lib.symlink_to(resolved)
+                    logger.info(f"[Sandbox] Symlinked lib/ -> {resolved}")
+                except OSError as e:
+                    if os.name == "nt":
+                        shutil.copytree(str(original_lib), str(sandbox_lib),
+                                        dirs_exist_ok=True, symlinks=False)
+                        logger.info(f"[Sandbox] Windows: copied lib/ instead of symlinking: {e}")
+                    else:
+                        logger.error(
+                            f"[Sandbox] Unexpected symlink failure on Linux -- "
+                            f"falling back to copytree. Error: {e}"
+                        )
+                        shutil.copytree(str(original_lib), str(sandbox_lib),
+                                        dirs_exist_ok=True, symlinks=False)
+        else:
+            logger.error(
+                f"[Sandbox] CRITICAL: lib/ not found at {original_lib}. "
+                f"All dependency imports will fail. "
+                f"Foundry root used: {foundry_root}  "
+                f"(repo_path passed in: {self.repo_path})"
+            )
+
+        # Wipe any test/ that was copied from the repo — we only want our
+        # generated ExploitTest.t.sol, not the repo's existing test suite.
+        # Pre-existing repo tests import the full src/ tree and will break
+        # the build if src/ has been pruned or is incomplete.
+        sandbox_test_dir = self.tmp_dir / "test"
+        if sandbox_test_dir.exists():
+            shutil.rmtree(sandbox_test_dir)
+        sandbox_test_dir.mkdir(parents=True, exist_ok=True)
+
+        lib_exists = sandbox_lib.exists()
+        print(f"[Sandbox] Ready at {self.tmp_dir}, lib exists: {lib_exists}")
+        if not lib_exists:
+            print(
+                f"[Sandbox] WARNING: lib/ is missing -- all dependency imports will fail!\n"
+                f"          Foundry root used: {foundry_root}\n"
+                f"          repo_path received: {self.repo_path}"
+            )
 
     def _setup_forge_init(self) -> None:
         """Fallback: initialize a blank Foundry project."""
@@ -66,6 +147,8 @@ class SandboxManager:
             raise RuntimeError(
                 f"Failed to initialize Foundry project in {self.tmp_dir}:\n{res.stderr}"
             )
+
+
 
     def write_test_file(self, filename: str, content: str) -> None:
         file_path = self.tmp_dir / filename

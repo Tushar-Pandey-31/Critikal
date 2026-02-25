@@ -22,7 +22,6 @@ class TestWriterWorker(WorkerAgent):
         return "test-writer"
 
     def _format_error_history(self, error_history: list[str]) -> str:
-        """Structure compiler errors for retry — extract key error lines, dedupe, limit size."""
         if not error_history:
             return ""
         last_err = error_history[-1]
@@ -55,13 +54,27 @@ class TestWriterWorker(WorkerAgent):
         return import_fix_hint + "\n\n=== FIX THESE ERRORS (from previous attempt) ===\n" + "\n".join(key_errors[-12:])
 
     def _extract_test_code(self, response: str) -> str:
-        match = re.search(r"```(?:solidity|sol)\n(.*?)\n```", response, re.IGNORECASE | re.DOTALL)
+        # Normalize line endings
+        response = response.replace("\r\n", "\n")
+        # Try fenced code blocks with language tag
+        match = re.search(r"```(?:solidity|sol|Solidity)\s*\n(.*?)\n\s*```", response, re.IGNORECASE | re.DOTALL)
         if match:
             return match.group(1).strip()
-        match = re.search(r"```\n(.*?)\n```", response, re.DOTALL)
+        # Try fenced code block without language tag
+        match = re.search(r"```\s*\n(.*?)\n\s*```", response, re.DOTALL)
         if match:
-            return match.group(1).strip()
-        # If the model responds with prose/chatter without fences, force a retry.
+            code = match.group(1).strip()
+            if "pragma solidity" in code or "contract " in code:
+                return code
+        # Last resort: extract from pragma to last closing brace
+        pragma_match = re.search(r"(pragma solidity.*)", response, re.DOTALL)
+        if pragma_match:
+            candidate = pragma_match.group(1).strip()
+            # Find the last closing brace
+            last_brace = candidate.rfind("}")
+            if last_brace > 0:
+                return candidate[:last_brace + 1].strip()
+        # Raw response might be Solidity directly
         candidate = response.strip()
         solidity_markers = ("pragma solidity", "contract ", "function ", "import ")
         if any(marker in candidate for marker in solidity_markers):
@@ -82,72 +95,44 @@ class TestWriterWorker(WorkerAgent):
         remappings: dict[str, str],
         collected_paths: list[str] | None = None,
     ) -> str:
-        """Validate import paths and auto-correct wrong ones.
-
-        Prefers matches from *collected_paths* (the real dependency tree we
-        already resolved) over a broad rglob of the sandbox.  This avoids
-        mapping ``out/ERC20.sol`` to a local copy when the protocol actually
-        uses the solmate version via remapping.
-        """
         skip_prefixes = {"forge-std/", "ds-test/", "lib/"}
         skip_prefixes.update(alias for alias in remappings if alias.endswith("/"))
-
         corrections: list[tuple[str, str]] = []
-
         for m in self._AUTOCORRECT_IMPORT_RE.finditer(test_code):
             import_path = m.group(1) or m.group(2)
             if not import_path:
                 continue
-
             if any(import_path.startswith(p) for p in skip_prefixes):
                 continue
-
             candidate = sandbox.tmp_dir / import_path
             if candidate.is_file():
                 continue
-
             filename = Path(import_path).name
-
-            # 1) Prefer a match from the collected dependency paths
             if collected_paths:
-                matches_from_collected = [
-                    p for p in collected_paths if Path(p).name == filename
-                ]
+                matches_from_collected = [p for p in collected_paths if Path(p).name == filename]
                 if matches_from_collected:
                     correct_path = matches_from_collected[0]
                     if correct_path != import_path:
                         corrections.append((import_path, correct_path))
                     continue
-
-            # 2) Fallback: search the sandbox (exclude lib/, out/, cache/)
             matches = list(sandbox.tmp_dir.rglob(filename))
-            valid = [
-                f for f in matches
-                if "lib" not in f.parts
-                and "out" not in f.parts
-                and "cache" not in f.parts
-            ]
+            valid = [f for f in matches if "lib" not in f.parts and "out" not in f.parts and "cache" not in f.parts]
             if not valid:
                 continue
-
             best = valid[0]
             for v in valid:
                 rel = str(v.relative_to(sandbox.tmp_dir)).replace("\\", "/")
                 if rel.startswith("src/"):
                     best = v
                     break
-
             correct_path = str(best.relative_to(sandbox.tmp_dir)).replace("\\", "/")
             if correct_path != import_path:
                 corrections.append((import_path, correct_path))
-
         for bad, good in corrections:
             test_code = test_code.replace(f'"{bad}"', f'"{good}"')
-
         if corrections:
             fixed = ", ".join(f"{b}->{g}" for b, g in corrections)
             print(f"[TestWriter] Auto-corrected imports: {fixed}")
-
         return test_code
 
     _IMPORT_RE = re.compile(
@@ -160,24 +145,15 @@ class TestWriterWorker(WorkerAgent):
     _INTERFACE_FILE_CAP = 4000
     _IMPL_FILE_CAP = 3000
 
-    def _resolve_import_path(
-        self,
-        import_path: str,
-        remappings: dict[str, str],
-        repo: Path,
-        from_file: Path | None = None,
-    ) -> Path | None:
-        """Resolve import path to repo-relative path. Exclude lib/ (external deps)."""
+    def _resolve_import_path(self, import_path: str, remappings: dict[str, str], repo: Path, from_file: Path | None = None) -> Path | None:
         path_str = import_path.strip()
         if not path_str:
             return None
-        # Apply remappings: @src/=src/, etc. (longest alias first)
         for alias, target in sorted(remappings.items(), key=lambda x: -len(x[0])):
             alias_stripped = alias.rstrip("/")
             if path_str.startswith(alias_stripped + "/") or path_str == alias_stripped:
                 path_str = target.rstrip("/") + path_str[len(alias_stripped):]
                 break
-        # Relative import: resolve from current file's directory
         if path_str.startswith("./") or path_str.startswith("../"):
             if not from_file or not from_file.parent:
                 return None
@@ -186,7 +162,6 @@ class TestWriterWorker(WorkerAgent):
                 path_str = str(resolved.relative_to(repo.resolve())).replace("\\", "/")
             except ValueError:
                 return None
-        # Exclude lib (forge-std, openzeppelin)
         if path_str.startswith("lib/") or "/lib/" in path_str:
             return None
         candidate = repo / path_str
@@ -195,7 +170,6 @@ class TestWriterWorker(WorkerAgent):
         return None
 
     def _parse_imports(self, content: str) -> list[str]:
-        """Extract import paths from Solidity source."""
         paths = []
         for m in self._IMPORT_RE.finditer(content):
             p1, p2 = m.group(1), m.group(2)
@@ -205,36 +179,51 @@ class TestWriterWorker(WorkerAgent):
         return paths
 
     def _is_interface_file(self, content: str, path: str) -> bool:
-        """Heuristic: file is an interface if it declares interface or is in interface/ dir."""
         if "interface/" in path.replace("\\", "/"):
             return True
         return "interface " in content and "contract " not in content[:500]
 
-    def _collect_repo_sources(
-        self,
-        finding: Finding,
-        repo_path: str | None,
-        remappings: dict[str, str],
-        _lib_imports_out: set[str] | None = None,
-    ) -> dict[str, str]:
+    @staticmethod
+    def _strip_solidity_comments(source: str) -> str:
         """
-        Collect target contract + full transitive dependency tree from the repo.
-        Returns dict of {relative_path: source_code}. Excludes lib/. No mocks.
+        Remove single-line (// ...) and multi-line (/* ... */) comments.
+        Must happen before any regex analysis to avoid false positives from
+        comment text like '// This is because abstract contract Foo...'.
+        """
+        # Remove /* ... */ blocks first (they can span lines)
+        source = re.sub(r'/\*.*?\*/', ' ', source, flags=re.DOTALL)
+        # Remove // ... to end of line
+        source = re.sub(r'//[^\n]*', ' ', source)
+        return source
 
-        If *_lib_imports_out* is provided, any import that resolves to lib/
-        (external dep via remapping) is added to the set using its original
-        alias path (e.g. ``controller/core/IControllerFacade.sol``).
+    @staticmethod
+    def _detect_pragma(sources: dict[str, str]) -> str | None:
         """
+        Find the pragma solidity version used in the collected source files.
+        Scans all files (not just the first) so we catch the target contract's
+        pragma even when the first collected file is an interface with no pragma.
+
+        Returns the raw version constraint string, e.g. '=0.7.6', '^0.8.17',
+        or None if no pragma found.
+        """
+        pragma_re = re.compile(r'pragma\s+solidity\s+([^;]+);')
+        for source in sources.values():
+            m = pragma_re.search(source)
+            if m:
+                version_str = m.group(1).strip()
+                # Skip very permissive ranges that don't pin a version
+                if version_str not in ("", ">=0.5.0", ">=0.4.0"):
+                    return version_str
+        return None
+
+    def _collect_repo_sources(self, finding: Finding, repo_path: str | None, remappings: dict[str, str], _lib_imports_out: set[str] | None = None) -> dict[str, str]:
         if not repo_path:
             return {}
-
         repo = Path(repo_path)
         if not repo.exists():
             return {}
-
         contract_name = finding.affected_contract
         target_path: Path | None = None
-
         for search_dir in ["src", "contracts", "."]:
             base = repo / search_dir
             if not base.exists():
@@ -251,42 +240,29 @@ class TestWriterWorker(WorkerAgent):
                     continue
             if target_path:
                 break
-
         if not target_path:
             return {}
-
         collected: dict[str, str] = {}
         to_visit: list[Path] = [target_path]
         seen: set[str] = set()
         total_chars = 0
-
         while to_visit and len(collected) < self._MAX_DEP_FILES and total_chars < self._MAX_TOTAL_CHARS:
             current = to_visit.pop(0)
             rel = str(current.relative_to(repo)).replace("\\", "/")
             if rel in seen:
                 continue
             seen.add(rel)
-
             try:
                 content = current.read_text(encoding='utf-8', errors='replace')
             except Exception:
                 continue
-
-            # Truncation
             is_target = current == target_path
             is_interface = self._is_interface_file(content, rel)
-            if is_target:
-                cap = self._TARGET_FILE_CAP
-            elif is_interface:
-                cap = self._INTERFACE_FILE_CAP
-            else:
-                cap = self._IMPL_FILE_CAP
+            cap = self._TARGET_FILE_CAP if is_target else (self._INTERFACE_FILE_CAP if is_interface else self._IMPL_FILE_CAP)
             if len(content) > cap:
                 content = content[:cap] + "\n... [truncated]"
-
             collected[rel] = content
             total_chars += len(content)
-
             for imp in self._parse_imports(content):
                 resolved = self._resolve_import_path(imp, remappings, repo, from_file=current)
                 if resolved:
@@ -297,31 +273,15 @@ class TestWriterWorker(WorkerAgent):
                         else:
                             to_visit.append(resolved)
                 elif _lib_imports_out is not None:
-                    # Import resolved to lib/ — record the original alias
                     _lib_imports_out.add(imp)
-
         return collected
 
-    def _collect_minimal_sources(
-        self,
-        finding: Finding,
-        repo_path: str | None,
-        remappings: dict[str, str],
-        _lib_imports_out: set[str] | None = None,
-    ) -> dict[str, str]:
-        """
-        Minimal context for attempt 1: target contract + direct imports.
-        Keeps prompt small for faster LLM response.
-
-        If *_lib_imports_out* is provided, any import that resolves to lib/
-        is added to the set using its original alias path.
-        """
+    def _collect_minimal_sources(self, finding: Finding, repo_path: str | None, remappings: dict[str, str], _lib_imports_out: set[str] | None = None) -> dict[str, str]:
         if not repo_path:
             return {}
         repo = Path(repo_path)
         if not repo.exists():
             return {}
-
         contract_name = finding.affected_contract
         target_path: Path | None = None
         for search_dir in ["src", "contracts", "."]:
@@ -340,37 +300,30 @@ class TestWriterWorker(WorkerAgent):
                     continue
             if target_path:
                 break
-
         if not target_path:
             return {}
-
         collected: dict[str, str] = {}
         seen: set[str] = set()
         to_visit: list[Path] = [target_path]
         total_chars = 0
         max_minimal_chars = 30_000
-
         while to_visit and total_chars < max_minimal_chars:
             current = to_visit.pop(0)
             rel = str(current.relative_to(repo)).replace("\\", "/")
             if rel in seen:
                 continue
             seen.add(rel)
-
             try:
                 content = current.read_text(encoding='utf-8', errors='replace')
             except Exception:
                 continue
-
             is_target = current == target_path
             is_interface = self._is_interface_file(content, rel)
             cap = self._TARGET_FILE_CAP if is_target else (self._INTERFACE_FILE_CAP if is_interface else self._IMPL_FILE_CAP)
             if len(content) > cap:
                 content = content[:cap] + "\n... [truncated]"
-
             collected[rel] = content
             total_chars += len(content)
-
             if is_target:
                 for imp in self._parse_imports(content):
                     resolved = self._resolve_import_path(imp, remappings, repo, from_file=current)
@@ -380,11 +333,9 @@ class TestWriterWorker(WorkerAgent):
                             to_visit.append(resolved)
                     elif _lib_imports_out is not None:
                         _lib_imports_out.add(imp)
-
         return collected
 
     def _get_repo_file_manifest(self, repo_path: str | None) -> list[str]:
-        """List all .sol files in repo (src/, contracts/) excluding lib/."""
         if not repo_path:
             return []
         repo = Path(repo_path)
@@ -403,37 +354,22 @@ class TestWriterWorker(WorkerAgent):
                     paths.append(rel)
         return sorted(paths)
 
-    def _generate_import_cheatsheet(
-        self,
-        real_sources: dict[str, str],
-        lib_imports: set[str] | None = None,
-    ) -> str:
-        """Produce ready-to-use Solidity import statements.
-
-        Combines the local source paths we collected with any external
-        (remapped) import aliases discovered during dependency walking.
-        The LLM should copy these verbatim instead of inventing paths.
-        """
+    def _generate_import_cheatsheet(self, real_sources: dict[str, str], lib_imports: set[str] | None = None) -> str:
         lines: list[str] = ['import "forge-std/Test.sol";']
         seen: set[str] = {"forge-std/Test.sol"}
-
         for path in real_sources:
             if path not in seen:
                 seen.add(path)
                 lines.append(f'import "{path}";')
-
         if lib_imports:
             for imp in sorted(lib_imports):
                 if imp not in seen:
                     seen.add(imp)
                     lines.append(f'import "{imp}";')
-
         return "\n".join(lines)
 
     @staticmethod
     def _parse_toml_remappings(content: str) -> dict[str, str]:
-        """Parse remappings from foundry.toml content.  Handles both
-        ``remappings = ["a/=b/", ...]`` (inline array) and multi-line arrays."""
         remappings: dict[str, str] = {}
         in_remappings = False
         for line in content.splitlines():
@@ -441,7 +377,6 @@ class TestWriterWorker(WorkerAgent):
             if not in_remappings:
                 if "remappings" in stripped and "=" in stripped:
                     in_remappings = True
-                    # Inline array on the same line: remappings = ["a/=b/", ...]
                     after_eq = stripped.split("=", 1)[1]
                     for entry in after_eq.replace("[", "").replace("]", "").split(","):
                         entry = entry.strip().strip('"').strip("'").strip()
@@ -450,13 +385,12 @@ class TestWriterWorker(WorkerAgent):
                             if alias.strip():
                                 remappings[alias.strip()] = target.strip()
                     if "]" in after_eq:
-                        break  # single-line array, done
+                        break
                 continue
-            # inside multi-line array
             if stripped == "]" or stripped.startswith("]"):
                 break
             if stripped.startswith("["):
-                break  # next TOML section
+                break
             entry = stripped.strip('",').strip("'").strip()
             if "=" in entry:
                 alias, target = entry.split("=", 1)
@@ -465,7 +399,6 @@ class TestWriterWorker(WorkerAgent):
         return remappings
 
     def _get_remappings_from_repo(self, repo_path: str | None) -> dict[str, str]:
-        """Read Foundry remappings from repo (foundry.toml or remappings.txt)."""
         if not repo_path:
             return {}
         repo = Path(repo_path)
@@ -484,13 +417,108 @@ class TestWriterWorker(WorkerAgent):
         return {}
 
     def _find_real_source(self, finding: Finding, repo_path: str | None) -> dict[str, str]:
-        """Legacy: single-file lookup. Prefer _collect_repo_sources for full deps."""
         return self._collect_repo_sources(finding, repo_path, {})
 
-    def _fetch_rag_context(self, finding: Finding) -> str:
-        """Fetch RAG results for vulnerability-specific exploit patterns and Solidity best practices."""
-        from src.knowledge.rag_system import search_security_knowledge
+    def _detect_repo_contract_conflicts(self, repo_path: str | None) -> dict:
+        """
+        Pre-analyzes the repo ONCE before the first LLM attempt.
 
+        Detects:
+          - Naming conflicts: same contract name in >1 file → Error (2333)
+          - Abstract contracts: cannot instantiate with `new X()` → Error (4614)
+
+        Comments are stripped before analysis to prevent false positives from
+        prose like '// This is because abstract contract Foo handles X...'.
+        The regex is anchored to line-start to avoid matching mid-line identifiers.
+        """
+        if not repo_path:
+            return {
+                "naming_conflicts": [], "abstract_contracts": [],
+                "conflict_warnings": "", "abstract_warnings": "",
+            }
+
+        repo = Path(repo_path)
+        name_to_files: dict[str, list[str]] = {}
+        abstract_contracts: list[str] = []
+
+        # Anchored to line start: only matches actual Solidity contract declarations.
+        # Group 1: optional 'abstract ' keyword. Group 2: contract identifier.
+        contract_decl_re = re.compile(
+            r'^\s*(abstract\s+)?contract\s+([A-Za-z_]\w*)\b',
+            re.MULTILINE
+        )
+        # Forge-std base names that legitimately appear in every project
+        skip_names = {
+            "Test", "Script", "console", "console2",
+            "stdError", "stdMath", "StdAssertions", "StdChains",
+            "StdCheats", "StdUtils", "Vm", "DSTest",
+        }
+
+        for search_dir in ["src", "contracts", "."]:
+            base = repo / search_dir
+            if not base.exists():
+                continue
+            for sol_file in base.rglob("*.sol"):
+                if "lib" in sol_file.parts or "node_modules" in sol_file.parts:
+                    continue
+                try:
+                    raw = sol_file.read_text(encoding="utf-8", errors="replace")
+                    # Strip comments BEFORE regex matching — prevents false hits from
+                    # NatSpec, inline notes, or commented-out declarations.
+                    stripped = self._strip_solidity_comments(raw)
+                    rel = str(sol_file.relative_to(repo)).replace("\\", "/")
+                    for m in contract_decl_re.finditer(stripped):
+                        is_abstract = bool(m.group(1))
+                        name = m.group(2)
+                        if name in skip_names:
+                            continue
+                        name_to_files.setdefault(name, []).append(rel)
+                        if is_abstract and name not in abstract_contracts:
+                            abstract_contracts.append(name)
+                except Exception:
+                    continue
+
+        conflicts = {n: f for n, f in name_to_files.items() if len(f) > 1}
+
+        conflict_warnings = ""
+        if conflicts:
+            lines = [
+                "=== NAMING CONFLICT WARNINGS ===",
+                "The following contract names are defined in MULTIPLE files in this repo.",
+                "Importing more than one causes Error (2333): 'Identifier already declared'.",
+                "ONLY import ONE file per contract name. Prefer the path in IMPORT CHEAT SHEET.",
+                "",
+            ]
+            for name, files in conflicts.items():
+                lines.append(f"  CONTRACT '{name}' defined in:")
+                for f in files:
+                    lines.append(f"    - {f}")
+                lines.append(f"  → Import ONLY ONE of the above for '{name}'.")
+            conflict_warnings = "\n".join(lines)
+
+        abstract_warnings = ""
+        if abstract_contracts:
+            lines = [
+                "=== ABSTRACT CONTRACT WARNINGS ===",
+                "These contracts are abstract — `new X(...)` will cause Error (4614).",
+                "Do NOT instantiate them directly. Options:",
+                "  a) Find a concrete subclass in AVAILABLE CONTRACTS and deploy that instead.",
+                "  b) Write a minimal concrete subclass at FILE LEVEL before ExploitTest.",
+                "",
+            ]
+            for name in abstract_contracts:
+                lines.append(f"  - {name}")
+            abstract_warnings = "\n".join(lines)
+
+        return {
+            "naming_conflicts": list(conflicts.keys()),
+            "abstract_contracts": abstract_contracts,
+            "conflict_warnings": conflict_warnings,
+            "abstract_warnings": abstract_warnings,
+        }
+
+    def _fetch_rag_context(self, finding: Finding) -> str:
+        from src.knowledge.rag_system import search_security_knowledge
         queries = [
             f"{finding.vulnerability_class} exploit Foundry test pattern",
             f"Solidity {finding.vulnerability_class} vulnerability proof of concept",
@@ -498,15 +526,12 @@ class TestWriterWorker(WorkerAgent):
         ]
         if finding.hypothesis:
             queries.append(f"{finding.hypothesis[:80]} exploit")
-
         all_results = []
         for q in queries[:3]:
             results = search_security_knowledge(q, k=3)
             all_results.extend(results)
-
         if not all_results:
             return ""
-
         seen = set()
         lines = []
         for r in all_results[:5]:
@@ -518,13 +543,10 @@ class TestWriterWorker(WorkerAgent):
         return "\n=== SECURITY KNOWLEDGE (use for correct Solidity patterns) ===\n" + "\n".join(lines)
 
     def _fetch_error_rag_context(self, error_history: list[str]) -> str:
-        """Fetch RAG results for compiler error fixes — use on retry for maximum improvement."""
         if not error_history:
             return ""
         from src.knowledge.rag_system import search_security_knowledge
-
         last_err = error_history[-1]
-        # Extract error codes (e.g. 8429, 2424) and key phrases
         codes = re.findall(r"Warning \((\d+)\)|Error \((\d+)\)|error (\d+):", last_err)
         codes = [c for t in codes for c in t if c]
         phrases = []
@@ -542,15 +564,12 @@ class TestWriterWorker(WorkerAgent):
             phrases.append("Solidity function signature Foundry test")
         for code in codes[:2]:
             phrases.append(f"Solidity compiler error {code} fix")
-
         all_results = []
         for q in phrases[:3]:
             results = search_security_knowledge(q, k=2)
             all_results.extend(results)
-
         if not all_results:
             return ""
-
         seen = set()
         lines = []
         for r in all_results[:5]:
@@ -572,28 +591,47 @@ class TestWriterWorker(WorkerAgent):
         repo_manifest: list[str] | None = None,
         skip_rag: bool = False,
         import_cheatsheet: str | None = None,
+        repo_conflicts: dict | None = None,
+        target_pragma: str | None = None,
     ) -> list[dict[str, str]]:
 
         has_real_source = bool(real_sources)
         system_prompt = TEST_WRITER_REAL_SOURCE_SYSTEM_PROMPT if has_real_source else TEST_WRITER_SYSTEM_PROMPT
-
         error_context = self._format_error_history(error_history)
 
-        source_section = ""
+        # Conflict/abstract warnings go first so LLM reads them before any source
+        conflict_block = ""
+        if repo_conflicts and has_real_source:
+            if repo_conflicts.get("conflict_warnings"):
+                conflict_block += "\n\n" + repo_conflicts["conflict_warnings"] + "\n"
+            if repo_conflicts.get("abstract_warnings"):
+                conflict_block += "\n" + repo_conflicts["abstract_warnings"] + "\n"
+
+        source_section = conflict_block
+
+        # Pragma warning — pinned version must match across all imported files
+        if target_pragma and has_real_source:
+            source_section += (
+                f"\n=== PRAGMA VERSION (MANDATORY) ===\n"
+                f"The target contract uses: pragma solidity {target_pragma};\n"
+                f"Your test file MUST start with exactly: pragma solidity {target_pragma};\n"
+                f"Do NOT use ^0.8.0, ^0.8.17, or any other version. "
+                f"Mismatched pragmas cause 'Found incompatible versions' build failure.\n\n"
+            )
+
         if has_real_source:
-            # Import cheat sheet — ready-to-paste lines the LLM must use
             if import_cheatsheet:
                 source_section += "\n\n=== IMPORT CHEAT SHEET (copy these verbatim, do NOT invent paths) ===\n"
                 source_section += import_cheatsheet + "\n"
                 source_section += "\nONLY use imports listed above. NEVER import from out/, cache/, or artifacts/.\n"
                 source_section += "Do NOT use ../src/... — that causes 'src/src/...' when test is in src/test/.\n\n"
 
-            # Starter template
             first_path = list(real_sources.keys())[0] if real_sources else "src/core/Contract.sol"
+            pragma_line = f"pragma solidity {target_pragma};" if target_pragma else "pragma solidity ^0.8.17;"
             source_section += "\n=== STARTER TEMPLATE (use this structure) ===\n"
-            source_section += f'// pragma solidity ^0.8.17;\n'
+            source_section += f'// {pragma_line}\n'
             source_section += f'// import "forge-std/Test.sol";\n'
-            source_section += f'// import "{first_path}";  // <-- from IMPORT CHEAT SHEET above\n'
+            source_section += f'// import "{first_path}";\n'
             source_section += f'// contract ExploitTest is Test {{\n'
             source_section += f'//     function setUp() public {{ /* deploy real contracts */ }}\n'
             source_section += f'//     function test_exploit() public {{ /* attack logic */ }}\n'
@@ -623,7 +661,7 @@ class TestWriterWorker(WorkerAgent):
                     source_section += f"  {alias} => {target}\n"
 
         elif relevant_code:
-            source_section = "\n\n=== CODE SNIPPETS FROM KNOWLEDGE GRAPH ===\n"
+            source_section += "\n\n=== CODE SNIPPETS FROM KNOWLEDGE GRAPH ===\n"
             if contract_signatures:
                 source_section += "=== CONTRACT SIGNATURES ===\n"
                 for fn_name, sig in sorted(contract_signatures.items()):
@@ -657,10 +695,8 @@ class TestWriterWorker(WorkerAgent):
 
     async def run(self, task: WorkerTask) -> WorkerOutput:
         finding = task.context.get("finding")
-
         if isinstance(finding, list):
             finding = finding[0] if finding else None
-
         if not finding or not isinstance(finding, Finding):
             return WorkerOutput(
                 worker_type=self.get_worker_type(),
@@ -672,20 +708,13 @@ class TestWriterWorker(WorkerAgent):
         repo_path = task.context.get("repo_path")
         contract_signatures = task.context.get("contract_signatures", {}) or {}
 
-        # Get remappings from repo (needed for import resolution)
         remappings = self._get_remappings_from_repo(repo_path)
 
-        # Collect sources + track lib/ imports for the cheat sheet
         lib_imports: set[str] = set()
-        real_sources_full = self._collect_repo_sources(
-            finding, repo_path, remappings, _lib_imports_out=lib_imports,
-        )
-        real_sources_minimal = self._collect_minimal_sources(
-            finding, repo_path, remappings, _lib_imports_out=lib_imports,
-        )
+        real_sources_full = self._collect_repo_sources(finding, repo_path, remappings, _lib_imports_out=lib_imports)
+        real_sources_minimal = self._collect_minimal_sources(finding, repo_path, remappings, _lib_imports_out=lib_imports)
         repo_manifest = self._get_repo_file_manifest(repo_path) if repo_path else []
 
-        # Pre-generate import cheat sheet (local + remapped lib imports)
         import_cheatsheet = self._generate_import_cheatsheet(
             real_sources_full or real_sources_minimal, lib_imports,
         ) if (real_sources_full or real_sources_minimal) else None
@@ -695,18 +724,37 @@ class TestWriterWorker(WorkerAgent):
         else:
             print(f"[TestWriter] No real source found for {finding.affected_contract}, using mock mode")
 
+        # Detect pragma by scanning ALL collected sources (not just the first file).
+        # The first file is often an interface with no pragma; the target contract
+        # may be the second or third file in the dependency walk.
+        sources_to_check = real_sources_full or real_sources_minimal
+        target_pragma = self._detect_pragma(sources_to_check) if sources_to_check else None
+        if target_pragma:
+            print(f"[TestWriter] Detected target pragma: {target_pragma}")
+        else:
+            print(f"[TestWriter] No pragma detected — LLM will use default")
+
+        # Pre-analyze repo for naming conflicts and abstract contracts.
+        # Comments are stripped before analysis to prevent false positives.
+        repo_conflicts = self._detect_repo_contract_conflicts(
+            repo_path if real_sources_full else None
+        )
+        if repo_conflicts["naming_conflicts"]:
+            print(f"[TestWriter] Naming conflicts detected: {repo_conflicts['naming_conflicts']}")
+        if repo_conflicts["abstract_contracts"]:
+            print(f"[TestWriter] Abstract contracts detected: {repo_conflicts['abstract_contracts']}")
+
         attempts = 0
-        error_history = []
+        error_history: list[str] = []
         compiled = False
         exploit_success = False
         test_code_generated = None
         test_logs = ""
 
-        # ── ONE sandbox for ALL attempts — repo copied only once ──
         use_repo = repo_path if real_sources_full else None
         sandbox = SandboxManager(repo_path=use_repo)
         try:
-            sandbox.setup_foundry_project()  # copy repo ONCE here
+            sandbox.setup_foundry_project()
 
             while attempts < self.MAX_ATTEMPTS:
                 attempts += 1
@@ -722,29 +770,33 @@ class TestWriterWorker(WorkerAgent):
                     repo_manifest=repo_manifest,
                     skip_rag=(attempts == 1),
                     import_cheatsheet=import_cheatsheet,
+                    repo_conflicts=repo_conflicts,
+                    target_pragma=target_pragma,
                 )
 
                 try:
-                    # Use sync invoke() via to_thread so REST transport is used (gRPC often ignores timeout).
-                    # ainvoke uses gRPC and can hang; invoke with transport=rest respects timeout.
                     print(f"[TestWriter] Attempt {attempts} calling LLM (timeout={self.LLM_TIMEOUT}s)...", flush=True)
                     response = await asyncio.wait_for(
                         asyncio.to_thread(self.llm_client.invoke, prompt),
                         timeout=self.LLM_TIMEOUT
                     )
-
                     content = response.content if hasattr(response, "content") else str(response)
-
                     if isinstance(content, list):
                         content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
 
                     test_code_generated = self._extract_test_code(content)
-
                     if not test_code_generated:
+                        print(f"[TestWriter] Attempt {attempts}: LLM returned NO extractable Solidity code.")
+                        print(f"[TestWriter]   Response preview: {content[:200]}...")
                         error_history.append("No Solidity code returned by LLM")
                         continue
 
                     if not self._has_exact_test_exploit(test_code_generated):
+                        print(f"[TestWriter] Attempt {attempts}: Missing 'function test_exploit()' in generated code.")
+                        # Show function signatures that WERE generated
+                        funcs = re.findall(r'function\s+(\w+)\s*\(', test_code_generated)
+                        if funcs:
+                            print(f"[TestWriter]   Found functions: {funcs}")
                         error_history.append("Generated test must include function test_exploit() exactly.")
                         continue
 
@@ -757,27 +809,42 @@ class TestWriterWorker(WorkerAgent):
                     test_file = f"{test_path}/ExploitTest.t.sol"
                     sandbox.write_test_file(test_file, test_code_generated)
 
-                    # Ignore deprecation warnings (8429=virtual modifier, 2424=memory-safe-assembly).
-                    # Build only src/ to avoid scripts/ deploy errors; use separate flags (space = path).
-                    src_path = sandbox.get_src_path()
-                    build_res = sandbox.run(
-                        f"forge build --force --ignored-error-codes 8429 --ignored-error-codes 2424 {src_path}"
+                    # ── Compile & Test in one step ──────────────────
+                    # forge test compiles only what the test needs (not
+                    # the entire repo), avoiding multi-pragma collateral
+                    # failures on projects like Ethernaut.
+                    test_res = sandbox.run(
+                        "forge test --match-test test_exploit -vvv"
+                        " --ignored-error-codes 8429 --ignored-error-codes 2424"
                     )
-                    if not build_res.success:
-                        err = (build_res.stderr or build_res.stdout)[:1200]
-                        print(f"[TestWriter] Attempt {attempts} build error:\n{err[:400]}...")
-                        error_history.append(f"Build Failed:\n{err}")
+                    test_logs = (test_res.stdout or "") + "\n" + (test_res.stderr or "")
+
+                    # Distinguish compilation failure from test failure
+                    is_compile_error = (
+                        "Compiler run failed" in test_logs
+                        or "Error (" in test_logs
+                        or "ParserError" in test_logs
+                    )
+
+                    if not test_res.success and is_compile_error:
+                        err = test_logs[:1200]
+                        # Filter out noise: keep only Error lines
+                        err_lines = [
+                            ln for ln in err.splitlines()
+                            if "Error" in ln or "error" in ln.lower()
+                            or ln.strip().startswith("-->")
+                            or ln.strip().startswith("|")
+                        ]
+                        short_err = "\n".join(err_lines[:15]) if err_lines else err[:400]
+                        print(f"[TestWriter] Attempt {attempts} build error:\n{short_err}")
+                        error_history.append(f"Build Failed:\n{short_err}")
                         compiled = False
-                        # Clean Foundry output so stale out/X.sol/ dirs
-                        # don't confuse auto-correction on the next attempt
                         out_dir = Path(sandbox.tmp_dir) / "out"
                         if out_dir.exists():
                             shutil.rmtree(out_dir, ignore_errors=True)
                         continue
 
                     compiled = True
-                    test_res = sandbox.run("forge test --match-test test_exploit -vvv")
-                    test_logs = (test_res.stdout or "") + "\n" + (test_res.stderr or "")
                     passed_by_logs = "[PASS]" in test_logs or "exploit succeeded" in test_logs.lower()
                     exploit_success = test_res.success and passed_by_logs
 
@@ -785,6 +852,10 @@ class TestWriterWorker(WorkerAgent):
                         break
 
                     error_history.append(f"Test compiled but exploit check failed.\nLogs:\n{test_logs[:400]}")
+                    print(f"[TestWriter] Attempt {attempts}: Test compiled but exploit FAILED.")
+                    print(f"[TestWriter]   test_res.success={test_res.success}, passed_by_logs={passed_by_logs}")
+                    if test_logs:
+                        print(f"[TestWriter]   Logs: {test_logs[:300]}...")
 
                 except asyncio.TimeoutError:
                     msg = f"LLM call timed out after {self.LLM_TIMEOUT}s"
@@ -797,7 +868,6 @@ class TestWriterWorker(WorkerAgent):
         finally:
             sandbox.cleanup()
 
-        # Confidence adjustment
         original_conf = getattr(finding, "confidence", 50)
         if compiled and exploit_success:
             adjustment = 60

@@ -18,6 +18,15 @@ class RepoManager:
         os.chmod(path, stat.S_IWRITE)
         func(path)
 
+    def _normalize_repo_url(self, url: str) -> str:
+        """Convert GitHub HTTPS URLs to SSH format if possible."""
+        if url.startswith("https://github.com/"):
+            repo_path = url.replace("https://github.com/", "")
+            if not repo_path.endswith(".git"):
+                repo_path += ".git"
+                return f"git@github.com:{repo_path}"
+        return url
+
     def clone_repo(self, url: str) -> str:
         """
         Clones a repository from a given URL into the workspace directory.
@@ -25,6 +34,7 @@ class RepoManager:
         Returns the path to the cloned/copied repository.
         """
         # Extract folder name from URL/Path
+        url = self._normalize_repo_url(url)
         repo_name = os.path.basename(os.path.normpath(url))
         if repo_name.endswith(".git"):
             repo_name = repo_name[:-4]

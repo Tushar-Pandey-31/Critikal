@@ -1,12 +1,66 @@
+"""
+Analysis Engine — Orchestrator for the cluster-based compilation pipeline.
+
+This module is the public entry point for Penteam's ingestion layer.
+All compilation logic has been delegated to submodules in src/ingestion/.
+
+Public API:
+    engine = AnalysisEngine()
+    slither_obj = engine.run_analysis(repo_path)           # backward compat
+    slither_obj, report = engine.run_analysis_v2(repo_path)  # new API
+"""
+
 import os
-import subprocess
-import re
 import logging
 import traceback
-from slither.slither import Slither
 from typing import Optional
 
+from slither.slither import Slither
+
+from src.ingestion.models import (
+    IngestionReport,
+    ClusterResult,
+    CompilationCluster,
+    RepoSizeClass,
+)
+from src.ingestion.strategy_resolver import CompilationStrategyResolver
+from src.ingestion.cluster_builder import ClusterBuilder
+from src.ingestion.import_resolver import ImportResolver
+from src.ingestion.solc_manager import SolcManager
+from src.ingestion.memory_guard import MemoryGuard
+from src.ingestion.framework_detector import FrameworkDetector
+from src.ingestion.fallback import FallbackCompiler, merge_slither_objects
+
 logger = logging.getLogger(__name__)
+
+
+def _deduplicate_contracts(slither_obj: Slither) -> Slither:
+    """
+    Remove duplicate contracts from a merged Slither object.
+
+    When multiple clusters compile overlapping directories, the same
+    contract can appear multiple times. Deduplicate by (name, source_file).
+
+    Slither stores contracts in ``_contracts`` as a ``list[Contract]``.
+    """
+    seen = set()
+    unique = []
+    for contract in slither_obj.contracts:
+        # Build a key from contract name + source file
+        source_file = ""
+        try:
+            if contract.source_mapping and contract.source_mapping.filename:
+                source_file = str(contract.source_mapping.filename.absolute)
+        except Exception:
+            pass
+        key = (contract.name, source_file)
+        if key not in seen:
+            seen.add(key)
+            unique.append(contract)
+    # _contracts is a list, NOT a dict — Slither's .contracts property
+    # returns self._contracts directly.
+    slither_obj._contracts = unique
+    return slither_obj
 
 
 # ════════════════════════════════════════════════════════════
@@ -91,221 +145,393 @@ def _apply_slither_fault_tolerance_patch():
     print("  [AnalysisEngine] Slither fault-tolerance patch applied.")
 
 
+# ════════════════════════════════════════════════════════════
+#  Analysis Engine
+# ════════════════════════════════════════════════════════════
+
 class AnalysisEngine:
+    """
+    Orchestrates cluster-based Solidity compilation via Slither.
+
+    Delegates to:
+      - CompilationStrategyResolver — directory scanning
+      - MemoryGuard — size classification
+      - FrameworkDetector — Foundry/Hardhat/Brownie detection
+      - ClusterBuilder — pragma & import segmentation
+      - SolcManager — deterministic solc switching
+      - FallbackCompiler — 4-level fallback hierarchy
+    """
+
     def __init__(self):
         _apply_slither_fault_tolerance_patch()
+        self._solc_manager = SolcManager()
+        self._strategy_resolver = CompilationStrategyResolver()
 
-    def _is_foundry_project(self) -> bool:
-        return os.path.exists("foundry.toml")
+    # ──────────────────────────────────────────────────────────
+    #  Legacy API (backward compatible)
+    # ──────────────────────────────────────────────────────────
 
-    def _ensure_foundry_config(self) -> bool:
+    def run_analysis(
+        self,
+        repo_path: str,
+        targets=None,
+    ) -> Optional[Slither]:
         """
-        Create foundry.toml when missing so CryticCompile detects Foundry.
-        Some repos (e.g. sentimentxyz/protocol) use forge without foundry.toml;
-        forge infers config from lib/, but CryticCompile requires foundry.toml.
-        """
-        if os.path.exists("foundry.toml"):
-            return True
-        # Heuristic: Foundry-like if lib/forge-std or lib/solmate exists
-        lib_forge = os.path.isdir("lib/forge-std") or os.path.isdir("lib/solmate")
-        if not lib_forge:
-            return False
-        try:
-            result = subprocess.run(
-                ["forge", "config", "--basic"],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                content = result.stdout
-                # Fix test path when repo uses src/test (e.g. sentimentxyz/protocol)
-                if os.path.isdir("src/test") and "test =" not in content:
-                    content = content.rstrip() + '\ntest = "src/test"\nscript = "scripts"\n'
-                with open("foundry.toml", "w") as f:
-                    f.write(content)
-                print("  Created foundry.toml for Foundry detection (forge config --basic).")
-                return True
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-        return False
+        Backward-compatible entry point.
 
-    def _pre_build_foundry(self) -> bool:
-        """Run forge build before Slither so compilation artifacts are cached."""
-        try:
-            print("  Running forge build (pre-compilation)...")
-            result = subprocess.run(
-                ["forge", "build"],
-                capture_output=True, text=True, timeout=300,
-            )
-            if result.returncode == 0:
-                print("  forge build succeeded.")
-                return True
-            else:
-                print(f"  forge build failed (exit {result.returncode}): {result.stderr[:300]}")
-                return False
-        except FileNotFoundError:
-            print("  Warning: 'forge' not found, skipping pre-build.")
-            return False
-        except subprocess.TimeoutExpired:
-            print("  Warning: forge build timed out after 300s.")
-            return False
+        Returns the combined Slither object, or None on total failure.
+        Same signature as the original AnalysisEngine.
+        """
+        slither_obj, report = self.run_analysis_v2(repo_path, targets=targets)
+        if report:
+            print(f"  {report.summary()}")
+        return slither_obj
 
-    def run_analysis(self, repo_path: str, targets=None) -> Optional[Slither]:
+    # ──────────────────────────────────────────────────────────
+    #  New API
+    # ──────────────────────────────────────────────────────────
+
+    def run_analysis_v2(
+        self,
+        repo_path: str,
+        targets=None,
+    ) -> tuple[Optional[Slither], IngestionReport]:
         """
-        Runs Slither analysis on the given repository path.
-        Handles solc version mismatches by installing and switching versions.
+        Full cluster-based compilation pipeline.
+
+        Returns (combined_slither, ingestion_report).
+        The report always contains structured diagnostics, even on failure.
+
+        Pipeline steps:
+          1. Detect frameworks across the repo
+          2. Scan for contract roots
+          3. Classify repo size & init memory guard
+          4. Build clusters
+          5. Compile each cluster (with fallback)
+          6. Merge Slither objects
+          7. Build report
         """
+        report = IngestionReport()
+
         if not os.path.exists(repo_path):
             print(f"Error: Path {repo_path} does not exist.")
-            return None
+            report.warnings.append(f"Path {repo_path} does not exist")
+            return None, report
+
+        repo_path = os.path.abspath(repo_path)
+
+        # Handle single-file mode (backward compat)
+        if os.path.isfile(repo_path):
+            return self._compile_single_file(repo_path, report)
+
+        original_cwd = os.getcwd()
+        try:
+            # ── Step 1: Detect all frameworks ─────────────────
+            print("Detecting frameworks...")
+            frameworks = FrameworkDetector.detect_all(repo_path)
+            report.frameworks_detected = list({fi.framework for fi in frameworks})
+            if frameworks:
+                print(
+                    f"  Found {len(frameworks)} framework instance(s): "
+                    f"{', '.join(f'{fi.framework} @ {os.path.relpath(fi.path, repo_path)}' for fi in frameworks)}"
+                )
+            report.repo_type = (
+                report.frameworks_detected[0] if report.frameworks_detected else "raw_solidity"
+            )
+
+            # ── Step 2: Classify repo size ─────────────────────
+            total_sol = self._strategy_resolver.count_all_sol_files(repo_path)
+            report.total_sol_files = total_sol
+            guard = MemoryGuard(total_sol)
+            report.size_class = guard.size_class.value
+            print(f"  Found {total_sol} .sol files [{report.size_class}]")
+
+            # ── Step 3: Framework-first compilation ────────────
+            #
+            # Key insight: Foundry/Hardhat handle multi-pragma compilation
+            # internally. Compile each framework directory as ONE unit.
+            # Only cluster-split files NOT covered by any framework.
+            #
+            successful_slithers: list[Slither] = []
+            framework_covered_dirs: list[str] = []
+
+            if frameworks:
+                print("\nCompiling framework project(s) as whole units...")
+                compiler = FallbackCompiler(self._solc_manager)
+
+                for fi in frameworks:
+                    fw_dir = fi.path
+                    fw_name = fi.framework
+                    rel = os.path.relpath(fw_dir, repo_path)
+                    print(f"\n─── Framework: {fw_name} @ {rel} ───")
+
+                    # Create a single cluster for this framework directory
+                    fw_cluster = CompilationCluster(
+                        cluster_id=f"fw_{fw_name}_{rel.replace(os.sep, '_')}",
+                        root_path=fw_dir,
+                        sol_files=[],  # framework compiles everything
+                        framework=fw_name,
+                    )
+
+                    try:
+                        result = compiler.compile_cluster(fw_cluster, repo_path)
+                        report.cluster_results.append(result)
+                        report.clusters_detected += 1
+
+                        if result.success and result.slither_obj:
+                            successful_slithers.append(result.slither_obj)
+                            report.clusters_compiled += 1
+                            report.total_contracts_parsed += result.contracts_parsed
+                            framework_covered_dirs.append(os.path.abspath(fw_dir))
+                            print(f"  ✅ {result.contracts_parsed} contracts parsed.")
+                        else:
+                            report.clusters_failed += 1
+                            report.failed_clusters.append(fw_cluster.cluster_id)
+                            print(f"  ❌ Failed: {result.error}")
+                    except Exception as e:
+                        logger.error(f"Framework {fw_name} crashed: {e}")
+                        traceback.print_exc()
+                        report.clusters_failed += 1
+                        report.clusters_detected += 1
+
+            # ── Step 4: Cluster non-framework files ────────────
+            #
+            # Find contract roots NOT under any framework directory.
+            # These are "orphan" .sol files that need cluster compilation.
+            #
+            roots = self._strategy_resolver.resolve(repo_path)
+            orphan_roots = []
+            for root in roots:
+                root_abs = os.path.abspath(root.path)
+                covered = any(
+                    root_abs.startswith(fw_dir + os.sep) or root_abs == fw_dir
+                    for fw_dir in framework_covered_dirs
+                )
+                if not covered:
+                    orphan_roots.append(root)
+
+            if orphan_roots:
+                print(f"\nBuilding clusters for {len(orphan_roots)} non-framework root(s)...")
+                builder = ClusterBuilder(guard, self._solc_manager)
+                clusters = builder.build_clusters(orphan_roots, repo_path)
+
+                for c in clusters:
+                    report.clusters_detected += 1
+                    print(
+                        f"    - {c.cluster_id}: {len(c.sol_files)} files, "
+                        f"solc={c.solc_version}"
+                    )
+
+                if not clusters and not successful_slithers:
+                    return self._legacy_fallback(repo_path, targets, frameworks, report)
+
+                compiler = FallbackCompiler(self._solc_manager)
+                for cluster in clusters:
+                    print(f"\n─── Cluster: {cluster.cluster_id} ───")
+                    try:
+                        result = compiler.compile_cluster(cluster, repo_path)
+                        report.cluster_results.append(result)
+
+                        if result.success and result.slither_obj:
+                            successful_slithers.append(result.slither_obj)
+                            report.clusters_compiled += 1
+                            report.total_contracts_parsed += result.contracts_parsed
+                        else:
+                            report.clusters_failed += 1
+                            report.failed_clusters.append(cluster.cluster_id)
+                    except Exception as e:
+                        logger.error(f"Cluster {cluster.cluster_id} crashed: {e}")
+                        traceback.print_exc()
+                        report.clusters_failed += 1
+                        report.cluster_results.append(ClusterResult(
+                            cluster_id=cluster.cluster_id,
+                            success=False,
+                            error=str(e),
+                        ))
+            elif not successful_slithers:
+                # No framework compilations succeeded, no orphan roots
+                if not roots:
+                    report.warnings.append("No Solidity files found")
+                    return None, report
+                return self._legacy_fallback(repo_path, targets, frameworks, report)
+
+            report.memory_guard_triggered = guard.triggered
+            report.solc_versions_used = self._solc_manager.versions_used
+
+            # ── Step 5: Merge + deduplicate ────────────────────
+            if not successful_slithers:
+                print("\n  All compilations failed. Attempting legacy fallback...")
+                return self._legacy_fallback(repo_path, targets, frameworks, report)
+
+            combined = merge_slither_objects(successful_slithers)
+            if combined:
+                before = len(combined.contracts)
+                combined = _deduplicate_contracts(combined)
+                after = len(combined.contracts)
+                report.total_contracts_parsed = after
+                if before != after:
+                    print(f"  Deduplicated: {before} → {after} unique contracts")
+
+            print(f"\n  ═══ {report.summary()} ═══")
+            return combined, report
+
+        except Exception as e:
+            logger.error(f"Ingestion pipeline crashed: {e}")
+            traceback.print_exc()
+            report.warnings.append(f"Pipeline crash: {e}")
+            # Try legacy fallback on crash
+            try:
+                return self._legacy_fallback(repo_path, targets, [], report)
+            except Exception:
+                return None, report
+        finally:
+            os.chdir(original_cwd)
+
+    # ──────────────────────────────────────────────────────────
+    #  Single File Mode
+    # ──────────────────────────────────────────────────────────
+
+    def _compile_single_file(
+        self,
+        file_path: str,
+        report: IngestionReport,
+    ) -> tuple[Optional[Slither], IngestionReport]:
+        """Handle single .sol file compilation."""
+        report.total_sol_files = 1
+        report.clusters_detected = 1
+        report.size_class = RepoSizeClass.SMALL.value
+
+        original_cwd = os.getcwd()
+        try:
+            directory = os.path.dirname(file_path)
+            filename = os.path.basename(file_path)
+            os.chdir(directory)
+
+            # Detect pragma and switch solc
+            pragma = SolcManager.detect_pragma(file_path)
+            if pragma:
+                version = SolcManager.extract_version_from_pragma(pragma)
+                if version:
+                    self._solc_manager.ensure_version(version)
+
+            s = Slither(filename)
+            report.clusters_compiled = 1
+            report.total_contracts_parsed = len(s.contracts)
+            report.solc_versions_used = self._solc_manager.versions_used
+            return s, report
+        except Exception as e:
+            print(f"Single file compilation failed: {e}")
+            report.clusters_failed = 1
+            report.failed_clusters.append(file_path)
+            report.warnings.append(str(e))
+            return None, report
+        finally:
+            os.chdir(original_cwd)
+
+    # ──────────────────────────────────────────────────────────
+    #  Legacy Fallback (preserves old behavior)
+    # ──────────────────────────────────────────────────────────
+
+    def _legacy_fallback(
+        self,
+        repo_path: str,
+        targets,
+        frameworks: list,
+        report: IngestionReport,
+    ) -> tuple[Optional[Slither], IngestionReport]:
+        """
+        Fall back to the original AnalysisEngine behavior when the
+        cluster-based pipeline cannot form clusters or all clusters fail.
+
+        This preserves backward compatibility with the original engine.
+        """
+        print("  [Legacy] Falling back to direct Slither invocation...")
 
         if targets is None:
             targets = ['.']
         elif isinstance(targets, str):
             targets = [targets]
 
-        if os.path.isfile(repo_path):
-            file_target = os.path.basename(repo_path)
-            repo_path = os.path.dirname(repo_path)
-            if targets == ['.']:
-                targets = [file_target]
-
         original_cwd = os.getcwd()
         try:
             os.chdir(repo_path)
-            print(f"Changed CWD to {os.getcwd()}")
 
-            # Ensure foundry.toml exists for repos that use forge without it (e.g. sentimentxyz/protocol)
-            self._ensure_foundry_config()
-
-            solc_remaps = []
+            # Determine framework
+            is_foundry = FrameworkDetector._is_foundry(".")
+            is_hardhat = FrameworkDetector._is_hardhat(".")
             solc_args = ""
-            if os.path.exists("brownie-config.yaml"):
-                print("Brownie config detected. Preparing manual remappings...")
+            solc_remaps: list[str] = []
+
+            if is_hardhat and not is_foundry:
+                solc_args, solc_remaps = FrameworkDetector.setup_hardhat_project(".")
+            elif is_foundry or FrameworkDetector.ensure_foundry_config("."):
+                FrameworkDetector.pre_build_foundry(".")
+            elif FrameworkDetector._is_brownie("."):
                 if os.path.exists("openzeppelin-contracts"):
                     solc_remaps.append("@openzeppelin=openzeppelin-contracts")
                     solc_args = "--base-path . --include-path openzeppelin-contracts"
 
-            # For Foundry projects, ensure compilation cache exists
-            if self._is_foundry_project():
-                self._pre_build_foundry()
-
             combined_slither = None
             for target in targets:
                 try:
-                    print(f"Analyzing target: {target}")
-                    s = Slither(target, solc_args=solc_args, solc_remaps=solc_remaps)
+                    print(f"  [Legacy] Analyzing target: {target}")
+                    if is_foundry:
+                        s = Slither(target, foundry=True)
+                    elif is_hardhat:
+                        s = Slither(target, hardhat=True)
+                    else:
+                        s = Slither(target, solc_args=solc_args, solc_remaps=solc_remaps)
+
                     if combined_slither is None:
                         combined_slither = s
                     else:
                         combined_slither.contracts.extend(s.contracts)
-                    print(f"Successfully analyzed {target}")
+                    print(f"  [Legacy] Successfully analyzed {target}")
                 except Exception as e:
-                    print(f"Slither initialization failed for {target}: {type(e).__name__}: {e}")
-                    traceback.print_exc()
+                    print(f"  [Legacy] Failed for {target}: {e}")
 
-                    version = self._detect_solc_version('.')
-                    if version:
-                        print(f"Detected required solc version: {version}")
-                        if self._switch_solc_version(version):
+                    # Try switching solc version
+                    pragmas = SolcManager.detect_pragmas_in_directory(".")
+                    if pragmas:
+                        version = self._solc_manager.resolve_version_for_pragmas(pragmas)
+                        if version and self._solc_manager.ensure_version(version):
                             try:
-                                print(f"Retrying analysis for {target} with version {version}...")
                                 s = Slither(target, solc_args=solc_args, solc_remaps=solc_remaps)
                                 if combined_slither is None:
                                     combined_slither = s
                                 else:
                                     combined_slither.contracts.extend(s.contracts)
+                                print(f"  [Legacy] Retry succeeded for {target}")
                             except Exception as e2:
-                                print(f"Retry failed for {target}: {type(e2).__name__}: {e2}")
-                                traceback.print_exc()
+                                print(f"  [Legacy] Retry failed: {e2}")
 
             if combined_slither is None:
-                combined_slither = self._fallback_per_file(solc_args, solc_remaps)
+                # Per-file fallback (respects file count limit)
+                sol_files = self._strategy_resolver.collect_all_sol_files(repo_path)
+                if len(sol_files) <= 50:
+                    print(f"  [Legacy] Attempting per-file fallback ({len(sol_files)} files)...")
+                    for f in sol_files:
+                        try:
+                            rel = os.path.relpath(f, repo_path)
+                            s = Slither(rel, solc_args=solc_args, solc_remaps=solc_remaps)
+                            if combined_slither is None:
+                                combined_slither = s
+                            else:
+                                combined_slither.contracts.extend(s.contracts)
+                        except Exception:
+                            pass
+                else:
+                    report.warnings.append(
+                        f"Repo has {len(sol_files)} .sol files, "
+                        "exceeds per-file fallback limit (50)."
+                    )
 
-            return combined_slither
+            if combined_slither:
+                report.clusters_compiled += 1
+                report.total_contracts_parsed += len(combined_slither.contracts)
+                report.solc_versions_used = self._solc_manager.versions_used
+
+            return combined_slither, report
 
         finally:
             os.chdir(original_cwd)
-            print(f"Restored CWD to {original_cwd}")
-
-    def _fallback_per_file(self, solc_args: str, solc_remaps: list) -> Optional[Slither]:
-        """
-        Fallback: try analyzing individual .sol files.
-        For Foundry projects, search src/ and contracts/ rather than root.
-        """
-        search_dirs = []
-        if self._is_foundry_project():
-            for d in ["src", "contracts"]:
-                if os.path.isdir(d):
-                    search_dirs.append(d)
-        if not search_dirs:
-            search_dirs = ["."]
-
-        sol_files = []
-        for search_dir in search_dirs:
-            for root, _, files in os.walk(search_dir):
-                for f in files:
-                    if f.endswith(".sol"):
-                        sol_files.append(os.path.join(root, f))
-
-        if not sol_files:
-            return None
-
-        print(f"Attempting per-file compilation fallback ({len(sol_files)} .sol files)...")
-        combined_slither = None
-        for f in sol_files:
-            try:
-                print(f"  Compiling {f}...")
-                s = Slither(f, solc_args=solc_args, solc_remaps=solc_remaps)
-                if combined_slither is None:
-                    combined_slither = s
-                else:
-                    combined_slither.contracts.extend(s.contracts)
-            except Exception as ex:
-                print(f"  Failed to compile {f}: {ex}")
-
-        if combined_slither:
-            print("Per-file compilation successful.")
-        return combined_slither
-
-    def _detect_solc_version(self, repo_path: str) -> Optional[str]:
-        """
-        Scans .sol files in the repo to find the pragma solidity version.
-        Returns the highest version found (or the first one).
-        """
-        # Regex to find version: pragma solidity ^0.8.0; or pragma solidity 0.8.0;
-        version_pattern = re.compile(r'pragma\s+solidity\s+[\^><=]*\s*(\d+\.\d+\.\d+)')
-        
-        for root, _, files in os.walk(repo_path):
-            for file in files:
-                if file.endswith(".sol"):
-                    try:
-                        with open(os.path.join(root, file), 'r', encoding='utf-8') as f:
-                            content = f.read()
-                            match = version_pattern.search(content)
-                            if match:
-                                return match.group(1)
-                    except Exception as e:
-                        print(f"Error reading file {file}: {e}")
-        return None
-
-    def _switch_solc_version(self, version: str) -> bool:
-        """
-        Uses solc-select to install and set the required solc version.
-        """
-        try:
-            # Check if version is already installed
-            # We can just try 'solc-select use <version>' first, if it fails, try install
-            
-            # subprocess.run(["solc-select", "install", version], check=True) # Ensure it is installed
-            # This might take time, so let's check output if needed, but blind install is safer if check is fast
-            
-            print(f"Installing solc version {version}...")
-            subprocess.run(["solc-select", "install", version], check=True, capture_output=True)
-            
-            print(f"Switching to solc version {version}...")
-            subprocess.run(["solc-select", "use", version], check=True, capture_output=True)
-            
-            return True
-        except subprocess.CalledProcessError as e:
-            print(f"Error switching solc version: {e}")
-            return False

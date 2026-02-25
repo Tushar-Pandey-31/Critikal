@@ -66,10 +66,58 @@ SECURITY KNOWLEDGE (if provided):
   exploit precedents, and Foundry best practices. Avoid bad syntax and common pitfalls.
 - If no RAG section is provided, rely on your training and the source snippets.
 
-NO MOCKS:
-- NEVER create mock contracts (MockRegistry, MockX, MockERC20, etc.).
+═══════════════════════════════════════════════════════
+CRITICAL STRUCTURAL RULES — VIOLATIONS CAUSE BUILD ERRORS
+═══════════════════════════════════════════════════════
+
+RULE 1 — FILE-LEVEL CONTRACT PLACEMENT:
+  ALL helper/mock/attacker contracts MUST be defined at FILE LEVEL, BEFORE the ExploitTest contract.
+  Solidity does NOT allow defining a contract inside another contract body.
+  ✓ CORRECT:
+    contract AttackerContract { ... }          // file level
+    contract ExploitTest is Test { ... }       // file level
+  ✗ WRONG (Error 9182 - "Function, variable, struct or modifier declaration expected"):
+    contract ExploitTest is Test {
+        contract AttackerContract { ... }      // NEVER do this
+    }
+
+RULE 2 — NO DUPLICATE CONTRACT NAMES:
+  If the "NAMING CONFLICT WARNINGS" section below lists any conflicts, follow its instructions exactly.
+  - NEVER import two files that define the same contract name.
+  - If the protocol has its own ERC20.sol, do NOT also import the solmate or OZ version.
+  - When in doubt, use the version listed in FOUNDRY REMAPPINGS.
+  - If a naming conflict is unavoidable, alias one: import {ERC20 as SolmateERC20} from "solmate/tokens/ERC20.sol";
+
+RULE 3 — NEVER INSTANTIATE ABSTRACT CONTRACTS:
+  If "ABSTRACT CONTRACT WARNINGS" lists a contract as abstract, you CANNOT call `new X(...)` on it.
+  Abstract contracts have `abstract contract X` or contain unimplemented function stubs.
+  Instead:
+  - For ERC20: deploy a concrete subclass or use a MockERC20 that inherits and implements mint().
+  - For other abstracts: check if the repo has a concrete implementation listed in AVAILABLE CONTRACTS.
+  - If no concrete implementation exists, write your own minimal concrete subclass BEFORE ExploitTest.
+
+RULE 4 — IMPLEMENT INTERFACES COMPLETELY AND CORRECTLY:
+  When you implement an interface (e.g. IRegistry, IAccount, IControllerFacade):
+  - Look at the REAL CONTRACT SOURCE FILES to find the interface definition.
+  - Implement EVERY function the interface declares — missing even one causes Error (3656).
+  - Match mutability EXACTLY: if interface declares `view`, your function must be `view`.
+    If interface is `nonpayable` (no keyword), yours must NOT have `view`.
+  - `external` in interface means `external` or `public` in your implementation. Never change `view` to `nonpayable`.
+  - If an interface has many functions you don't need for the exploit, still implement them all
+    (they can be stubs: `function X() external returns (uint) { return 0; }`).
+
+RULE 5 — AVOID IDENTIFIER CONFLICTS:
+  - NEVER declare a function with the same name as an existing state variable in the same contract.
+  - NEVER redeclare an event that is already emitted by an imported contract.
+    If you see "Event with same name defined twice", remove your event declaration and use the imported one.
+  - NEVER redeclare a state variable that already exists in a base contract you inherit from.
+
+═══════════════════════════════════════════════════════
+
+NO MOCKS (unless "NAMING CONFLICT WARNINGS" instructs otherwise):
 - ALWAYS import and deploy REAL contracts from the repo.
-- Use the AVAILABLE CONTRACTS list and REAL CONTRACT SOURCE FILES. If a constructor needs IRegistry, import and deploy the real Registry (or whatever implements it).
+- Use the AVAILABLE CONTRACTS list and REAL CONTRACT SOURCE FILES.
+- If a constructor needs IRegistry, import and deploy the real Registry (or whatever implements it).
 
 COMMON MISTAKES TO AVOID:
 - WRONG: vm.prank(addr) without inheriting from Test → "Undeclared identifier. Did you mean Vm?"
@@ -106,7 +154,8 @@ GOAL:
 FORMAT:
 - Output a COMPLETE `.t.sol` file:
   - Pragma matching the real contract (or ^0.8.0)
-  - Real imports (not mocks)
+  - Real imports (not mocks) — from IMPORT CHEAT SHEET only
+  - Any helper/attacker contracts at FILE LEVEL before ExploitTest
   - Test contract inheriting from `Test`
   - `setUp()` deploying real contracts
   - `test_exploit()` with the attack

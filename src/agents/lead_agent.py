@@ -44,6 +44,34 @@ def _finding_priority(f: Finding) -> tuple:
     sev_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
     return (-f.confidence, sev_order.get(f.severity_estimate, 4))
 
+def _get_foundry_project_root(base: Path) -> Path:
+    """
+    Walk from `base` to find the directory that actually contains foundry.toml.
+
+    For repos like Ethernaut:
+        base          = /tmp/.../ethernaut          (repo root)
+        foundry.toml  = /tmp/.../ethernaut/contracts/foundry.toml
+        returns       = /tmp/.../ethernaut/contracts  <- Foundry project root
+
+    Falls back to `base` if no foundry.toml found anywhere under it.
+    """
+    if (base / "foundry.toml").exists():
+        return base
+
+    for name in ("contracts", "src", "protocol", "packages"):
+        candidate = base / name
+        if candidate.is_dir() and (candidate / "foundry.toml").exists():
+            return candidate
+
+    try:
+        for child in sorted(base.iterdir()):
+            if child.is_dir() and (child / "foundry.toml").exists():
+                return child
+    except PermissionError:
+        pass
+
+    return base
+
 
 # ════════════════════════════════════════════════════════════
 #  COORDINATOR SYSTEM PROMPT
@@ -509,13 +537,22 @@ async def coordinator_node(state: AgentState):
     # This avoids N parallel copies of the repo (one per finding).
     # All sandboxes will symlink lib/ from this shared Linux-fs copy.
     linux_repo_path = None
+    tmp_base = None  # track for cleanup
     if repo_path:
         try:
             tmp_base = tempfile.mkdtemp()
-            linux_repo_path = os.path.join(tmp_base, Path(repo_path).name)
-            print(f"[Coordinator] Copying repo to Linux fs once: {linux_repo_path}")
-            shutil.copytree(repo_path, linux_repo_path, symlinks=False)
+            repo_copy_root = os.path.join(tmp_base, Path(repo_path).name)
+            print(f"[Coordinator] Copying repo to Linux fs once: {repo_copy_root}")
+            shutil.copytree(repo_path, repo_copy_root, symlinks=False)
             print(f"[Coordinator] Repo copy complete.")
+
+            # KEY FIX: resolve the actual Foundry project root within the copy.
+            # Many repos have foundry.toml in a subdirectory (e.g. ethernaut/contracts/).
+            # Passing the repo root causes SandboxManager to look for lib/ in the wrong place.
+            foundry_root = _get_foundry_project_root(Path(repo_copy_root))
+            linux_repo_path = str(foundry_root)
+            if str(foundry_root) != repo_copy_root:
+                print(f"[Coordinator] Foundry project root resolved: {linux_repo_path}")
         except Exception as e:
             print(f"[Coordinator] Failed to copy repo to Linux fs: {e}, falling back to original path")
             linux_repo_path = repo_path
@@ -627,9 +664,9 @@ async def coordinator_node(state: AgentState):
                     break
 
     # Cleanup shared Linux-fs repo copy
-    if linux_repo_path and linux_repo_path != repo_path:
+    if tmp_base and os.path.exists(tmp_base):
         try:
-            shutil.rmtree(os.path.dirname(linux_repo_path))
+            shutil.rmtree(tmp_base)
         except Exception:
             pass
 

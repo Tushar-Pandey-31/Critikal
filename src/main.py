@@ -109,18 +109,24 @@ async def async_main():
         print(f"Error during repository ingestion: {e}")
         sys.exit(1)
 
-    # 3. Analyze with Slither
+    # 3. Analyze with Slither (cluster-based pipeline)
     print("Running Static Analysis (Slither)...")
     engine = AnalysisEngine()
-    
     
     # Optional: logic to detect specific targets could go here
     targets = None
     
-    slither_obj = engine.run_analysis(repo_path, targets=targets)
+    slither_obj, ingestion_report = engine.run_analysis_v2(repo_path, targets=targets)
     if not slither_obj:
         print("Error: Slither analysis failed. Exiting.")
+        if ingestion_report and ingestion_report.warnings:
+            print("  Diagnostics:")
+            for w in ingestion_report.warnings:
+                print(f"    - {w}")
         sys.exit(1)
+    
+    if ingestion_report:
+        print(f"  {ingestion_report.summary()}")
 
     # 4. Build Knowledge Graph
     print("Building Knowledge Graph...")
