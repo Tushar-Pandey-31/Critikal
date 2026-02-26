@@ -1,8 +1,12 @@
 import asyncio
 import os
 import re
+import logging
 import shutil
+import time
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from src.agents.base_worker import WorkerAgent, WorkerTask, WorkerOutput
 from src.models.finding import Finding
@@ -12,7 +16,7 @@ from src.agents.workers.test_writer_prompts import TEST_WRITER_SYSTEM_PROMPT, TE
 
 class TestWriterWorker(WorkerAgent):
     MAX_ATTEMPTS = 6
-    LLM_TIMEOUT = int(os.getenv("TEST_WRITER_LLM_TIMEOUT", "180"))
+    LLM_TIMEOUT = int(os.getenv("TEST_WRITER_LLM_TIMEOUT", "600"))  # 10 min default
 
     def __init__(self, llm_client, graph=None):
         self.llm_client = llm_client
@@ -132,7 +136,7 @@ class TestWriterWorker(WorkerAgent):
             test_code = test_code.replace(f'"{bad}"', f'"{good}"')
         if corrections:
             fixed = ", ".join(f"{b}->{g}" for b, g in corrections)
-            print(f"[TestWriter] Auto-corrected imports: {fixed}")
+            logger.info(f"[TestWriter] Auto-corrected imports: {fixed}")
         return test_code
 
     _IMPORT_RE = re.compile(
@@ -277,63 +281,17 @@ class TestWriterWorker(WorkerAgent):
         return collected
 
     def _collect_minimal_sources(self, finding: Finding, repo_path: str | None, remappings: dict[str, str], _lib_imports_out: set[str] | None = None) -> dict[str, str]:
-        if not repo_path:
-            return {}
-        repo = Path(repo_path)
-        if not repo.exists():
-            return {}
-        contract_name = finding.affected_contract
-        target_path: Path | None = None
-        for search_dir in ["src", "contracts", "."]:
-            base = repo / search_dir
-            if not base.exists():
-                continue
-            for sol_file in base.rglob("*.sol"):
-                if "lib" in sol_file.parts:
-                    continue
-                try:
-                    content = sol_file.read_text(encoding='utf-8', errors='replace')
-                    if f"contract {contract_name}" in content or f"contract {contract_name} " in content:
-                        target_path = sol_file
-                        break
-                except Exception:
-                    continue
-            if target_path:
-                break
-        if not target_path:
-            return {}
-        collected: dict[str, str] = {}
-        seen: set[str] = set()
-        to_visit: list[Path] = [target_path]
-        total_chars = 0
-        max_minimal_chars = 30_000
-        while to_visit and total_chars < max_minimal_chars:
-            current = to_visit.pop(0)
-            rel = str(current.relative_to(repo)).replace("\\", "/")
-            if rel in seen:
-                continue
-            seen.add(rel)
-            try:
-                content = current.read_text(encoding='utf-8', errors='replace')
-            except Exception:
-                continue
-            is_target = current == target_path
-            is_interface = self._is_interface_file(content, rel)
-            cap = self._TARGET_FILE_CAP if is_target else (self._INTERFACE_FILE_CAP if is_interface else self._IMPL_FILE_CAP)
-            if len(content) > cap:
-                content = content[:cap] + "\n... [truncated]"
-            collected[rel] = content
-            total_chars += len(content)
-            if is_target:
-                for imp in self._parse_imports(content):
-                    resolved = self._resolve_import_path(imp, remappings, repo, from_file=current)
-                    if resolved:
-                        rel_resolved = str(resolved.relative_to(repo)).replace("\\", "/")
-                        if rel_resolved not in seen:
-                            to_visit.append(resolved)
-                    elif _lib_imports_out is not None:
-                        _lib_imports_out.add(imp)
-        return collected
+        """BUG-004 fix: delegate to _collect_repo_sources with reduced limits instead of duplicating 60 lines."""
+        # Temporarily reduce limits for a minimal collection
+        saved_max_files = self._MAX_DEP_FILES
+        saved_max_chars = self._MAX_TOTAL_CHARS
+        try:
+            self._MAX_DEP_FILES = 6
+            self._MAX_TOTAL_CHARS = 30_000
+            return self._collect_repo_sources(finding, repo_path, remappings, _lib_imports_out=_lib_imports_out)
+        finally:
+            self._MAX_DEP_FILES = saved_max_files
+            self._MAX_TOTAL_CHARS = saved_max_chars
 
     def _get_repo_file_manifest(self, repo_path: str | None) -> list[str]:
         if not repo_path:
@@ -370,6 +328,24 @@ class TestWriterWorker(WorkerAgent):
 
     @staticmethod
     def _parse_toml_remappings(content: str) -> dict[str, str]:
+        # Try stdlib tomllib first (Python 3.11+), fall back to manual parsing
+        try:
+            import tomllib
+            data = tomllib.loads(content)
+            raw_remappings = data.get("profile", {}).get("default", {}).get("remappings", [])
+            if not raw_remappings:
+                raw_remappings = data.get("remappings", [])
+            remappings: dict[str, str] = {}
+            for entry in raw_remappings:
+                if isinstance(entry, str) and "=" in entry:
+                    alias, target = entry.split("=", 1)
+                    if alias.strip():
+                        remappings[alias.strip()] = target.strip()
+            return remappings
+        except (ImportError, Exception):
+            pass
+
+        # Fallback: manual line-by-line parsing for Python < 3.11
         remappings: dict[str, str] = {}
         in_remappings = False
         for line in content.splitlines():
@@ -720,9 +696,9 @@ class TestWriterWorker(WorkerAgent):
         ) if (real_sources_full or real_sources_minimal) else None
 
         if real_sources_full:
-            print(f"[TestWriter] Found real source + deps for {finding.affected_contract}: {len(real_sources_full)} files (minimal: {len(real_sources_minimal)})")
+            logger.info(f"[TestWriter] Found real source + deps for {finding.affected_contract}: {len(real_sources_full)} files (minimal: {len(real_sources_minimal)})")
         else:
-            print(f"[TestWriter] No real source found for {finding.affected_contract}, using mock mode")
+            logger.info(f"[TestWriter] No real source found for {finding.affected_contract}, using mock mode")
 
         # Detect pragma by scanning ALL collected sources (not just the first file).
         # The first file is often an interface with no pragma; the target contract
@@ -730,9 +706,9 @@ class TestWriterWorker(WorkerAgent):
         sources_to_check = real_sources_full or real_sources_minimal
         target_pragma = self._detect_pragma(sources_to_check) if sources_to_check else None
         if target_pragma:
-            print(f"[TestWriter] Detected target pragma: {target_pragma}")
+            logger.info(f"[TestWriter] Detected target pragma: {target_pragma}")
         else:
-            print(f"[TestWriter] No pragma detected — LLM will use default")
+            logger.info(f"[TestWriter] No pragma detected — LLM will use default")
 
         # Pre-analyze repo for naming conflicts and abstract contracts.
         # Comments are stripped before analysis to prevent false positives.
@@ -740,9 +716,9 @@ class TestWriterWorker(WorkerAgent):
             repo_path if real_sources_full else None
         )
         if repo_conflicts["naming_conflicts"]:
-            print(f"[TestWriter] Naming conflicts detected: {repo_conflicts['naming_conflicts']}")
+            logger.info(f"[TestWriter] Naming conflicts detected: {repo_conflicts['naming_conflicts']}")
         if repo_conflicts["abstract_contracts"]:
-            print(f"[TestWriter] Abstract contracts detected: {repo_conflicts['abstract_contracts']}")
+            logger.info(f"[TestWriter] Abstract contracts detected: {repo_conflicts['abstract_contracts']}")
 
         attempts = 0
         error_history: list[str] = []
@@ -756,9 +732,15 @@ class TestWriterWorker(WorkerAgent):
         try:
             sandbox.setup_foundry_project()
 
+            # EXTRA SAFETY: force forge install if forge-std is still missing
+            # FINAL SAFETY CHECK
+            if not (sandbox.tmp_dir / "lib" / "forge-std" / "src" / "Test.sol").exists():
+                logger.info("[TestWriter] forge-std missing — forcing lib/ copy")
+                sandbox._ensure_foundry_deps()
+
             while attempts < self.MAX_ATTEMPTS:
                 attempts += 1
-                print(f"[TestWriter] Attempt {attempts}/{self.MAX_ATTEMPTS} building prompt...", flush=True)
+                logger.info(f"[TestWriter] Attempt {attempts}/{self.MAX_ATTEMPTS} building prompt...", flush=True)
                 sources_for_attempt = real_sources_full if attempts >= 3 else real_sources_minimal
                 prompt = self._build_prompt(
                     finding,
@@ -775,7 +757,11 @@ class TestWriterWorker(WorkerAgent):
                 )
 
                 try:
-                    print(f"[TestWriter] Attempt {attempts} calling LLM (timeout={self.LLM_TIMEOUT}s)...", flush=True)
+                    logger.info(
+                        f"[TestWriter] Attempt {attempts}/{self.MAX_ATTEMPTS} "
+                        f"calling LLM for '{finding.affected_contract}::{finding.affected_function}' "
+                        f"at {time.strftime('%H:%M:%S')} (timeout={self.LLM_TIMEOUT}s)..."
+                    )
                     response = await asyncio.wait_for(
                         asyncio.to_thread(self.llm_client.invoke, prompt),
                         timeout=self.LLM_TIMEOUT
@@ -786,17 +772,17 @@ class TestWriterWorker(WorkerAgent):
 
                     test_code_generated = self._extract_test_code(content)
                     if not test_code_generated:
-                        print(f"[TestWriter] Attempt {attempts}: LLM returned NO extractable Solidity code.")
-                        print(f"[TestWriter]   Response preview: {content[:200]}...")
+                        logger.info(f"[TestWriter] Attempt {attempts}: LLM returned NO extractable Solidity code.")
+                        logger.info(f"[TestWriter]   Response preview: {content[:200]}...")
                         error_history.append("No Solidity code returned by LLM")
                         continue
 
                     if not self._has_exact_test_exploit(test_code_generated):
-                        print(f"[TestWriter] Attempt {attempts}: Missing 'function test_exploit()' in generated code.")
+                        logger.info(f"[TestWriter] Attempt {attempts}: Missing 'function test_exploit()' in generated code.")
                         # Show function signatures that WERE generated
                         funcs = re.findall(r'function\s+(\w+)\s*\(', test_code_generated)
                         if funcs:
-                            print(f"[TestWriter]   Found functions: {funcs}")
+                            logger.info(f"[TestWriter]   Found functions: {funcs}")
                         error_history.append("Generated test must include function test_exploit() exactly.")
                         continue
 
@@ -836,7 +822,7 @@ class TestWriterWorker(WorkerAgent):
                             or ln.strip().startswith("|")
                         ]
                         short_err = "\n".join(err_lines[:15]) if err_lines else err[:400]
-                        print(f"[TestWriter] Attempt {attempts} build error:\n{short_err}")
+                        logger.info(f"[TestWriter] Attempt {attempts} build error:\n{short_err}")
                         error_history.append(f"Build Failed:\n{short_err}")
                         compiled = False
                         out_dir = Path(sandbox.tmp_dir) / "out"
@@ -852,20 +838,29 @@ class TestWriterWorker(WorkerAgent):
                         break
 
                     error_history.append(f"Test compiled but exploit check failed.\nLogs:\n{test_logs[:400]}")
-                    print(f"[TestWriter] Attempt {attempts}: Test compiled but exploit FAILED.")
-                    print(f"[TestWriter]   test_res.success={test_res.success}, passed_by_logs={passed_by_logs}")
+                    logger.info(f"[TestWriter] Attempt {attempts}: Test compiled but exploit FAILED.")
+                    logger.info(f"[TestWriter]   test_res.success={test_res.success}, passed_by_logs={passed_by_logs}")
                     if test_logs:
-                        print(f"[TestWriter]   Logs: {test_logs[:300]}...")
+                        logger.info(f"[TestWriter]   Logs: {test_logs[:300]}...")
 
                 except asyncio.TimeoutError:
                     msg = f"LLM call timed out after {self.LLM_TIMEOUT}s"
-                    print(f"[TestWriterWorker] {msg}")
+                    logger.info(f"[TestWriterWorker] {msg}")
                     error_history.append(msg)
                 except Exception as e:
-                    print(f"[TestWriterWorker] LLM call failed: {e}")
+                    logger.info(f"[TestWriterWorker] LLM call failed: {e}")
                     error_history.append(str(e))
 
         finally:
+            # BUG-005 fix: save exploit artifacts before cleanup on success
+            if exploit_success and test_code_generated:
+                try:
+                    proven_dir = Path("proven_exploits")
+                    proven_dir.mkdir(exist_ok=True)
+                    task_slug = task.task_id.replace("/", "_").replace("::", "_")[:60]
+                    (proven_dir / f"{task_slug}.t.sol").write_text(test_code_generated, encoding='utf-8')
+                except Exception as e:
+                    logger.info(f"[TestWriter] Warning: could not save proven exploit artifact: {e}")
             sandbox.cleanup()
 
         original_conf = getattr(finding, "confidence", 50)

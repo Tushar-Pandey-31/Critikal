@@ -1,5 +1,15 @@
+import asyncio
 import json
+import logging
+import os
+import time
 from src.agents.base_worker import WorkerAgent, WorkerOutput, WorkerTask
+
+logger = logging.getLogger(__name__)
+
+# Configurable timeout for AttackHypothesisWorker LLM calls.
+# On large repos (e.g. Ethernaut, 200+ contracts) Gemini can take >60s per call.
+ATTACK_LLM_TIMEOUT = int(os.getenv("ATTACK_WORKER_LLM_TIMEOUT", "300"))  # 5 min default
 from src.utils.node_ids import normalize_node_id
 from src.utils.graph_queries import (
     get_function_context,
@@ -94,6 +104,7 @@ Return ONLY valid JSON. No markdown fences, no preamble, no explanation.
 
 class AttackHypothesisWorker(WorkerAgent):
     model_name: str = "gemini-2.5-flash"
+    MAX_ATTEMPTS: int = 4
 
     def __init__(self, graph, llm_client):
         self.graph = graph
@@ -103,7 +114,7 @@ class AttackHypothesisWorker(WorkerAgent):
         return "attack_hypothesis"
 
     async def run(self, task: WorkerTask) -> WorkerOutput:
-        print(f"[AttackWorker debug] Starting task {task.task_id}", flush=True)
+        logger.info(f"[AttackWorker debug] Starting task {task.task_id}", flush=True)
         hotspot = task.hotspot
         if hotspot is None:
             return WorkerOutput(
@@ -123,7 +134,7 @@ class AttackHypothesisWorker(WorkerAgent):
         parsed = self._parse_response(raw_response, node_id)
 
         if not parsed:
-            print(f"[AttackWorker] Parse failed for {node_id}. Raw: {raw_response[:200]}")
+            logger.info(f"[AttackWorker] Parse failed for {node_id}. Raw: {raw_response[:200]}")
             # Return minimum viable output instead of silent 0
             return WorkerOutput(
                 worker_type="attack_hypothesis",
@@ -154,16 +165,16 @@ class AttackHypothesisWorker(WorkerAgent):
         )
         if strong_signal and confidence < 35:
             confidence = 45
-            print(f"[AttackWorker] Graph signal strong → boosting confidence to 45 for {node_id}")
+            logger.info(f"[AttackWorker] Graph signal strong → boosting confidence to 45 for {node_id}")
 
         # Fix empty attack_path — LLM often returns [] even with a valid hypothesis
         attack_path = parsed.get("attack_path", [])
         if not attack_path:
             attack_path = [f"{hotspot.contract}::{hotspot.function}"]
-            print(f"[AttackWorker] attack_path was empty → defaulting to [{attack_path[0]}]")
+            logger.info(f"[AttackWorker] attack_path was empty → defaulting to [{attack_path[0]}]")
 
         if confidence < threshold:
-            print(f"[AttackWorker] Confidence {confidence} below threshold {threshold} for {vulnerability_class} on {node_id}")
+            logger.info(f"[AttackWorker] Confidence {confidence} below threshold {threshold} for {vulnerability_class} on {node_id}")
             return WorkerOutput(
                 worker_type="attack_hypothesis",
                 task_id=task.task_id,
@@ -292,15 +303,57 @@ Known Attack Patterns: {recon_context.get("known_attack_patterns", [])}
         ]
 
     async def _call_llm(self, messages: list[dict]) -> str:
-        try:
-            response = await self.llm.ainvoke(messages)
-            content = response.content if hasattr(response, "content") else str(response)
-            if isinstance(content, list):
-                content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
-            return str(content)
-        except Exception as e:
-            print(f"[AttackWorker] LLM call failed: {e}")
-            return '{"vulnerability_class":"unknown","confidence":35,"hypothesis":"LLM call failed","attack_path":[],"evidence_node_ids":[]}'
+        _FALLBACK = '{"vulnerability_class":"unknown","confidence":35,"hypothesis":"LLM call failed","attack_path":[],"evidence_node_ids":[]}'
+
+        for attempt in range(1, self.MAX_ATTEMPTS + 1):
+            logger.info(
+                f"[AttackWorker] Calling LLM attempt {attempt}/{self.MAX_ATTEMPTS} at "
+                f"{time.strftime('%H:%M:%S')} (timeout={ATTACK_LLM_TIMEOUT}s)..."
+            )
+            try:
+                response = await asyncio.wait_for(
+                    self.llm.ainvoke(messages),
+                    timeout=ATTACK_LLM_TIMEOUT,
+                )
+                content = response.content if hasattr(response, "content") else str(response)
+                if isinstance(content, list):
+                    content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
+                return str(content)
+            except asyncio.TimeoutError:
+                wait = 2 ** (attempt - 1)   # 1s, 2s, 4s, 8s
+                logger.warning(
+                    f"[AttackWorker] Attempt {attempt}/{self.MAX_ATTEMPTS} "
+                    f"asyncio timeout. Retrying in {wait}s..."
+                )
+                if attempt < self.MAX_ATTEMPTS:
+                    await asyncio.sleep(wait)
+                continue
+
+            except Exception as e:
+                err_str = str(e)
+                is_transient = any(kw in err_str for kw in [
+                    "504", "Deadline", "DEADLINE_EXCEEDED",
+                    "Stream cancelled", "CANCELLED", "503",
+                ])
+                wait = 2 ** (attempt - 1)   # 1s, 2s, 4s, 8s
+
+                if is_transient:
+                    logger.warning(
+                        f"[AttackWorker] Attempt {attempt}/{self.MAX_ATTEMPTS} "
+                        f"transient error ({err_str[:80]}). Retrying in {wait}s..."
+                    )
+                else:
+                    logger.warning(
+                        f"[AttackWorker] Attempt {attempt}/{self.MAX_ATTEMPTS} "
+                        f"non-transient failure: {err_str[:200]}"
+                    )
+
+                if attempt < self.MAX_ATTEMPTS:
+                    await asyncio.sleep(wait)
+                continue
+
+        logger.warning(f"[AttackWorker] All {self.MAX_ATTEMPTS} attempts failed — returning fallback.")
+        return _FALLBACK
 
     def _parse_response(self, raw: str, node_id: str) -> dict | None:
         try:
@@ -322,7 +375,7 @@ Known Attack Patterns: {recon_context.get("known_attack_patterns", [])}
 
             return parsed
         except Exception as e:
-            print(f"[AttackWorker] JSON parse error for {node_id}: {e}")
+            logger.info(f"[AttackWorker] JSON parse error for {node_id}: {e}")
             return None
 
     def _format_list(self, items: list) -> str:

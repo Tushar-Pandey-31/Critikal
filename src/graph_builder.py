@@ -1,5 +1,7 @@
 import networkx as nx
 import json
+import re
+from collections import deque
 from slither.slither import Slither
 from slither.core.cfg.node import NodeType
 from typing import Dict, Any, List
@@ -108,7 +110,7 @@ class GraphBuilder:
             "name": function.name,
             "contract": contract.name,
             "visibility": str(function.visibility),
-            "stateMutability": function.view or function.pure, 
+            "stateMutability": "view" if function.view else ("pure" if function.pure else "nonpayable"), 
             "is_payable": function.payable,
             "is_constructor": function.is_constructor,
             "is_fallback": function.is_fallback,
@@ -161,11 +163,22 @@ class GraphBuilder:
         
         # Internal calls (calls to functions within the same contract or inherited)
         for internal_call in function.internal_calls:
-            # internal_call is an InternalCall operation (SlithIR)
-            # We need to access the .function attribute to get the target Function object
-            target_func = getattr(internal_call, "function", None)
+            # Slither 0.10.x: internal_calls returns raw Function/Modifier objects,
+            # NOT InternalCall IR wrappers. So the object IS the target function.
+            # First check if internal_call itself is a function-like object.
+            target_func = None
+            if hasattr(internal_call, "contract_declarer") or hasattr(internal_call, "contract"):
+                # internal_call IS the function object directly
+                target_func = internal_call
+            else:
+                # Fallback: try IR-style access (older Slither or special cases)
+                target_func = getattr(internal_call, "function", None)
             
             if not target_func:
+                continue
+
+            # Skip Solidity built-ins (require, assert, revert, etc.)
+            if not hasattr(target_func, "name"):
                 continue
 
             # Using contract_declarer to get the defining contract
@@ -364,7 +377,6 @@ class GraphBuilder:
                 continue
             
             # BFS to find minimum depth to a callee that directly writes state
-            from collections import deque
             queue = deque()
             visited_bfs = {node_id}
             
@@ -583,7 +595,6 @@ class GraphBuilder:
         e.g., 'require(msg.sender == owner)' -> 'owner'
               'require(admins[msg.sender])' -> 'admins'
         """
-        import re
         
         # Pattern: msg.sender == <variable>
         match = re.search(r'msg\.sender\s*==\s*(\w+)', expression)
@@ -665,7 +676,6 @@ class GraphBuilder:
         # Fallback: source code regex
         source = node_data.get("source_code", "")
         if source:
-            import re
             if re.search(r'require\s*\(\s*msg\.sender\s*==', source):
                 return True
             if re.search(r'require\s*\(\s*\w+\s*==\s*msg\.sender', source):
@@ -759,7 +769,6 @@ class GraphBuilder:
             # Parse source for the compared variable
             source = node_data.get("source_code", "")
             compared_var = ""
-            import re
             match = re.search(r'require\s*\(\s*msg\.sender\s*==\s*(\w+)', source)
             if match:
                 compared_var = match.group(1)

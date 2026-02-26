@@ -1,5 +1,8 @@
 import asyncio
+import logging
 from src.agents.base_worker import WorkerAgent, WorkerOutput, WorkerTask
+
+logger = logging.getLogger(__name__)
 from src.tools.etherscan_client import EtherscanClient
 from src.utils.graph_queries import (
     get_external_entry_points,
@@ -260,7 +263,7 @@ class ReconWorker(WorkerAgent):
 
         except Exception as e:
             # Etherscan failure is non-fatal
-            print(f"[ReconWorker] Etherscan error: {e}. Continuing with stub data.")
+            logger.info(f"[ReconWorker] Etherscan error: {e}. Continuing with stub data.")
             return {
                 "contract_age_days": None,
                 "previous_exploits_detected": False,

@@ -15,26 +15,32 @@ from src.utils.graph_queries import GraphQueries
 from src.knowledge.paths import CHROMA_DB_PATH
 
 # ────────────────────────────────────────────────────────────
-#  RAG Setup (shared across coordinator and workers)
+#  RAG Setup (lazy initialization — ARCH-004 fix)
 # ────────────────────────────────────────────────────────────
 
 DB_PATH = str(CHROMA_DB_PATH)
-try:
-    from langchain_chroma import Chroma
-    from langchain_huggingface import HuggingFaceEmbeddings
+_vector_db = None
+_rag_initialized = False
 
-    if Path(DB_PATH).exists():
-        _embedding_function = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-        vector_db = Chroma(persist_directory=DB_PATH, embedding_function=_embedding_function)
-        HAS_RAG = True
-    else:
-        print(f"Warning: RAG DB not found at {DB_PATH}. Running without security knowledge search.")
-        vector_db = None
-        HAS_RAG = False
-except Exception as e:
-    print(f"Warning: RAG system not initialized (missing dependencies or DB): {e}")
-    vector_db = None
-    HAS_RAG = False
+
+def _get_vector_db():
+    """Lazy-load the RAG vector DB on first use, not at import time."""
+    global _vector_db, _rag_initialized
+    if _rag_initialized:
+        return _vector_db
+    _rag_initialized = True
+    try:
+        from langchain_chroma import Chroma
+        from langchain_huggingface import HuggingFaceEmbeddings
+
+        if Path(DB_PATH).exists():
+            _embedding_function = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+            _vector_db = Chroma(persist_directory=DB_PATH, embedding_function=_embedding_function)
+        else:
+            print(f"Warning: RAG DB not found at {DB_PATH}. Running without security knowledge search.")
+    except Exception as e:
+        print(f"Warning: RAG system not initialized (missing dependencies or DB): {e}")
+    return _vector_db
 
 
 @tool("search_security_knowledge")
@@ -44,7 +50,8 @@ def search_security_knowledge(query: str) -> str:
     Use this to find precedents for vulnerabilities or check official language rules.
     Example: "Has reentrancy on ERC777 tokens been exploited before?"
     """
-    if not HAS_RAG or not vector_db:
+    vector_db = _get_vector_db()
+    if not vector_db:
         return "Error: Security knowledge base is not available."
 
     try:

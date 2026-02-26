@@ -10,6 +10,7 @@ from src.utils.node_ids import normalize_node_id
 
 # Contract name suffixes/prefixes that identify test/mock/fuzzing artifacts.
 _TEST_NAME_PATTERNS = (
+    # Standard test framework patterns
     "Test",
     "Mock",
     "Echidna",
@@ -20,7 +21,20 @@ _TEST_NAME_PATTERNS = (
     "Script",
     "Invariant",
     "Handler",
-    "Exploit",   # Our own generated tests
+    "Exploit",       # Our own generated tests
+    # Common test helper contract patterns (e.g. solmate's BalanceSum, RiskyContract)
+    "Sum",           # Fuzz/balance accumulators (e.g. BalanceSum)
+    "Risky",         # Intentionally-risky test helpers (e.g. RiskyContract)
+    "Vulnerable",    # Deliberately vulnerable contracts in test suites
+    "Attacker",      # Attack simulation contracts
+    "Victim",        # Test victim contracts
+    "Malicious",     # Malicious actor simulations
+    "Dummy",         # Placeholder implementations
+    "Fake",          # Fake implementations
+    "Wrong",         # Wrong return data testers (e.g. WrongReturnDataERC721Recipient)
+    "Reverting",     # Reverting implementations for negative testing
+    "NonCompliant",  # Non-compliant implementations for edge-case testing
+    "Recipient",     # Test callback receivers (e.g. ERC721Recipient)
 )
 
 # Source path fragments that identify test/script directories.

@@ -10,6 +10,7 @@ The Lead Agent no longer performs direct analysis. It:
 """
 
 import os
+import logging
 import json
 import shutil
 import tempfile
@@ -21,6 +22,7 @@ from pathlib import Path
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
 from langchain_core.messages import SystemMessage, HumanMessage
 from src.agents.state import AgentState
 from src.agents.base_worker import WorkerOutput, WorkerTask
@@ -44,33 +46,9 @@ def _finding_priority(f: Finding) -> tuple:
     sev_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
     return (-f.confidence, sev_order.get(f.severity_estimate, 4))
 
-def _get_foundry_project_root(base: Path) -> Path:
-    """
-    Walk from `base` to find the directory that actually contains foundry.toml.
+# BUG-009 fix: deduplicated — shared with test_writer_sandbox.py
+from src.utils.foundry_root import resolve_foundry_root as _get_foundry_project_root
 
-    For repos like Ethernaut:
-        base          = /tmp/.../ethernaut          (repo root)
-        foundry.toml  = /tmp/.../ethernaut/contracts/foundry.toml
-        returns       = /tmp/.../ethernaut/contracts  <- Foundry project root
-
-    Falls back to `base` if no foundry.toml found anywhere under it.
-    """
-    if (base / "foundry.toml").exists():
-        return base
-
-    for name in ("contracts", "src", "protocol", "packages"):
-        candidate = base / name
-        if candidate.is_dir() and (candidate / "foundry.toml").exists():
-            return candidate
-
-    try:
-        for child in sorted(base.iterdir()):
-            if child.is_dir() and (child / "foundry.toml").exists():
-                return child
-    except PermissionError:
-        pass
-
-    return base
 
 
 # ════════════════════════════════════════════════════════════
@@ -203,9 +181,9 @@ def get_llm(
     if not ChatGoogleGenerativeAI:
         raise ImportError("langchain-google-genai is not installed.")
     if "GOOGLE_API_KEY" not in os.environ:
-        print("WARNING: GOOGLE_API_KEY not found in environment.")
+        logger.info("WARNING: GOOGLE_API_KEY not found in environment.")
     llm = ChatGoogleGenerativeAI(model=model_name, temperature=temperature)
-    print(f"[get_llm] Created LLM: {llm.model} (bind_tools={bind_tools})", flush=True)
+    logger.info(f"[get_llm] Created LLM: {llm.model} (bind_tools={bind_tools})", flush=True)
     if bind_tools and _TOOLS:
         return llm.bind_tools(_TOOLS)
     return llm
@@ -231,10 +209,11 @@ def get_worker_llm(
         model=model_name,
         temperature=temperature,
         timeout=timeout,
+        request_timeout=timeout,
         max_retries=max_retries,
         transport=transport,
     )
-    print(f"[get_worker_llm] Created worker LLM: {llm.model} (no tools, timeout={timeout}s, transport={transport})", flush=True)
+    logger.info(f"[get_worker_llm] Created worker LLM: {llm.model} (no tools, timeout={timeout}s, transport={transport})")
     return llm
 
 
@@ -254,13 +233,18 @@ def synthesize_worker_outputs(worker_outputs: List[Any]) -> List[dict]:
 
         lead_id = f"LEAD-{i + 1:03d}"
         evidence = wo_dict.get("evidence_node_ids", [])
-        key = "|".join(sorted(evidence)) if evidence else wo_dict.get("task_id", f"__worker_{i}")
+        # LOGIC-006 fix: use the hotspot function node_id as dedup key.
+        # evidence_node_ids is almost always empty (attack workers don't populate it),
+        # so falling back to task_id made dedup useless.
+        raw = wo_dict.get("raw_output", {})
+        func_key = f"{raw.get('affected_contract', '')}::{raw.get('affected_function', '')}"
+        key = "|".join(sorted(evidence)) if evidence else (func_key if func_key != "::" else wo_dict.get("task_id", f"__worker_{i}"))
 
         wo_confidence = wo_dict.get("confidence", 0)
         if wo_confidence == 0:
             continue
 
-        raw = wo_dict.get("raw_output", {})
+        raw = raw  # already extracted above for dedup key
         existing = leads_by_target.get(key)
 
         if existing is None or wo_confidence > existing.get("confidence", 0):
@@ -357,19 +341,22 @@ async def coordinator_node(state: AgentState):
         candidate = Path("data/scratch") / repo_name
         if candidate.exists():
             repo_path = str(candidate)
-            print(f"[Coordinator] Real repo path resolved: {repo_path}")
+            print(f"[Step 1] Recon complete. Repo path: {repo_path}")
 
     recon_context = recon_output.raw_output
-    state["recon_context"] = recon_context
+    # BUG-008 fix: don't directly mutate state["recon_context"] here.
+    # It's now returned via the return dict at the end of the function (LOGIC-004).
 
     if recon_context.get("onchain_risk_signals", {}).get("previous_exploits_detected"):
-        print("[Coordinator] ⚠️  Prior exploit detected by Recon. Escalating priority.")
+        print("[Step 1] Prior exploit detected by Recon. Escalating priority.")
 
     # ── Step 2: Hotspots ───────────────────────────────────
     hotspots = get_high_risk_hotspots(state["graph"], min_score=70)
+    print(f"[Step 2] Found {len(hotspots)} high-risk hotspot(s)")
     findings = []
 
     if not hotspots:
+        print("[Step 2] No hotspots above threshold — skipping attack workers")
         state["findings"] = []
         state["escalate"] = False
     else:
@@ -392,23 +379,35 @@ async def coordinator_node(state: AgentState):
             )
             for hotspot in hotspots
         ]
+        print(f"[Step 3] Launching {len(tasks)} attack worker(s) in parallel (timeout=300s each)...")
+        for t in tasks:
+            print(f"  - {t.task_id}")
+
+        async def _run_with_timeout(task, timeout=300):
+            try:
+                return await asyncio.wait_for(attack_worker.run(task), timeout=timeout)
+            except asyncio.TimeoutError:
+                print(f"  TIMEOUT: {task.task_id} (>{timeout}s)")
+                return None
 
         worker_outputs_parallel = await asyncio.gather(
-            *[attack_worker.run(task) for task in tasks],
+            *[_run_with_timeout(task) for task in tasks],
             return_exceptions=True
         )
 
-        print(f"[Debug] Total attack worker outputs: {len(worker_outputs_parallel)}")
+        print(f"[Step 3] Attack workers complete: {len(worker_outputs_parallel)} result(s)")
         for i, o in enumerate(worker_outputs_parallel):
             if isinstance(o, Exception):
                 print(f"  [{i}] EXCEPTION: {o}")
+            elif o is None:
+                print(f"  [{i}] TIMEOUT (no result)")
             else:
-                print(f"  [{i}] confidence={o.confidence} attack_path={o.attack_path} hypothesis={str(o.hypothesis)[:80] if o.hypothesis else None}")
+                print(f"  [{i}] confidence={o.confidence} hypothesis={str(o.hypothesis)[:80] if o.hypothesis else None}")
 
         # ── Step 4: Build Findings ─────────────────────────
         for output, hotspot in zip(worker_outputs_parallel, hotspots):
-            if isinstance(output, Exception):
-                print(f"[Coordinator] Worker error on {hotspot.node_id}: {output}")
+            if output is None or isinstance(output, Exception):
+                print(f"  Skipping {hotspot.node_id} — no output")
                 continue
             if output.confidence > 0:
                 finding = Finding.from_worker_output(output, hotspot)
@@ -418,13 +417,14 @@ async def coordinator_node(state: AgentState):
                 wo_dict = output.model_dump() if hasattr(output, "model_dump") else output
                 worker_outputs.append(wo_dict)
 
-        print(f"[Debug] Findings that passed filter: {len(findings)}")
+        print(f"[Step 4] Findings that passed filter: {len(findings)}")
 
     # ── Step 5: Coordinator LLM Synthesis ─────────────────
     # The programmatic pipeline (Recon → Hotspots → Attack → TestWriter) has
     # already run above. The LLM's ONLY job here is to produce the final JSON
     # report. NEVER bind tools — avoids Gemini thought_signature errors and
     # prevents the LangGraph tool loop from re-running the entire pipeline.
+    print("[Step 5] Starting Coordinator LLM synthesis...")
     coordinator_llm = get_llm(bind_tools=False)
 
     prompt = [SystemMessage(content=COORDINATOR_SYSTEM_PROMPT)]
@@ -470,11 +470,23 @@ async def coordinator_node(state: AgentState):
     if messages:
         prompt.extend(messages)
 
-    response = coordinator_llm.invoke(prompt)
+    SYNTHESIS_TIMEOUT = int(os.getenv("COORDINATOR_SYNTHESIS_TIMEOUT", "180"))
+    print(f"[Step 5] Calling Coordinator LLM (timeout={SYNTHESIS_TIMEOUT}s)...")
+    try:
+        response = await asyncio.wait_for(
+            asyncio.to_thread(coordinator_llm.invoke, prompt),
+            timeout=SYNTHESIS_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        print(f"[Step 5] WARNING: Coordinator LLM timed out after {SYNTHESIS_TIMEOUT}s — using worker outputs directly")
+        response = None
+    except Exception as e:
+        print(f"[Step 5] WARNING: Coordinator LLM failed: {e} — using worker outputs directly")
+        response = None
 
     # With tools disabled, the LLM should never make tool_calls.
     # If it somehow does, return early so LangGraph routes to ToolNode.
-    if response.tool_calls:
+    if response and hasattr(response, "tool_calls") and response.tool_calls:
         return {"messages": [response], "worker_outputs": worker_outputs}
 
     # ── Parse final response ───────────────────────────────
@@ -482,54 +494,77 @@ async def coordinator_node(state: AgentState):
     target_nodes = []
     strategy = ""
     escalation = False
-    try:
-        content = response.content
-        if isinstance(content, list):
-            content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
-
-        if "```json" in content:
-            content = content.split("```json")[1].split("```")[0].strip()
-        elif "```" in content:
-            content = content.split("```")[1].split("```")[0].strip()
-
-        data = json.loads(content)
-        leads = data.get("vulnerability_leads", [])
-        target_nodes = data.get("target_nodes", [])
-        strategy = data.get("analysis_summary", {}).get("strategy", "")
-        escalation = data.get("escalation_needed", False)
-    except Exception as e:
-        print(f"[Coordinator] Parse error: {e}")
+    if response is None:
+        print("[Step 5] No LLM response — falling back to worker synthesis")
         leads = synthesize_worker_outputs(worker_outputs) if worker_outputs else []
-        strategy = "Failed to parse LLM response"
+        strategy = "LLM synthesis skipped (timeout or error)"
+        # Build a dummy response for the return dict
+        from langchain_core.messages import AIMessage
+        response = AIMessage(content=json.dumps({
+            "analysis_summary": {"strategy": strategy},
+            "vulnerability_leads": leads,
+        }))
+    else:
+        try:
+            content = response.content
+            if isinstance(content, list):
+                content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
+
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+
+            data = json.loads(content)
+            leads = data.get("vulnerability_leads", [])
+            target_nodes = data.get("target_nodes", [])
+            strategy = data.get("analysis_summary", {}).get("strategy", "")
+            escalation = data.get("escalation_needed", False)
+            print(f"[Step 5] LLM synthesis complete: {len(leads)} lead(s)")
+        except Exception as e:
+            print(f"[Step 5] Parse error: {e}")
+            leads = synthesize_worker_outputs(worker_outputs) if worker_outputs else []
+            strategy = "Failed to parse LLM response"
 
     # ── Step 5b: Synthetic Fallback for TestWriter ─────────
+    # LOGIC-002 fix: Only create synthetic findings from LLM leads that
+    # correspond to a real hotspot node in the graph (validates the lead
+    # is not a hallucination). Previously any LLM lead with confidence>=65
+    # bypassed the Attack Worker entirely.
     if not findings and leads:
+        hotspot_ids = {h.node_id for h in hotspots} if hotspots else set()
         for lead in leads:
             if (lead.get("confidence", 0) >= 65 and
                     lead.get("severity_estimate") in ("CRITICAL", "HIGH")):
-                synthetic_finding = Finding(
-                    id=str(uuid.uuid4()),
-                    hotspot_node_id=lead.get("affected_function_node_id", ""),
-                    vulnerability_class=lead.get("vulnerability_class", "UNKNOWN"),
-                    title=lead.get("title", "Unnamed Lead"),
-                    hypothesis=lead.get("root_cause", ""),
-                    evidence_nodes=[],
-                    attack_path=[lead.get("affected_function_node_id", "")],
-                    status=FindingStatus.DRAFT,
-                    confidence=lead.get("confidence", 65),
-                    impact=lead.get("impact", "Unknown"),
-                    preconditions=[],
-                    affected_contract=lead.get("affected_contract", "Unknown"),
-                    affected_function=lead.get("affected_function", "Unknown"),
-                    severity_estimate=lead.get("severity_estimate", "HIGH"),
-                    severity=lead.get("severity_estimate", "HIGH"),
-                )
-                findings.append(synthetic_finding)
+                lead_node_id = normalize_node_id(lead.get("affected_function_node_id", ""))
+                # Only promote if the node actually exists in our graph
+                if lead_node_id and (lead_node_id in hotspot_ids or state["graph"].has_node(lead_node_id)):
+                    synthetic_finding = Finding(
+                        id=str(uuid.uuid4()),
+                        hotspot_node_id=lead_node_id,
+                        vulnerability_class=lead.get("vulnerability_class", "UNKNOWN"),
+                        title=lead.get("title", "Unnamed Lead"),
+                        hypothesis=lead.get("root_cause", ""),
+                        evidence_nodes=[],
+                        attack_path=[lead_node_id],
+                        status=FindingStatus.DRAFT,
+                        confidence=lead.get("confidence", 65),
+                        impact=lead.get("impact", "Unknown"),
+                        preconditions=[],
+                        affected_contract=lead.get("affected_contract", "Unknown"),
+                        affected_function=lead.get("affected_function", "Unknown"),
+                        severity_estimate=lead.get("severity_estimate", "HIGH"),
+                        severity=lead.get("severity_estimate", "HIGH"),
+                    )
+                    findings.append(synthetic_finding)
+                else:
+                    print(f"  Skipping synthetic finding — node '{lead_node_id}' not in graph")
 
         if findings:
-            print(f"[Coordinator] Synthesized {len(findings)} findings from LLM leads for TestWriter")
+            print(f"[Step 5b] Synthesized {len(findings)} graph-validated findings from LLM leads for TestWriter")
 
     # ── Step 6: TestWriter ─────────────────────────────────
+    print(f"[Step 6] Preparing TestWriter: {len(findings)} finding(s) to process")
     test_tasks = []
     target_findings = []
 
@@ -542,9 +577,9 @@ async def coordinator_node(state: AgentState):
         try:
             tmp_base = tempfile.mkdtemp()
             repo_copy_root = os.path.join(tmp_base, Path(repo_path).name)
-            print(f"[Coordinator] Copying repo to Linux fs once: {repo_copy_root}")
+            print(f"[Step 6] Copying repo to Linux fs: {repo_copy_root}")
             shutil.copytree(repo_path, repo_copy_root, symlinks=False)
-            print(f"[Coordinator] Repo copy complete.")
+            print(f"[Step 6] Repo copy complete.")
 
             # KEY FIX: resolve the actual Foundry project root within the copy.
             # Many repos have foundry.toml in a subdirectory (e.g. ethernaut/contracts/).
@@ -552,9 +587,9 @@ async def coordinator_node(state: AgentState):
             foundry_root = _get_foundry_project_root(Path(repo_copy_root))
             linux_repo_path = str(foundry_root)
             if str(foundry_root) != repo_copy_root:
-                print(f"[Coordinator] Foundry project root resolved: {linux_repo_path}")
+                print(f"[Step 6] Foundry project root resolved: {linux_repo_path}")
         except Exception as e:
-            print(f"[Coordinator] Failed to copy repo to Linux fs: {e}, falling back to original path")
+            print(f"[Step 6] Failed to copy repo to Linux fs: {e}, falling back to original path")
             linux_repo_path = repo_path
 
     # Sort findings by confidence descending; tie-break by severity (highest first)
@@ -564,6 +599,12 @@ async def coordinator_node(state: AgentState):
     )
 
     for finding in sorted_findings:
+        # Permanent filter — never waste time on test helpers
+        skip_list = {"balancesum", "riskycontract", "test", "mock", "dstest", "invariant", "fuzz"}
+        if finding.affected_contract and any(kw in finding.affected_contract.lower() for kw in skip_list):
+            print(f"  Skipping test/mock helper: {finding.affected_contract}")
+            continue
+
         # === FIXED: Robust relevant_code lookup (fixes BUG-001, 002, 003) ===
         relevant_code = {}
 
@@ -617,23 +658,24 @@ async def coordinator_node(state: AgentState):
         target_findings.append(finding)
 
     if test_tasks:
-        print(f"[Coordinator] Spawning TestWriter for {len(test_tasks)} finding(s) (sequential, highest confidence first)...")
+        print(f"[Step 6] Spawning TestWriter for {len(test_tasks)} finding(s) (sequential, highest confidence first)...")
         test_writer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"))
         test_writer_llm = get_worker_llm(model_name=test_writer_model)
         test_writer = TestWriterWorker(llm_client=test_writer_llm, graph=state["graph"])
         test_outputs = []
         for i, (task, finding) in enumerate(zip(test_tasks, target_findings)):
-            print(f"[Coordinator] TestWriter {i+1}/{len(test_tasks)}: {finding.hotspot_node_id} (confidence={finding.confidence})")
+            print(f"[Step 6] TestWriter {i+1}/{len(test_tasks)}: {finding.hotspot_node_id} (confidence={finding.confidence})")
             try:
                 output = await test_writer.run(task)
                 test_outputs.append(output)
             except Exception as e:
-                print(f"[Coordinator] TestWriterWorker error on {finding.hotspot_node_id}: {e}")
+                print(f"[Step 6] TestWriter error on {finding.hotspot_node_id}: {e}")
                 test_outputs.append(e)
 
+        print(f"[Step 6] TestWriter execution complete. Processing {len(test_outputs)} result(s)...")
         for output, finding in zip(test_outputs, target_findings):
             if isinstance(output, Exception):
-                print(f"[Coordinator] TestWriterWorker error on {finding.hotspot_node_id}: {output}")
+                print(f"  TestWriter error on {finding.hotspot_node_id}: {output}")
                 continue
 
             finding.confidence = output.confidence
@@ -641,9 +683,9 @@ async def coordinator_node(state: AgentState):
 
             if raw.get("exploit_success"):
                 finding.status = FindingStatus.PROVEN
-                print(f"[Coordinator] ✅ EXPLOIT PROVEN: {finding.hotspot_node_id}")
+                print(f"  EXPLOIT PROVEN: {finding.hotspot_node_id}")
             else:
-                print(f"[Coordinator] TestWriter result for {finding.hotspot_node_id}: "
+                print(f"  TestWriter result for {finding.hotspot_node_id}: "
                       f"compiled={raw.get('compiled')}, success=False, attempts={raw.get('attempts')}")
 
             for lead in leads:
@@ -663,6 +705,9 @@ async def coordinator_node(state: AgentState):
                         lead["title"] = f"[PROVEN] {lead.get('title', '')}"
                     break
 
+    if not test_tasks:
+        print(f"[Step 6] No findings qualified for TestWriter.")
+
     # Cleanup shared Linux-fs repo copy
     if tmp_base and os.path.exists(tmp_base):
         try:
@@ -670,8 +715,32 @@ async def coordinator_node(state: AgentState):
         except Exception:
             pass
 
+    proven_count = sum(1 for f in findings if f.status == FindingStatus.PROVEN)
+    print(f"[Pipeline] All steps complete: {len(findings)} finding(s), {proven_count} proven, {len(leads)} lead(s)")
+
     state["findings"] = findings
-    state["escalate"] = len(findings) > 0 or escalation
+    # LOGIC-003 fix: escalate only when should_escalate_to_human() says so,
+    # not when ANY finding exists (a proven exploit doesn't need human triage).
+    state["escalate"] = escalation
+
+    # ── Phase 7: Generate Report & Visualization ───────────────
+    try:
+        from src.reporting.report_generator import ReportGenerator
+        reporter = ReportGenerator(
+            repo_url=state.get("repo_url", ""),
+            repo_name=repo_name or "unknown",
+            findings=findings,
+            leads=leads,
+            graph=state["graph"],
+        )
+        report_paths = reporter.generate()
+        print(f"\n{'='*60}")
+        print(f"  Report:     {report_paths['report_html']}")
+        print(f"  Graph:      {report_paths['graph_html']}")
+        print(f"  Exploits:   {report_paths['exploits_dir']}")
+        print(f"{'='*60}\n")
+    except Exception as e:
+        print(f"[Reporter] Warning: report generation failed: {e}")
 
     return {
         "vulnerability_leads": leads,
@@ -680,7 +749,8 @@ async def coordinator_node(state: AgentState):
         "messages": [response],
         "findings": findings,
         "worker_outputs": worker_outputs,
-        "escalate": state["escalate"]
+        "recon_context": recon_context,  # LOGIC-004 fix: include so LangGraph state is updated
+        "escalate": state["escalate"],
     }
 
 

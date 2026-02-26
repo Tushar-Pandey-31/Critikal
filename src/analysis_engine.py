@@ -136,13 +136,13 @@ def _apply_slither_fault_tolerance_patch():
                 failed_contracts.add(contract.name)
 
         if failed_contracts:
-            print(
+            logger.warning(
                 f"  ⚠ Slither: Skipped SSA for {len(failed_contracts)} contract(s): "
                 f"{', '.join(sorted(failed_contracts))}"
             )
 
     SlitherCompilationUnitSolc._convert_to_slithir = _fault_tolerant_convert_to_slithir
-    print("  [AnalysisEngine] Slither fault-tolerance patch applied.")
+    logger.info("  [AnalysisEngine] Slither fault-tolerance patch applied.")
 
 
 # ════════════════════════════════════════════════════════════
@@ -184,7 +184,7 @@ class AnalysisEngine:
         """
         slither_obj, report = self.run_analysis_v2(repo_path, targets=targets)
         if report:
-            print(f"  {report.summary()}")
+            logger.info(f"  {report.summary()}")
         return slither_obj
 
     # ──────────────────────────────────────────────────────────
@@ -214,7 +214,7 @@ class AnalysisEngine:
         report = IngestionReport()
 
         if not os.path.exists(repo_path):
-            print(f"Error: Path {repo_path} does not exist.")
+            logger.info(f"Error: Path {repo_path} does not exist.")
             report.warnings.append(f"Path {repo_path} does not exist")
             return None, report
 
@@ -227,11 +227,11 @@ class AnalysisEngine:
         original_cwd = os.getcwd()
         try:
             # ── Step 1: Detect all frameworks ─────────────────
-            print("Detecting frameworks...")
+            logger.info("Detecting frameworks...")
             frameworks = FrameworkDetector.detect_all(repo_path)
             report.frameworks_detected = list({fi.framework for fi in frameworks})
             if frameworks:
-                print(
+                logger.info(
                     f"  Found {len(frameworks)} framework instance(s): "
                     f"{', '.join(f'{fi.framework} @ {os.path.relpath(fi.path, repo_path)}' for fi in frameworks)}"
                 )
@@ -244,7 +244,7 @@ class AnalysisEngine:
             report.total_sol_files = total_sol
             guard = MemoryGuard(total_sol)
             report.size_class = guard.size_class.value
-            print(f"  Found {total_sol} .sol files [{report.size_class}]")
+            logger.info(f"  Found {total_sol} .sol files [{report.size_class}]")
 
             # ── Step 3: Framework-first compilation ────────────
             #
@@ -256,14 +256,14 @@ class AnalysisEngine:
             framework_covered_dirs: list[str] = []
 
             if frameworks:
-                print("\nCompiling framework project(s) as whole units...")
+                logger.info("\nCompiling framework project(s) as whole units...")
                 compiler = FallbackCompiler(self._solc_manager)
 
                 for fi in frameworks:
                     fw_dir = fi.path
                     fw_name = fi.framework
                     rel = os.path.relpath(fw_dir, repo_path)
-                    print(f"\n─── Framework: {fw_name} @ {rel} ───")
+                    logger.info(f"\n─── Framework: {fw_name} @ {rel} ───")
 
                     # Create a single cluster for this framework directory
                     fw_cluster = CompilationCluster(
@@ -283,11 +283,11 @@ class AnalysisEngine:
                             report.clusters_compiled += 1
                             report.total_contracts_parsed += result.contracts_parsed
                             framework_covered_dirs.append(os.path.abspath(fw_dir))
-                            print(f"  ✅ {result.contracts_parsed} contracts parsed.")
+                            logger.info(f"  ✅ {result.contracts_parsed} contracts parsed.")
                         else:
                             report.clusters_failed += 1
                             report.failed_clusters.append(fw_cluster.cluster_id)
-                            print(f"  ❌ Failed: {result.error}")
+                            logger.info(f"  ❌ Failed: {result.error}")
                     except Exception as e:
                         logger.error(f"Framework {fw_name} crashed: {e}")
                         traceback.print_exc()
@@ -311,13 +311,13 @@ class AnalysisEngine:
                     orphan_roots.append(root)
 
             if orphan_roots:
-                print(f"\nBuilding clusters for {len(orphan_roots)} non-framework root(s)...")
+                logger.info(f"\nBuilding clusters for {len(orphan_roots)} non-framework root(s)...")
                 builder = ClusterBuilder(guard, self._solc_manager)
                 clusters = builder.build_clusters(orphan_roots, repo_path)
 
                 for c in clusters:
                     report.clusters_detected += 1
-                    print(
+                    logger.info(
                         f"    - {c.cluster_id}: {len(c.sol_files)} files, "
                         f"solc={c.solc_version}"
                     )
@@ -327,7 +327,7 @@ class AnalysisEngine:
 
                 compiler = FallbackCompiler(self._solc_manager)
                 for cluster in clusters:
-                    print(f"\n─── Cluster: {cluster.cluster_id} ───")
+                    logger.info(f"\n─── Cluster: {cluster.cluster_id} ───")
                     try:
                         result = compiler.compile_cluster(cluster, repo_path)
                         report.cluster_results.append(result)
@@ -360,7 +360,7 @@ class AnalysisEngine:
 
             # ── Step 5: Merge + deduplicate ────────────────────
             if not successful_slithers:
-                print("\n  All compilations failed. Attempting legacy fallback...")
+                logger.info("\n  All compilations failed. Attempting legacy fallback...")
                 return self._legacy_fallback(repo_path, targets, frameworks, report)
 
             combined = merge_slither_objects(successful_slithers)
@@ -370,9 +370,9 @@ class AnalysisEngine:
                 after = len(combined.contracts)
                 report.total_contracts_parsed = after
                 if before != after:
-                    print(f"  Deduplicated: {before} → {after} unique contracts")
+                    logger.info(f"  Deduplicated: {before} → {after} unique contracts")
 
-            print(f"\n  ═══ {report.summary()} ═══")
+            logger.info(f"\n  ═══ {report.summary()} ═══")
             return combined, report
 
         except Exception as e:
@@ -420,7 +420,7 @@ class AnalysisEngine:
             report.solc_versions_used = self._solc_manager.versions_used
             return s, report
         except Exception as e:
-            print(f"Single file compilation failed: {e}")
+            logger.info(f"Single file compilation failed: {e}")
             report.clusters_failed = 1
             report.failed_clusters.append(file_path)
             report.warnings.append(str(e))
@@ -445,7 +445,7 @@ class AnalysisEngine:
 
         This preserves backward compatibility with the original engine.
         """
-        print("  [Legacy] Falling back to direct Slither invocation...")
+        logger.info("  [Legacy] Falling back to direct Slither invocation...")
 
         if targets is None:
             targets = ['.']
@@ -474,7 +474,7 @@ class AnalysisEngine:
             combined_slither = None
             for target in targets:
                 try:
-                    print(f"  [Legacy] Analyzing target: {target}")
+                    logger.info(f"  [Legacy] Analyzing target: {target}")
                     if is_foundry:
                         s = Slither(target, foundry=True)
                     elif is_hardhat:
@@ -486,9 +486,9 @@ class AnalysisEngine:
                         combined_slither = s
                     else:
                         combined_slither.contracts.extend(s.contracts)
-                    print(f"  [Legacy] Successfully analyzed {target}")
+                    logger.info(f"  [Legacy] Successfully analyzed {target}")
                 except Exception as e:
-                    print(f"  [Legacy] Failed for {target}: {e}")
+                    logger.info(f"  [Legacy] Failed for {target}: {e}")
 
                     # Try switching solc version
                     pragmas = SolcManager.detect_pragmas_in_directory(".")
@@ -501,15 +501,15 @@ class AnalysisEngine:
                                     combined_slither = s
                                 else:
                                     combined_slither.contracts.extend(s.contracts)
-                                print(f"  [Legacy] Retry succeeded for {target}")
+                                logger.info(f"  [Legacy] Retry succeeded for {target}")
                             except Exception as e2:
-                                print(f"  [Legacy] Retry failed: {e2}")
+                                logger.info(f"  [Legacy] Retry failed: {e2}")
 
             if combined_slither is None:
                 # Per-file fallback (respects file count limit)
                 sol_files = self._strategy_resolver.collect_all_sol_files(repo_path)
                 if len(sol_files) <= 50:
-                    print(f"  [Legacy] Attempting per-file fallback ({len(sol_files)} files)...")
+                    logger.info(f"  [Legacy] Attempting per-file fallback ({len(sol_files)} files)...")
                     for f in sol_files:
                         try:
                             rel = os.path.relpath(f, repo_path)

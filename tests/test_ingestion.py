@@ -11,7 +11,7 @@ def test_ingestion():
     # Using a simple foundry template
     repo_url = "https://github.com/PaulRBerg/foundry-template"
     
-    manager = RepoManager()
+    manager = RepoManager("./data/scratch")
     
     print(f"Testing clone of {repo_url}...")
     repo_path = manager.clone_repo(repo_url)

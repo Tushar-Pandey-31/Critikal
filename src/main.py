@@ -8,12 +8,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Silence broken ChromaDB telemetry logger (posthog capture() API mismatch)
+import logging as _logging
+_logging.getLogger("chromadb.telemetry").setLevel(_logging.CRITICAL + 1)
+
 from langchain_core.messages import HumanMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode
 
 from src.agents.state import AgentState, get_checkpointer
-from src.agents.lead_agent import coordinator_node, lead_researcher_node, set_tools
+from src.agents.lead_agent import coordinator_node, set_tools
 from src.agents.tools import create_coordinator_tools, create_graph_tools
 from src.repo_manager import RepoManager
 from src.analysis_engine import AnalysisEngine

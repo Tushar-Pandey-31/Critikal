@@ -1,6 +1,6 @@
 from enum import Enum
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 
@@ -44,8 +44,8 @@ class Finding:
     sanity_verdict: dict | None = None
     logic_verdict: dict | None = None
     test_result: dict | None = None
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     @classmethod
     def from_worker_output(cls, output, hotspot) -> "Finding":
@@ -53,6 +53,8 @@ class Finding:
         Converts a WorkerOutput into a Finding.
         Called by the Coordinator after receiving Attack Worker results.
         """
+        from src.utils.node_ids import normalize_node_id
+
         raw = output.raw_output or {}
         return cls(
             id=str(uuid.uuid4()),
@@ -62,7 +64,7 @@ class Finding:
             hypothesis=output.hypothesis or "",
             evidence_nodes=[
                 EvidenceNode(
-                    node_id=nid,
+                    node_id=normalize_node_id(nid),
                     node_type="function",   # Refined by Sanity Jury later
                     contract=hotspot.contract,
                     name=nid.split(".")[-1] if "." in nid else nid,
@@ -70,7 +72,7 @@ class Finding:
                 )
                 for nid in output.evidence_node_ids
             ],
-            attack_path=output.attack_path,
+            attack_path=[normalize_node_id(p) for p in output.attack_path],
             status=FindingStatus.DRAFT,
             confidence=output.confidence,
             impact=raw.get("impact", "Unknown"),
@@ -80,3 +82,4 @@ class Finding:
             severity_estimate=hotspot.priority,
             severity=hotspot.priority,
         )
+

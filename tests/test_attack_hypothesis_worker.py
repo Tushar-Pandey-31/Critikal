@@ -90,9 +90,9 @@ async def test_reentrancy_hotspot_produces_finding(mock_graph, mock_llm, reentra
 
 @pytest.mark.asyncio
 async def test_attack_path_is_ordered_list_of_strings(mock_graph, mock_llm, reentrancy_hotspot):
-    path = ["Entry.func", "Proxy.call", "Vault.withdraw"]
+    path = ["Entry::func", "Proxy::call", "Vault::withdraw"]
     mock_llm.ainvoke.return_value = MagicMock(content=json.dumps({
-        "vulnerability_class": "reentrancy", "confidence": 90, "attack_path": path, "evidence_node_ids": ["Vault.withdraw"]
+        "vulnerability_class": "reentrancy", "confidence": 90, "attack_path": ["Entry.func", "Proxy.call", "Vault.withdraw"], "evidence_node_ids": ["Vault.withdraw"]
     }))
     worker = AttackHypothesisWorker(graph=mock_graph, llm_client=mock_llm)
     task = WorkerTask(task_id="t4", task_type="attack", hotspot=reentrancy_hotspot)
@@ -110,9 +110,9 @@ async def test_attack_path_starts_from_entry_point(mock_graph, mock_llm, reentra
 
 @pytest.mark.asyncio
 async def test_evidence_node_ids_is_list_of_strings(mock_graph, mock_llm, reentrancy_hotspot):
-    evidence = ["Vault.withdraw", "Vault.balances"]
+    evidence = ["Vault::withdraw", "Vault::balances"]
     mock_llm.ainvoke.return_value = MagicMock(content=json.dumps({
-        "vulnerability_class": "reentrancy", "confidence": 90, "attack_path": ["Vault.withdraw"], "evidence_node_ids": evidence
+        "vulnerability_class": "reentrancy", "confidence": 90, "attack_path": ["Vault.withdraw"], "evidence_node_ids": ["Vault.withdraw", "Vault.balances"]
     }))
     worker = AttackHypothesisWorker(graph=mock_graph, llm_client=mock_llm)
     task = WorkerTask(task_id="t6", task_type="attack", hotspot=reentrancy_hotspot)
@@ -229,7 +229,8 @@ def test_finding_attack_path_matches_worker_output(reentrancy_hotspot):
         raw_output={}
     )
     finding = Finding.from_worker_output(output, reentrancy_hotspot)
-    assert finding.attack_path == path 
+    # from_worker_output normalizes dot → double-colon
+    assert finding.attack_path == ["Vault::withdraw", "Vault::balances"] 
 
 def test_finding_evidence_nodes_match_evidence_node_ids(reentrancy_hotspot):
     ids = ["Vault.withdraw", "Vault.balances"]
@@ -241,7 +242,8 @@ def test_finding_evidence_nodes_match_evidence_node_ids(reentrancy_hotspot):
     )
     finding = Finding.from_worker_output(output, reentrancy_hotspot)
     assert len(finding.evidence_nodes) == 2
-    assert [n.node_id for n in finding.evidence_nodes] == ids
+    # from_worker_output normalizes dot → double-colon
+    assert [n.node_id for n in finding.evidence_nodes] == ["Vault::withdraw", "Vault::balances"]
 
 @pytest.mark.asyncio
 async def test_coordinator_suppresses_zero_confidence(mock_graph, reentrancy_hotspot):

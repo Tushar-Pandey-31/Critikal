@@ -1,9 +1,12 @@
+import logging
 import os
 import subprocess
 import shutil
 from typing import Optional
 
 import stat
+
+logger = logging.getLogger(__name__)
 
 class RepoManager:
     """
@@ -85,6 +88,9 @@ class RepoManager:
             # Ensure submodules are populated even if clone claimed success (some hosts skip them)
             _init_submodules(target_path)
 
+        # Force forge install so lib/forge-std is populated before sandbox copies
+        _force_forge_install(target_path)
+
         return target_path
 
     def install_dependencies(self, repo_path: str):
@@ -132,6 +138,35 @@ def _init_submodules(repo_path: str) -> None:
             capture_output=True,
             timeout=180,
         )
-        print("Git submodules initialized.")
+        logger.info("[RepoManager] Git submodules initialized.")
     except Exception as e:
-        print(f"Warning: Could not initialize submodules: {e}")
+        logger.warning(f"[RepoManager] Could not initialize submodules: {e}")
+
+
+def _force_forge_install(repo_path: str) -> None:
+    """Run 'forge install --shallow' after clone to guarantee lib/forge-std is present."""
+    toml = os.path.join(repo_path, "foundry.toml")
+    if not os.path.exists(toml):
+        logger.info("[RepoManager] No foundry.toml — skipping forge install.")
+        return
+    try:
+        logger.info("[RepoManager] Running forge install --shallow to populate lib/...")
+        res = subprocess.run(
+            ["forge", "install", "--shallow"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        if res.returncode != 0:
+            logger.warning(f"[RepoManager] forge install warning (non-zero): {res.stderr[:300]}")
+        else:
+            forge_std = os.path.join(repo_path, "lib", "forge-std", "src", "Test.sol")
+            exists = os.path.exists(forge_std)
+            logger.info(f"[RepoManager] forge install complete. forge-std/Test.sol exists: {exists}")
+    except FileNotFoundError:
+        logger.warning("[RepoManager] 'forge' not found — skipping forge install.")
+    except subprocess.TimeoutExpired:
+        logger.warning("[RepoManager] forge install timed out after 180s — continuing anyway.")
+    except Exception as e:
+        logger.warning(f"[RepoManager] forge install error: {e}")

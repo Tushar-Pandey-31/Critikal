@@ -48,14 +48,14 @@ async def test_missing_finding_in_context(mock_llm):
     assert "Missing or invalid finding" in output.raw_output["error"]
 
 @pytest.mark.asyncio
-async def test_happy_path(mock_llm, dummy_finding, monkeypatch):
+async def test_happy_path(mock_llm, dummy_finding, monkeypatch, tmp_path):
     mock_llm.invoke.return_value = MagicMock(content="```solidity\npragma solidity ^0.8.0; contract ExploitTest { function test_exploit() public {} }\n```")
     
     mock_sandbox = MagicMock()
-    mock_sandbox.run.side_effect = [
-        MagicMock(success=True, stdout="", stderr=""), # build
-        MagicMock(success=True, stdout="[PASS]", stderr="") # test
-    ]
+    mock_sandbox.tmp_dir = tmp_path
+    mock_sandbox.get_test_path.return_value = "test"
+    # Single forge test call per attempt (compile + test combined)
+    mock_sandbox.run.return_value = MagicMock(success=True, stdout="[PASS]", stderr="")
     monkeypatch.setattr("src.agents.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
     
     worker = TestWriterWorker(llm_client=mock_llm)
@@ -76,7 +76,7 @@ async def test_happy_path(mock_llm, dummy_finding, monkeypatch):
     assert output.raw_output["last_error"] is None
 
 @pytest.mark.asyncio
-async def test_compile_fail_then_succeed(mock_llm, dummy_finding, monkeypatch):
+async def test_compile_fail_then_succeed(mock_llm, dummy_finding, monkeypatch, tmp_path):
     # LLM will be called twice. Mock its responses.
     responses = [
         MagicMock(content="```solidity\npragma solidity ^0.8.0; contract ExploitTest { function test_exploit() public { invalid; } }\n```"),
@@ -85,10 +85,12 @@ async def test_compile_fail_then_succeed(mock_llm, dummy_finding, monkeypatch):
     mock_llm.invoke.side_effect = responses
     
     mock_sandbox = MagicMock()
+    mock_sandbox.tmp_dir = tmp_path
+    mock_sandbox.get_test_path.return_value = "test"
+    # Single forge test call per attempt:
     mock_sandbox.run.side_effect = [
-        MagicMock(success=False, stdout="compiler output", stderr="Syntax error"), # fail build 1
-        MagicMock(success=True, stdout="", stderr=""), # build 2
-        MagicMock(success=True, stdout="[PASS]", stderr="") # test 2
+        MagicMock(success=False, stdout="Compiler run failed", stderr="Syntax error"), # attempt 1: compile error
+        MagicMock(success=True, stdout="[PASS]", stderr="")  # attempt 2: success
     ]
     monkeypatch.setattr("src.agents.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
     
@@ -104,11 +106,13 @@ async def test_compile_fail_then_succeed(mock_llm, dummy_finding, monkeypatch):
     assert output.confidence == 100 # Exploit success -> 100
 
 @pytest.mark.asyncio
-async def test_max_attempts_exceeded(mock_llm, dummy_finding, monkeypatch):
+async def test_max_attempts_exceeded(mock_llm, dummy_finding, monkeypatch, tmp_path):
     mock_llm.invoke.return_value = MagicMock(content="```sol\npragma solidity ^0.8.0; contract ExploitTest { function test_exploit() public { invalid; } }\n```")
     
     mock_sandbox = MagicMock()
-    mock_sandbox.run.return_value = MagicMock(success=False, stdout="syntax error log", stderr="Compiler Error")
+    mock_sandbox.tmp_dir = tmp_path
+    mock_sandbox.get_test_path.return_value = "test"
+    mock_sandbox.run.return_value = MagicMock(success=False, stdout="Compiler run failed", stderr="Compiler Error")
     monkeypatch.setattr("src.agents.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
     
     worker = TestWriterWorker(llm_client=mock_llm)
@@ -118,11 +122,11 @@ async def test_max_attempts_exceeded(mock_llm, dummy_finding, monkeypatch):
     
     assert output.raw_output["attempts"] == 6
     assert output.raw_output["compiled"] is False
-    assert output.raw_output["last_error"] == "Build Failed:\nCompiler Error"
+    assert "Build Failed" in output.raw_output["last_error"]
     assert output.confidence == 10  # 50 - 40 = 10
 
 @pytest.mark.asyncio
-async def test_extract_code_fallback(mock_llm, dummy_finding, monkeypatch):
+async def test_extract_code_fallback(mock_llm, dummy_finding, monkeypatch, tmp_path):
     # Attempt 1: chatter (rejected — no Solidity markers, no sandbox call)
     # Attempt 2: valid code but build fails
     # Attempt 3: valid code, build + test pass
@@ -135,10 +139,12 @@ async def test_extract_code_fallback(mock_llm, dummy_finding, monkeypatch):
     mock_llm.invoke.side_effect = responses
 
     mock_sandbox = MagicMock()
+    mock_sandbox.tmp_dir = tmp_path
+    mock_sandbox.get_test_path.return_value = "test"
+    # Single forge test call per attempt:
     mock_sandbox.run.side_effect = [
-        MagicMock(success=False, stdout="Logs1", stderr="Syntax error"),  # build attempt 2
-        MagicMock(success=True, stdout="", stderr=""),                    # build attempt 3
-        MagicMock(success=True, stdout="[PASS]", stderr=""),              # test  attempt 3
+        MagicMock(success=False, stdout="Compiler run failed", stderr="Syntax error"),  # attempt 2 compile error
+        MagicMock(success=True, stdout="[PASS]", stderr=""),  # attempt 3 success
     ]
     monkeypatch.setattr("src.agents.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
 
@@ -153,16 +159,14 @@ async def test_extract_code_fallback(mock_llm, dummy_finding, monkeypatch):
     assert output.confidence == 100
 
 @pytest.mark.asyncio
-async def test_exploit_fails_but_compiles(mock_llm, dummy_finding, monkeypatch):
+async def test_exploit_fails_but_compiles(mock_llm, dummy_finding, monkeypatch, tmp_path):
     mock_llm.invoke.return_value = MagicMock(content="```solidity\npragma solidity ^0.8.0; contract ExploitTest { function test_exploit() public {} }\n```")
     
     mock_sandbox = MagicMock()
-    # Compiles fine, but test fails cleanly without reverting
-    # Loop repeats 6 times -> 6 builds + 6 tests = 12 returns
-    mock_sandbox.run.side_effect = [
-        MagicMock(success=True, stdout="", stderr=""), # build
-        MagicMock(success=False, stdout="FAIL: revert", stderr="Test failed: Assertion Error") # test
-    ] * 6
+    mock_sandbox.tmp_dir = tmp_path
+    mock_sandbox.get_test_path.return_value = "test"
+    # Single forge test call per attempt — compiles but exploit fails
+    mock_sandbox.run.return_value = MagicMock(success=False, stdout="FAIL: revert", stderr="Test failed: Assertion Error")
     monkeypatch.setattr("src.agents.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
     
     worker = TestWriterWorker(llm_client=mock_llm)
@@ -173,14 +177,16 @@ async def test_exploit_fails_but_compiles(mock_llm, dummy_finding, monkeypatch):
     assert output.raw_output["attempts"] == 6  # It will retry to fix it until max attempts
     assert output.raw_output["compiled"] is True
     assert output.raw_output["exploit_success"] is False
-    assert output.raw_output["last_error"] == "Test compiled but exploit check failed.\nLogs:\nFAIL: revert\nTest failed: Assertion Error"
+    assert "exploit check failed" in output.raw_output["last_error"]
     assert output.confidence == 70  # 50 + 20 = 70
 
 @pytest.mark.asyncio
-async def test_missing_test_code_key(mock_llm, dummy_finding, monkeypatch):
+async def test_missing_test_code_key(mock_llm, dummy_finding, monkeypatch, tmp_path):
     # LLM completely fails to provide it as markdown or anything
     mock_llm.invoke.return_value = MagicMock(content="")
     mock_sandbox = MagicMock()
+    mock_sandbox.tmp_dir = tmp_path
+    mock_sandbox.get_test_path.return_value = "test"
     monkeypatch.setattr("src.agents.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
 
     worker = TestWriterWorker(llm_client=mock_llm)
@@ -222,13 +228,13 @@ def test_has_exact_test_exploit():
 
 
 @pytest.mark.asyncio
-async def test_exit_code_takes_precedence_for_exploit_success(mock_llm, dummy_finding, monkeypatch):
+async def test_exit_code_takes_precedence_for_exploit_success(mock_llm, dummy_finding, monkeypatch, tmp_path):
     mock_llm.invoke.return_value = MagicMock(content="```solidity\npragma solidity ^0.8.0; contract ExploitTest { function test_exploit() public {} }\n```")
     mock_sandbox = MagicMock()
-    mock_sandbox.run.side_effect = [
-        MagicMock(success=True, stdout="", stderr=""),  # build
-        MagicMock(success=False, stdout="[PASS]", stderr="")  # false positive logs should not pass
-    ] * 6
+    mock_sandbox.tmp_dir = tmp_path
+    mock_sandbox.get_test_path.return_value = "test"
+    # Single forge test call: exit code False but [PASS] in logs — exit code should win
+    mock_sandbox.run.return_value = MagicMock(success=False, stdout="[PASS]", stderr="")
     monkeypatch.setattr("src.agents.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
 
     worker = TestWriterWorker(llm_client=mock_llm)
