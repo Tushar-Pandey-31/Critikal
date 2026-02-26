@@ -23,9 +23,12 @@ class SandboxManager:
         self.repo_path: Path | None = Path(repo_path) if repo_path else None
 
     def setup_foundry_project(self) -> None:
+        print(f"  [Sandbox] setup_foundry_project  tmp={self.tmp_dir}  repo={self.repo_path}")
         if self.repo_path and self.repo_path.exists():
+            print(f"  [Sandbox] Mode: REAL REPO  ({self.repo_path})")
             self._setup_from_real_repo()
         else:
+            print(f"  [Sandbox] Mode: FORGE INIT  (no repo or repo path missing)")
             self._setup_forge_init()
 
     def _resolve_foundry_root(self, base: Path) -> Path:
@@ -38,6 +41,7 @@ class SandboxManager:
 
     def _setup_from_real_repo(self) -> None:
         foundry_root = self._resolve_foundry_root(self.repo_path)
+        print(f"  [Sandbox] Foundry root resolved: {foundry_root}")
         logger.info(f"[Sandbox] === SETUP START === tmp={self.tmp_dir} source={foundry_root}")
 
         # 1. Extract pristine remappings BEFORE the git submodules break in /tmp/
@@ -52,11 +56,17 @@ class SandboxManager:
                 )
                 if proc.returncode == 0:
                     remappings_content = proc.stdout
-                    logger.info(f"[Sandbox] Captured {len(remappings_content.splitlines())} remappings from original repo.")
+                    remap_count = len(remappings_content.splitlines())
+                    print(f"  [Sandbox] Captured {remap_count} remappings from original repo")
+                    logger.info(f"[Sandbox] Captured {remap_count} remappings from original repo.")
+                else:
+                    print(f"  [Sandbox] forge remappings failed (rc={proc.returncode}): {proc.stderr[:200]}")
             except Exception as e:
+                print(f"  [Sandbox] WARNING: Failed to extract remappings: {e}")
                 logger.warning(f"[Sandbox] Failed to extract remappings: {e}")
 
         # 2. Copy the repo (submodules will break, but we'll bypass that)
+        print(f"  [Sandbox] Copying repo tree to {self.tmp_dir} (excluding out/cache/broadcast)...")
         logger.info(f"[Sandbox] Copying repo tree to {self.tmp_dir}...")
         shutil.copytree(
             str(foundry_root),
@@ -64,6 +74,7 @@ class SandboxManager:
             dirs_exist_ok=True,
             ignore=shutil.ignore_patterns("out", "cache", "broadcast", "__pycache__")
         )
+        print(f"  [Sandbox] Repo copy complete")
         logger.info("[Sandbox] copytree complete.")
 
         self._ensure_foundry_deps()
@@ -73,28 +84,45 @@ class SandboxManager:
         remap_file = self.tmp_dir / "remappings.txt"
         if remappings_content:
             remap_file.write_text(remappings_content)
+            print(f"  [Sandbox] Wrote remappings.txt ({len(remappings_content.splitlines())} entries)")
         elif not remap_file.exists():
-            # Bare minimum fallback
             remap_file.write_text("forge-std/=lib/forge-std/src/\nds-test/=lib/forge-std/lib/ds-test/src/\n")
+            print(f"  [Sandbox] Wrote fallback remappings.txt (2 entries)")
+        else:
+            print(f"  [Sandbox] Using existing remappings.txt from repo")
 
         # Clean test/ dir (we only want our ExploitTest.t.sol)
         test_dir = self.tmp_dir / "test"
         if test_dir.exists():
             shutil.rmtree(test_dir, ignore_errors=True)
         test_dir.mkdir(parents=True, exist_ok=True)
+        print(f"  [Sandbox] Cleaned test/ directory")
 
+        # Verify critical dependency
         forge_std_ok = (self.tmp_dir / "lib" / "forge-std" / "src" / "Test.sol").exists()
+        print(f"  [Sandbox] forge-std/Test.sol present: {forge_std_ok}")
         logger.info(f"[Sandbox] Ready at {self.tmp_dir}, forge-std/Test.sol exists: {forge_std_ok}")
+
         if not forge_std_ok:
             src_lib = self.repo_path / "lib" if self.repo_path else None
             if src_lib and src_lib.exists():
                 try:
                     contents = [p.name for p in src_lib.iterdir()]
+                    print(f"  [Sandbox] CRITICAL: forge-std missing! Original lib/ contents: {contents}")
                     logger.warning(f"[Sandbox] CRITICAL: forge-std missing! Original lib/ contents: {contents}")
                 except Exception:
+                    print(f"  [Sandbox] CRITICAL: forge-std missing! Could not list original lib/")
                     logger.warning("[Sandbox] CRITICAL: forge-std missing! Could not list original lib/ contents.")
             else:
+                print(f"  [Sandbox] CRITICAL: forge-std missing and original lib/ does not exist!")
                 logger.warning("[Sandbox] CRITICAL: forge-std missing and original lib/ does not exist!")
+
+        # List sandbox top-level contents for diagnostics
+        try:
+            top_level = sorted([p.name for p in self.tmp_dir.iterdir()])
+            print(f"  [Sandbox] Sandbox root contents: {top_level}")
+        except Exception:
+            pass
 
     def _ensure_foundry_deps(self) -> None:
         """
@@ -105,6 +133,7 @@ class SandboxManager:
         # Step 1: Copy lib/ from original repo (may be partial — e.g. solmate has ds-test only)
         src_lib = self.repo_path / "lib" if self.repo_path else None
         if src_lib and src_lib.exists():
+            print(f"  [Sandbox] Copying lib/ from original repo ({src_lib})...")
             logger.info(f"[Sandbox] Copying lib/ from {src_lib} ...")
             shutil.copytree(
                 str(src_lib),
@@ -113,32 +142,43 @@ class SandboxManager:
                 symlinks=False
             )
             try:
-                lib_contents = [p.name for p in (self.tmp_dir / "lib").iterdir()]
+                lib_contents = sorted([p.name for p in (self.tmp_dir / "lib").iterdir()])
+                print(f"  [Sandbox] lib/ copied. Contents: {lib_contents}")
                 logger.info(f"[Sandbox] lib/ copied. Contents: {lib_contents}")
             except Exception:
+                print(f"  [Sandbox] lib/ copied (could not list contents)")
                 logger.info("[Sandbox] lib/ copied (could not list contents).")
+        else:
+            print(f"  [Sandbox] No lib/ in original repo to copy")
 
         # Step 2: Always check forge-std and install if missing
         forge_std_test = self.tmp_dir / "lib" / "forge-std" / "src" / "Test.sol"
         if forge_std_test.exists():
+            print(f"  [Sandbox] forge-std/Test.sol already present — skipping install")
             logger.info("[Sandbox] forge-std/Test.sol confirmed present.")
             return
 
+        print(f"  [Sandbox] forge-std MISSING — installing via 'forge install'...")
         logger.info("[Sandbox] forge-std missing — installing via forge install...")
         if not (self.tmp_dir / ".git").exists():
             self.run("git init")
         result = self.run("forge install foundry-rs/forge-std --no-git --quiet")
 
         if forge_std_test.exists():
+            print(f"  [Sandbox] forge-std/Test.sol confirmed after forge install")
             logger.info("[Sandbox] forge-std/Test.sol confirmed after forge install.")
         else:
+            print(f"  [Sandbox] FAILED: forge-std still missing after install! stderr={result.stderr[:300] if result.stderr else 'none'}")
             logger.warning(
                 f"[Sandbox] forge install finished but forge-std/Test.sol STILL missing! "
                 f"stderr={result.stderr[:200] if result.stderr else 'none'}"
             )
 
     def _setup_forge_init(self) -> None:
+        print(f"  [Sandbox] Running forge init (no repo mode)...")
         self.run("forge init --force --quiet")
+        forge_std_ok = (self.tmp_dir / "lib" / "forge-std" / "src" / "Test.sol").exists()
+        print(f"  [Sandbox] forge init complete. forge-std/Test.sol present: {forge_std_ok}")
 
     # ──────────────────────────────────────────────────────────────
     # ALL METHODS BELOW ARE UNCHANGED FROM YOUR ORIGINAL FILE
@@ -149,6 +189,7 @@ class SandboxManager:
         file_path.parent.mkdir(parents=True, exist_ok=True)
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(content)
+        print(f"  [Sandbox] Wrote test file: {file_path.relative_to(self.tmp_dir)}  ({len(content)} chars, {content.count(chr(10))+1} lines)")
 
     def read_source_file(self, relative_path: str) -> str | None:
         file_path = self.tmp_dir / relative_path
@@ -217,6 +258,9 @@ class SandboxManager:
 
     def run(self, cmd: str) -> Result:
         import shlex
+        import time as _time
+        print(f"  [Sandbox] RUN: {cmd}")
+        t0 = _time.time()
         try:
             proc = subprocess.run(
                 shlex.split(cmd),
@@ -228,22 +272,36 @@ class SandboxManager:
                 errors='replace',
                 timeout=120
             )
-            return Result(
+            elapsed = _time.time() - t0
+            result = Result(
                 success=(proc.returncode == 0),
                 stdout=proc.stdout,
                 stderr=proc.stderr
             )
+            status = "OK" if result.success else "FAIL"
+            print(f"  [Sandbox] RUN result: {status}  rc={proc.returncode}  elapsed={elapsed:.1f}s  stdout={len(proc.stdout)} chars  stderr={len(proc.stderr)} chars")
+            if not result.success and proc.stderr:
+                stderr_preview = proc.stderr.strip().replace('\n', ' | ')[:300]
+                print(f"  [Sandbox] stderr preview: {stderr_preview}")
+            return result
         except subprocess.TimeoutExpired as e:
+            elapsed = _time.time() - t0
+            print(f"  [Sandbox] RUN TIMEOUT: {cmd}  after {elapsed:.1f}s")
             return Result(success=False, stdout="", stderr=f"Command timed out after {e.timeout} seconds.")
         except Exception as e:
+            elapsed = _time.time() - t0
+            print(f"  [Sandbox] RUN ERROR: {cmd}  {e}  after {elapsed:.1f}s")
             return Result(success=False, stdout="", stderr=str(e))
 
     def cleanup(self) -> None:
+        print(f"  [Sandbox] Cleaning up {self.tmp_dir}")
         try:
             if self.tmp_dir.exists():
                 def handle_remove_readonly(func, path, exc):
                     os.chmod(path, stat.S_IWRITE)
                     func(path)
                 shutil.rmtree(self.tmp_dir, onerror=handle_remove_readonly)
+                print(f"  [Sandbox] Cleanup complete")
         except Exception as e:
+            print(f"  [Sandbox] Cleanup failed: {e}")
             logger.warning(f"Failed to cleanup temp dir {self.tmp_dir}: {e}")

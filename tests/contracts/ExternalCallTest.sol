@@ -203,6 +203,25 @@ contract ExternalCallTest {
     // Call (A pre) -> Body -> Write (B post) -> Violation
     function multipleModifiersStacking(address target) public modA(target) modB {}
 
+    // ===== Story 1.2/1.3: transfer + write (CEI violation, NOT reentrancy) =====
+    function transferThenWrite(address payable target) public {
+        target.transfer(1 ether);
+        counter += 1; // state write after transfer (2300 gas, not reentrant)
+    }
+
+    // ===== Story 1.2: view interface call + write (staticcall, NOT reentrancy) =====
+    function viewCallThenWrite(address target) public {
+        IERC20(target).balanceOf(address(this)); // staticcall (view function)
+        counter += 1; // state write after staticcall
+    }
+
+    // ===== Story 1.3: send + write (CEI violation, NOT reentrancy) =====
+    function sendThenWrite(address payable target) public {
+        bool success = target.send(1 ether);
+        require(success, "send failed");
+        counter += 1; // state write after send (2300 gas, not reentrant)
+    }
+
     // Allow contract to receive ETH
     receive() external payable {}
 }

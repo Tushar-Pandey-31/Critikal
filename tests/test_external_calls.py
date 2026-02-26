@@ -385,6 +385,156 @@ def test_multiple_modifiers_stacking(graph_and_queries):
 
 
 # ================================================================
+# Story 1.1: EXTERNAL_CALL edges exist for every external call function
+# ================================================================
+def test_external_call_edges_exist(graph_and_queries):
+    graph, queries = graph_and_queries
+
+    for node_id, node_data in graph.nodes(data=True):
+        if node_data.get("type") != "function":
+            continue
+        if not node_data.get("makes_external_call"):
+            continue
+
+        ext_edges = queries.get_external_call_edges(node_id)
+        assert len(ext_edges) > 0, \
+            f"{node_id} has makes_external_call=True but no EXTERNAL_CALL edges"
+
+    print("✓ PASS: All external-call functions have EXTERNAL_CALL edges")
+
+
+def test_external_call_edge_properties(graph_and_queries):
+    graph, queries = graph_and_queries
+
+    edges = queries.get_external_call_edges("ExternalCallTest::lowLevelCall")
+    assert len(edges) >= 1, "lowLevelCall should have at least 1 EXTERNAL_CALL edge"
+    edge = edges[0]
+    assert edge["call_type"] == "call"
+    assert edge["forwards_gas"] == "full"
+    assert edge["return_value_checked"] is True
+    assert edge["target_expression"] != ""
+
+    print(f"✓ PASS: lowLevelCall EXTERNAL_CALL edge properties correct")
+    print(f"  - call_type={edge['call_type']} forwards_gas={edge['forwards_gas']}")
+
+
+def test_transfer_edge_properties(graph_and_queries):
+    _, queries = graph_and_queries
+    edges = queries.get_external_call_edges("ExternalCallTest::transferEther")
+    assert len(edges) >= 1
+    edge = edges[0]
+    assert edge["call_type"] == "transfer"
+    assert edge["forwards_gas"] == "2300"
+    assert edge["return_value_checked"] is True
+
+    print(f"✓ PASS: transferEther EXTERNAL_CALL edge has forwards_gas=2300")
+
+
+def test_delegatecall_edge_properties(graph_and_queries):
+    _, queries = graph_and_queries
+    edges = queries.get_external_call_edges("ExternalCallTest::delegateCall")
+    assert len(edges) >= 1
+    edge = edges[0]
+    assert edge["call_type"] == "delegatecall"
+    assert edge["forwards_gas"] == "full"
+
+    print(f"✓ PASS: delegateCall EXTERNAL_CALL edge properties correct")
+
+
+def test_send_edge_properties(graph_and_queries):
+    _, queries = graph_and_queries
+    edges = queries.get_external_call_edges("ExternalCallTest::sendEther")
+    assert len(edges) >= 1
+    edge = edges[0]
+    assert edge["call_type"] == "send"
+    assert edge["forwards_gas"] == "2300"
+
+    print(f"✓ PASS: sendEther EXTERNAL_CALL edge has forwards_gas=2300")
+
+
+# ================================================================
+# Story 1.2: Detect STATICCALL for view/pure interface calls
+# ================================================================
+def test_view_interface_call_is_staticcall(graph_and_queries):
+    graph, queries = graph_and_queries
+    node_id = "ExternalCallTest::externalCallNoMutation"
+    assert graph.has_node(node_id)
+
+    edges = queries.get_external_call_edges(node_id)
+    assert len(edges) >= 1, f"externalCallNoMutation should have EXTERNAL_CALL edges"
+
+    call_types = [e["call_type"] for e in edges]
+    assert "staticcall" in call_types, \
+        f"View function call should be classified as staticcall, got {call_types}"
+
+    print(f"✓ PASS: view interface call classified as staticcall")
+
+
+def test_view_call_then_write(graph_and_queries):
+    graph, queries = graph_and_queries
+    node_id = "ExternalCallTest::viewCallThenWrite"
+    assert graph.has_node(node_id), f"Node {node_id} not found"
+
+    data = graph.nodes[node_id]
+    assert data.get("makes_external_call") is True
+    assert data.get("state_write_after_external_call") is True
+    assert data.get("state_write_after_reentrant_call") is False, \
+        "staticcall should NOT set state_write_after_reentrant_call"
+
+    edges = queries.get_external_call_edges(node_id)
+    call_types = [e["call_type"] for e in edges]
+    assert "staticcall" in call_types
+
+    print(f"✓ PASS: viewCallThenWrite has CEI violation but NOT reentrant-capable")
+
+
+def test_nonview_interface_is_not_staticcall(graph_and_queries):
+    _, queries = graph_and_queries
+    edges = queries.get_external_call_edges("ExternalCallTest::highLevelCall")
+    assert len(edges) >= 1
+
+    call_types = [e["call_type"] for e in edges]
+    assert "interface" in call_types, \
+        f"Non-view interface call should be 'interface', got {call_types}"
+    assert "staticcall" not in call_types
+
+    print(f"✓ PASS: non-view interface call is 'interface', not 'staticcall'")
+
+
+# ================================================================
+# Story 1.3: state_write_after_reentrant_call flag
+# ================================================================
+def test_transfer_then_write_not_reentrant(graph_and_queries):
+    graph, _ = graph_and_queries
+    node_id = "ExternalCallTest::transferThenWrite"
+    assert graph.has_node(node_id), f"Node {node_id} not found"
+
+    data = graph.nodes[node_id]
+    assert data.get("makes_external_call") is True
+    assert data.get("state_write_after_external_call") is True, \
+        "transferThenWrite has write after transfer (CEI violation)"
+    assert data.get("state_write_after_reentrant_call") is False, \
+        "transfer (2300 gas) should NOT flag state_write_after_reentrant_call"
+
+    print(f"✓ PASS: transferThenWrite is CEI violation but NOT reentrant-capable")
+
+
+def test_send_then_write_not_reentrant(graph_and_queries):
+    graph, _ = graph_and_queries
+    node_id = "ExternalCallTest::sendThenWrite"
+    assert graph.has_node(node_id), f"Node {node_id} not found"
+
+    data = graph.nodes[node_id]
+    assert data.get("makes_external_call") is True
+    assert data.get("state_write_after_external_call") is True, \
+        "sendThenWrite has write after send (CEI violation)"
+    assert data.get("state_write_after_reentrant_call") is False, \
+        "send (2300 gas) should NOT flag state_write_after_reentrant_call"
+
+    print(f"✓ PASS: sendThenWrite is CEI violation but NOT reentrant-capable")
+
+
+# ================================================================
 # Test 10: All function nodes have external call metadata fields
 # ================================================================
 def test_all_functions_have_metadata(graph_and_queries):
@@ -394,7 +544,8 @@ def test_all_functions_have_metadata(graph_and_queries):
         "makes_external_call",
         "external_call_nodes",
         "external_call_type",
-        "state_write_after_external_call"
+        "state_write_after_external_call",
+        "state_write_after_reentrant_call",
     ]
 
     for node_id, node_data in graph.nodes(data=True):
@@ -485,6 +636,16 @@ if __name__ == "__main__":
         test_modifier_internal_write_safe,
         test_modifier_internal_write_violation,
         test_multiple_modifiers_stacking,
+        test_external_call_edges_exist,
+        test_external_call_edge_properties,
+        test_transfer_edge_properties,
+        test_delegatecall_edge_properties,
+        test_send_edge_properties,
+        test_view_interface_call_is_staticcall,
+        test_view_call_then_write,
+        test_nonview_interface_is_not_staticcall,
+        test_transfer_then_write_not_reentrant,
+        test_send_then_write_not_reentrant,
         test_all_functions_have_metadata,
         test_query_external_call_functions,
     ]

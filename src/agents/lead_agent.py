@@ -436,7 +436,9 @@ async def coordinator_node(state: AgentState):
         hotspot_summary += f"Found {len(hotspots)} high-risk function(s):\n"
         for h in hotspots[:15]:
             hotspot_summary += (
-                f"  - {h.node_id} | risk_score={h.risk_score} | priority={h.priority}\n"
+                f"  - {h.node_id} | final={h.risk_score} "
+                f"struct={h.structural_score} exploit={h.exploitability_score} "
+                f"impact={h.impact_score} | priority={h.priority}\n"
             )
 
     if worker_outputs:
@@ -526,42 +528,14 @@ async def coordinator_node(state: AgentState):
             leads = synthesize_worker_outputs(worker_outputs) if worker_outputs else []
             strategy = "Failed to parse LLM response"
 
-    # ── Step 5b: Synthetic Fallback for TestWriter ─────────
-    # LOGIC-002 fix: Only create synthetic findings from LLM leads that
-    # correspond to a real hotspot node in the graph (validates the lead
-    # is not a hallucination). Previously any LLM lead with confidence>=65
-    # bypassed the Attack Worker entirely.
+    # ── Step 5b: DISABLED (Epic 2, Story 2.1) ───────────────
+    # Synthetic finding creation from LLM leads has been removed.
+    # Only Attack Workers (Step 3→4) can produce findings, ensuring
+    # every finding is grounded in a graph hotspot — the LLM cannot
+    # invent vulnerabilities without structural evidence.
     if not findings and leads:
-        hotspot_ids = {h.node_id for h in hotspots} if hotspots else set()
-        for lead in leads:
-            if (lead.get("confidence", 0) >= 65 and
-                    lead.get("severity_estimate") in ("CRITICAL", "HIGH")):
-                lead_node_id = normalize_node_id(lead.get("affected_function_node_id", ""))
-                # Only promote if the node actually exists in our graph
-                if lead_node_id and (lead_node_id in hotspot_ids or state["graph"].has_node(lead_node_id)):
-                    synthetic_finding = Finding(
-                        id=str(uuid.uuid4()),
-                        hotspot_node_id=lead_node_id,
-                        vulnerability_class=lead.get("vulnerability_class", "UNKNOWN"),
-                        title=lead.get("title", "Unnamed Lead"),
-                        hypothesis=lead.get("root_cause", ""),
-                        evidence_nodes=[],
-                        attack_path=[lead_node_id],
-                        status=FindingStatus.DRAFT,
-                        confidence=lead.get("confidence", 65),
-                        impact=lead.get("impact", "Unknown"),
-                        preconditions=[],
-                        affected_contract=lead.get("affected_contract", "Unknown"),
-                        affected_function=lead.get("affected_function", "Unknown"),
-                        severity_estimate=lead.get("severity_estimate", "HIGH"),
-                        severity=lead.get("severity_estimate", "HIGH"),
-                    )
-                    findings.append(synthetic_finding)
-                else:
-                    print(f"  Skipping synthetic finding — node '{lead_node_id}' not in graph")
-
-        if findings:
-            print(f"[Step 5b] Synthesized {len(findings)} graph-validated findings from LLM leads for TestWriter")
+        print(f"[Step 5b] {len(leads)} LLM lead(s) present but synthetic fallback is disabled. "
+              f"Only Attack Worker findings are accepted.")
 
     # ── Step 6: TestWriter ─────────────────────────────────
     print(f"[Step 6] Preparing TestWriter: {len(findings)} finding(s) to process")

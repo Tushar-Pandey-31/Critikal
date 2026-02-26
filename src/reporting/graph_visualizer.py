@@ -20,6 +20,7 @@ _EDGE_COLORS = {
     "INHERITS": "#bc8cff",
     "DEFINES": "#484f58",
     "HAS_MODIFIER": "#484f58",
+    "EXTERNAL_CALL": "#f0883e",
 }
 
 _NODE_RADII = {

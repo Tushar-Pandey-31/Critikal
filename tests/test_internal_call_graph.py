@@ -219,10 +219,13 @@ def test_external_call_ignored():
     assert call_external_data.get("num_internal_calls") == 0, \
         f"callExternal() should have num_internal_calls=0, got {call_external_data.get('num_internal_calls')}"
     
-    # Should NOT have edge to OtherContract
+    # Should NOT have internal CALLS edge to OtherContract
+    # (EXTERNAL_CALL edges are expected and correct per Story 1.1)
     if graph.has_node(other_func):
-        assert not graph.has_edge(call_external, other_func), \
-            "Should NOT have CALLS edge to external contract"
+        edge_data = graph.get_edge_data(call_external, other_func)
+        if edge_data:
+            assert edge_data.get("relationship") != "CALLS", \
+                "Should NOT have CALLS edge to external contract"
     
     print(f"✓ PASS: {call_external}")
     print(f"  - num_internal_calls: {call_external_data.get('num_internal_calls')}")

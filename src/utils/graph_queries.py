@@ -283,10 +283,28 @@ class GraphQueries:
                 "external_call_type": node_data.get("external_call_type", []),
                 "external_call_nodes": node_data.get("external_call_nodes", []),
                 "state_write_after_external_call": node_data.get("state_write_after_external_call", False),
+                "state_write_after_reentrant_call": node_data.get("state_write_after_reentrant_call", False),
                 "visibility": node_data.get("visibility"),
-                "is_payable": node_data.get("is_payable", False)
+                "is_payable": node_data.get("is_payable", False),
             })
         return results
+
+    def get_external_call_edges(self, function_id: str) -> List[Dict[str, Any]]:
+        """Returns all EXTERNAL_CALL edges originating from a function."""
+        if not self.graph.has_node(function_id):
+            return []
+        edges = []
+        for _, target, data in self.graph.out_edges(function_id, data=True):
+            if data.get("relationship") != "EXTERNAL_CALL":
+                continue
+            edges.append({
+                "target": target,
+                "call_type": data.get("call_type", "unknown"),
+                "forwards_gas": data.get("forwards_gas", "unknown"),
+                "target_expression": data.get("target_expression", ""),
+                "return_value_checked": data.get("return_value_checked", False),
+            })
+        return edges
 
     def get_reentrancy_risks(self, contract_name: str | None = None) -> List[Dict[str, Any]]:
         results = []
@@ -305,7 +323,160 @@ class GraphQueries:
                 "external_call_type": node_data.get("external_call_type", []),
                 "propagated_state_variables": node_data.get("propagated_state_variables", []),
                 "visibility": node_data.get("visibility"),
-                "is_payable": node_data.get("is_payable", False)
+                "is_payable": node_data.get("is_payable", False),
+            })
+        return results
+
+    def get_cei_violations(self, contract_name: str | None = None) -> List[Dict[str, Any]]:
+        """Returns functions with CEI violations that are NOT reentrancy risks
+        (e.g. transfer/send/staticcall before state write)."""
+        results = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            if not node_data.get("cei_violation_only"):
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+            results.append({
+                "function_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "external_call_type": node_data.get("external_call_type", []),
+                "propagated_state_variables": node_data.get("propagated_state_variables", []),
+                "visibility": node_data.get("visibility"),
+            })
+        return results
+
+    # ════════════════════════════════════════════════════════════
+    #  Epic 6 — StateTransition Queries
+    # ════════════════════════════════════════════════════════════
+
+    def get_state_transitions(
+        self,
+        function_id: str | None = None,
+        variable_id: str | None = None,
+        contract_name: str | None = None,
+        operation: str | None = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Returns StateTransition nodes with optional filters.
+
+        Filters:
+          function_id  — only transitions performed by this function
+          variable_id  — only transitions affecting this variable
+          contract_name — only transitions in functions belonging to this contract
+          operation    — only transitions of this type (assign, add, sub, push, pop, …)
+        """
+        results = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "state_transition":
+                continue
+
+            if function_id and node_data.get("function") != function_id:
+                continue
+            if variable_id and node_data.get("variable") != variable_id:
+                continue
+            if operation and node_data.get("operation") != operation:
+                continue
+
+            if contract_name:
+                func_id = node_data.get("function", "")
+                func_data = self.graph.nodes.get(func_id, {})
+                if func_data.get("contract") != contract_name:
+                    continue
+
+            results.append({
+                "transition_id": node_id,
+                "function": node_data.get("function"),
+                "variable": node_data.get("variable"),
+                "operation": node_data.get("operation"),
+                "is_array_length": node_data.get("is_array_length", False),
+                "is_array": node_data.get("is_array", False),
+                "is_mapping": node_data.get("is_mapping", False),
+                "is_owner_assignment": node_data.get("is_owner_assignment", False),
+                "attacker_controlled_input": node_data.get("attacker_controlled_input", False),
+                "affects_privileged_var": node_data.get("affects_privileged_var", False),
+                "ir_expression": node_data.get("ir_expression", ""),
+            })
+        return results
+
+    def get_array_length_mutations(
+        self, contract_name: str | None = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Story 6.2: Returns functions that contain array length mutation
+        primitives (pop / decrement_length on dynamic arrays).
+        """
+        results = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            if not node_data.get("has_array_length_mutation"):
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+            results.append({
+                "function_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "visibility": node_data.get("visibility"),
+                "is_protected": node_data.get("is_protected", False),
+            })
+        return results
+
+    def get_delegatecall_storage_risks(
+        self, contract_name: str | None = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Story 6.3: Returns functions flagged with DELEGATECALL_STORAGE_RISK.
+        """
+        results = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            if not node_data.get("delegatecall_storage_risk"):
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+            results.append({
+                "function_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "visibility": node_data.get("visibility"),
+                "external_call_type": node_data.get("external_call_type", []),
+                "state_write_after_external_call": node_data.get(
+                    "state_write_after_external_call", False
+                ),
+            })
+        return results
+
+    # ════════════════════════════════════════════════════════════
+    #  Epic 7 — Contract Tier Queries
+    # ════════════════════════════════════════════════════════════
+
+    def get_contract_tiers(
+        self, tier: str | None = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Returns contract-level tier classifications.
+
+        Optional filter: pass tier='CORE' (or FACTORY, LIBRARY, INFRA)
+        to return only contracts of that tier.
+        """
+        results = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "contract":
+                continue
+            contract_tier = node_data.get("tier", "INFRA")
+            if tier and contract_tier != tier:
+                continue
+            results.append({
+                "contract": node_id,
+                "tier": contract_tier,
+                "is_library": node_data.get("is_library", False),
+                "is_interface": node_data.get("is_interface", False),
+                "is_upgradeable": node_data.get("is_upgradeable", False),
             })
         return results
 
@@ -348,59 +519,90 @@ class GraphQueries:
                 result[name] = sig
         return result
 
-    def get_high_risk_hotspots(self, min_score: int = 70) -> List[Any]:
+    def get_high_risk_hotspots(
+        self,
+        min_score: int = 70,
+        min_structural: int = 40,
+        min_exploitability: int = 30,
+    ) -> List[Any]:
         """
-        Returns high-risk function hotspots, excluding:
-          - Test / mock / fuzzing / echidna contracts (by name pattern or source path)
-          - View/pure functions (cannot cause state damage)
-          - Constructors (not callable post-deployment)
+        Returns high-risk function hotspots using multi-dimensional gate.
+
+        A function must pass ALL of:
+          1. final_score >= min_score   (backward-compat threshold)
+          2. structural_score >= min_structural
+          3. exploitability_score >= min_exploitability
+
+        This ensures CEI-only patterns without attacker control, infra
+        contracts, and other false-positive-prone patterns drop below
+        the hotspot threshold.
+
+        Excludes test/mock/fuzzing contracts, view/pure functions, constructors.
         """
         from src.hotspot_engine import Hotspot
 
         hotspots = []
         skipped_test = 0
+        skipped_gate = 0
 
         for node_id, data in self.graph.nodes(data=True):
             if data.get("type") != "function":
                 continue
 
-            risk_score = data.get("risk_score", 0)
-            if risk_score < min_score:
+            final = data.get("final_score", data.get("risk_score", 0))
+            structural = data.get("structural_score", 0)
+            exploit = data.get("exploitability_score", 0)
+
+            if final < min_score:
                 continue
 
-            # Skip read-only functions
+            # Multi-dimensional gate (Epic 3, Story 3.1)
+            if structural < min_structural or exploit < min_exploitability:
+                skipped_gate += 1
+                continue
+
             if data.get("is_view_or_pure") or data.get("stateMutability") in ("view", "pure"):
                 continue
 
-            # Skip constructors
             if data.get("is_constructor"):
                 continue
 
-            # Skip test/mock/fuzzing/echidna contracts
             contract_name = data.get("contract", "")
-            source_file = data.get("source_file", "")  # populated by graph_builder if available
+            source_file = data.get("source_file", "")
             if _is_test_contract(contract_name, source_file):
                 skipped_test += 1
                 continue
 
+            contract_data = self.graph.nodes.get(contract_name, {})
+            if contract_data.get("tier") == "LIBRARY":
+                skipped_gate += 1
+                continue
+
             priority = "MEDIUM"
-            if risk_score >= 90:
+            if final >= 90:
                 priority = "CRITICAL"
-            elif risk_score >= 80:
+            elif final >= 80:
                 priority = "HIGH"
 
             hotspots.append(Hotspot(
                 node_id=node_id,
                 contract=contract_name,
                 function=data.get("name", node_id),
-                risk_score=risk_score,
+                risk_score=final,
                 risk_categories=data.get("risk_categories", []),
                 signals=data,
-                priority=priority
+                priority=priority,
+                structural_score=structural,
+                exploitability_score=exploit,
+                impact_score=data.get("impact_score", 0),
+                final_score=final,
+                tier=contract_data.get("tier", "INFRA"),
             ))
 
         if skipped_test:
             print(f"[GraphQueries] Skipped {skipped_test} hotspot(s) in test/mock/fuzzing contracts.")
+        if skipped_gate:
+            print(f"[GraphQueries] Skipped {skipped_gate} function(s) below multi-dimensional gate.")
 
         hotspots.sort(key=lambda x: x.risk_score, reverse=True)
         return hotspots
@@ -440,8 +642,26 @@ def get_callers(graph: nx.DiGraph, function_id: str) -> List[str]:
 def get_external_call_functions(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
     return GraphQueries(graph).get_external_call_functions(contract_name)
 
+def get_external_call_edges(graph: nx.DiGraph, function_id: str) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_external_call_edges(function_id)
+
+def get_cei_violations(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_cei_violations(contract_name)
+
 def get_privilege_escalation_risks(graph: nx.DiGraph, contract_name: str | None = None) -> Dict[str, Any]:
     return GraphQueries(graph).get_privilege_escalation_risks(contract_name)
 
 def get_contract_signatures(graph: nx.DiGraph, contract_name: str) -> Dict[str, str]:
     return GraphQueries(graph).get_contract_signatures(contract_name)
+
+def get_state_transitions(graph: nx.DiGraph, **kwargs) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_state_transitions(**kwargs)
+
+def get_array_length_mutations(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_array_length_mutations(contract_name)
+
+def get_delegatecall_storage_risks(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_delegatecall_storage_risks(contract_name)
+
+def get_contract_tiers(graph: nx.DiGraph, tier: str | None = None) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_contract_tiers(tier)

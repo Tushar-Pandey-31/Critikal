@@ -674,6 +674,7 @@ class TestWriterWorker(WorkerAgent):
         if isinstance(finding, list):
             finding = finding[0] if finding else None
         if not finding or not isinstance(finding, Finding):
+            print(f"  [TestWriter] ERROR: Missing or invalid finding in task context")
             return WorkerOutput(
                 worker_type=self.get_worker_type(),
                 confidence=0,
@@ -684,7 +685,15 @@ class TestWriterWorker(WorkerAgent):
         repo_path = task.context.get("repo_path")
         contract_signatures = task.context.get("contract_signatures", {}) or {}
 
+        print(f"\n{'='*70}")
+        print(f"  [TestWriter] === START === {finding.affected_contract}::{finding.affected_function}")
+        print(f"  [TestWriter] Vulnerability: {finding.vulnerability_class}  |  Confidence: {finding.confidence}")
+        print(f"  [TestWriter] Repo path: {repo_path}")
+        print(f"  [TestWriter] Relevant code snippets: {len(relevant_code)}  |  Contract signatures: {len(contract_signatures)}")
+
         remappings = self._get_remappings_from_repo(repo_path)
+        if remappings:
+            print(f"  [TestWriter] Loaded {len(remappings)} remappings from repo")
 
         lib_imports: set[str] = set()
         real_sources_full = self._collect_repo_sources(finding, repo_path, remappings, _lib_imports_out=lib_imports)
@@ -696,28 +705,40 @@ class TestWriterWorker(WorkerAgent):
         ) if (real_sources_full or real_sources_minimal) else None
 
         if real_sources_full:
+            total_chars = sum(len(v) for v in real_sources_full.values())
+            print(f"  [TestWriter] Collected FULL sources: {len(real_sources_full)} files ({total_chars} chars)")
+            for p in list(real_sources_full.keys())[:8]:
+                print(f"    - {p}  ({len(real_sources_full[p])} chars)")
+            print(f"  [TestWriter] Collected MINIMAL sources: {len(real_sources_minimal)} files")
             logger.info(f"[TestWriter] Found real source + deps for {finding.affected_contract}: {len(real_sources_full)} files (minimal: {len(real_sources_minimal)})")
         else:
+            print(f"  [TestWriter] No real source found for {finding.affected_contract} — using MOCK mode")
             logger.info(f"[TestWriter] No real source found for {finding.affected_contract}, using mock mode")
 
+        if lib_imports:
+            print(f"  [TestWriter] Lib imports detected: {sorted(lib_imports)[:10]}")
+        if repo_manifest:
+            print(f"  [TestWriter] Repo manifest: {len(repo_manifest)} .sol files")
+
         # Detect pragma by scanning ALL collected sources (not just the first file).
-        # The first file is often an interface with no pragma; the target contract
-        # may be the second or third file in the dependency walk.
         sources_to_check = real_sources_full or real_sources_minimal
         target_pragma = self._detect_pragma(sources_to_check) if sources_to_check else None
         if target_pragma:
+            print(f"  [TestWriter] Detected pragma: {target_pragma}")
             logger.info(f"[TestWriter] Detected target pragma: {target_pragma}")
         else:
+            print(f"  [TestWriter] No pragma detected — LLM will use default")
             logger.info(f"[TestWriter] No pragma detected — LLM will use default")
 
         # Pre-analyze repo for naming conflicts and abstract contracts.
-        # Comments are stripped before analysis to prevent false positives.
         repo_conflicts = self._detect_repo_contract_conflicts(
             repo_path if real_sources_full else None
         )
         if repo_conflicts["naming_conflicts"]:
+            print(f"  [TestWriter] Naming conflicts: {repo_conflicts['naming_conflicts']}")
             logger.info(f"[TestWriter] Naming conflicts detected: {repo_conflicts['naming_conflicts']}")
         if repo_conflicts["abstract_contracts"]:
+            print(f"  [TestWriter] Abstract contracts: {repo_conflicts['abstract_contracts']}")
             logger.info(f"[TestWriter] Abstract contracts detected: {repo_conflicts['abstract_contracts']}")
 
         attempts = 0
@@ -733,15 +754,21 @@ class TestWriterWorker(WorkerAgent):
             sandbox.setup_foundry_project()
 
             # EXTRA SAFETY: force forge install if forge-std is still missing
-            # FINAL SAFETY CHECK
             if not (sandbox.tmp_dir / "lib" / "forge-std" / "src" / "Test.sol").exists():
+                print(f"  [TestWriter] forge-std still missing after setup — forcing _ensure_foundry_deps()")
                 logger.info("[TestWriter] forge-std missing — forcing lib/ copy")
                 sandbox._ensure_foundry_deps()
 
+            print(f"  [TestWriter] Starting attempt loop (max={self.MAX_ATTEMPTS}, LLM timeout={self.LLM_TIMEOUT}s)")
+
             while attempts < self.MAX_ATTEMPTS:
                 attempts += 1
-                logger.info(f"[TestWriter] Attempt {attempts}/{self.MAX_ATTEMPTS} building prompt...", flush=True)
+                print(f"\n  [TestWriter] ── Attempt {attempts}/{self.MAX_ATTEMPTS} ──")
                 sources_for_attempt = real_sources_full if attempts >= 3 else real_sources_minimal
+                source_mode = "FULL" if attempts >= 3 else "MINIMAL"
+                print(f"  [TestWriter] Source mode: {source_mode} ({len(sources_for_attempt) if sources_for_attempt else 0} files)")
+                logger.info(f"[TestWriter] Attempt {attempts}/{self.MAX_ATTEMPTS} building prompt...")
+
                 prompt = self._build_prompt(
                     finding,
                     relevant_code,
@@ -755,32 +782,43 @@ class TestWriterWorker(WorkerAgent):
                     repo_conflicts=repo_conflicts,
                     target_pragma=target_pragma,
                 )
+                prompt_chars = sum(len(m.get("content", "")) for m in prompt)
+                print(f"  [TestWriter] Prompt built: {len(prompt)} messages, {prompt_chars} total chars (RAG={'skip' if attempts==1 else 'on'})")
 
                 try:
+                    print(f"  [TestWriter] Calling LLM at {time.strftime('%H:%M:%S')} (timeout={self.LLM_TIMEOUT}s)...")
                     logger.info(
                         f"[TestWriter] Attempt {attempts}/{self.MAX_ATTEMPTS} "
                         f"calling LLM for '{finding.affected_contract}::{finding.affected_function}' "
                         f"at {time.strftime('%H:%M:%S')} (timeout={self.LLM_TIMEOUT}s)..."
                     )
+                    t_llm = time.time()
                     response = await asyncio.wait_for(
                         asyncio.to_thread(self.llm_client.invoke, prompt),
                         timeout=self.LLM_TIMEOUT
                     )
+                    llm_elapsed = time.time() - t_llm
                     content = response.content if hasattr(response, "content") else str(response)
                     if isinstance(content, list):
                         content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
+                    print(f"  [TestWriter] LLM responded in {llm_elapsed:.1f}s ({len(content)} chars)")
 
                     test_code_generated = self._extract_test_code(content)
                     if not test_code_generated:
+                        print(f"  [TestWriter] SKIP: No extractable Solidity code in LLM response")
+                        print(f"  [TestWriter]   Response preview: {content[:150]}...")
                         logger.info(f"[TestWriter] Attempt {attempts}: LLM returned NO extractable Solidity code.")
                         logger.info(f"[TestWriter]   Response preview: {content[:200]}...")
                         error_history.append("No Solidity code returned by LLM")
                         continue
 
+                    print(f"  [TestWriter] Extracted test code: {len(test_code_generated)} chars, {test_code_generated.count(chr(10))+1} lines")
+                    funcs = re.findall(r'function\s+(\w+)\s*\(', test_code_generated)
+                    print(f"  [TestWriter] Functions found: {funcs}")
+
                     if not self._has_exact_test_exploit(test_code_generated):
+                        print(f"  [TestWriter] SKIP: Missing 'function test_exploit()' — retrying")
                         logger.info(f"[TestWriter] Attempt {attempts}: Missing 'function test_exploit()' in generated code.")
-                        # Show function signatures that WERE generated
-                        funcs = re.findall(r'function\s+(\w+)\s*\(', test_code_generated)
                         if funcs:
                             logger.info(f"[TestWriter]   Found functions: {funcs}")
                         error_history.append("Generated test must include function test_exploit() exactly.")
@@ -796,13 +834,12 @@ class TestWriterWorker(WorkerAgent):
                     sandbox.write_test_file(test_file, test_code_generated)
 
                     # ── Compile & Test in one step ──────────────────
-                    # forge test compiles only what the test needs (not
-                    # the entire repo), avoiding multi-pragma collateral
-                    # failures on projects like Ethernaut.
-                    test_res = sandbox.run(
+                    forge_cmd = (
                         "forge test --match-test test_exploit -vvv"
                         " --ignored-error-codes 8429 --ignored-error-codes 2424"
                     )
+                    print(f"  [TestWriter] Running forge test...")
+                    test_res = sandbox.run(forge_cmd)
                     test_logs = (test_res.stdout or "") + "\n" + (test_res.stderr or "")
 
                     # Distinguish compilation failure from test failure
@@ -814,7 +851,6 @@ class TestWriterWorker(WorkerAgent):
 
                     if not test_res.success and is_compile_error:
                         err = test_logs[:1200]
-                        # Filter out noise: keep only Error lines
                         err_lines = [
                             ln for ln in err.splitlines()
                             if "Error" in ln or "error" in ln.lower()
@@ -822,6 +858,9 @@ class TestWriterWorker(WorkerAgent):
                             or ln.strip().startswith("|")
                         ]
                         short_err = "\n".join(err_lines[:15]) if err_lines else err[:400]
+                        print(f"  [TestWriter] COMPILE FAILED (attempt {attempts}):")
+                        for line in short_err.splitlines()[:10]:
+                            print(f"    {line}")
                         logger.info(f"[TestWriter] Attempt {attempts} build error:\n{short_err}")
                         error_history.append(f"Build Failed:\n{short_err}")
                         compiled = False
@@ -834,9 +873,21 @@ class TestWriterWorker(WorkerAgent):
                     passed_by_logs = "[PASS]" in test_logs or "exploit succeeded" in test_logs.lower()
                     exploit_success = test_res.success and passed_by_logs
 
+                    print(f"  [TestWriter] COMPILED OK  |  forge_success={test_res.success}  |  [PASS] in logs={passed_by_logs}  |  exploit_success={exploit_success}")
+
                     if exploit_success:
+                        print(f"  [TestWriter] EXPLOIT PROVEN on attempt {attempts}!")
+                        # Show relevant test output
+                        for line in test_logs.splitlines():
+                            if "[PASS]" in line or "test_exploit" in line:
+                                print(f"    {line.strip()}")
                         break
 
+                    # Show why test failed even though it compiled
+                    print(f"  [TestWriter] Test compiled but exploit FAILED")
+                    fail_lines = [ln for ln in test_logs.splitlines() if "[FAIL]" in ln or "Error" in ln or "revert" in ln.lower()]
+                    for line in fail_lines[:5]:
+                        print(f"    {line.strip()}")
                     error_history.append(f"Test compiled but exploit check failed.\nLogs:\n{test_logs[:400]}")
                     logger.info(f"[TestWriter] Attempt {attempts}: Test compiled but exploit FAILED.")
                     logger.info(f"[TestWriter]   test_res.success={test_res.success}, passed_by_logs={passed_by_logs}")
@@ -845,9 +896,11 @@ class TestWriterWorker(WorkerAgent):
 
                 except asyncio.TimeoutError:
                     msg = f"LLM call timed out after {self.LLM_TIMEOUT}s"
+                    print(f"  [TestWriter] TIMEOUT: {msg}")
                     logger.info(f"[TestWriterWorker] {msg}")
                     error_history.append(msg)
                 except Exception as e:
+                    print(f"  [TestWriter] ERROR: {e}")
                     logger.info(f"[TestWriterWorker] LLM call failed: {e}")
                     error_history.append(str(e))
 
@@ -858,8 +911,11 @@ class TestWriterWorker(WorkerAgent):
                     proven_dir = Path("proven_exploits")
                     proven_dir.mkdir(exist_ok=True)
                     task_slug = task.task_id.replace("/", "_").replace("::", "_")[:60]
-                    (proven_dir / f"{task_slug}.t.sol").write_text(test_code_generated, encoding='utf-8')
+                    artifact_path = proven_dir / f"{task_slug}.t.sol"
+                    artifact_path.write_text(test_code_generated, encoding='utf-8')
+                    print(f"  [TestWriter] Saved proven exploit artifact: {artifact_path}")
                 except Exception as e:
+                    print(f"  [TestWriter] Warning: could not save proven exploit artifact: {e}")
                     logger.info(f"[TestWriter] Warning: could not save proven exploit artifact: {e}")
             sandbox.cleanup()
 
@@ -871,6 +927,15 @@ class TestWriterWorker(WorkerAgent):
         else:
             adjustment = -40
         final_confidence = max(0, min(100, original_conf + adjustment))
+
+        print(f"  [TestWriter] === RESULT === {finding.affected_contract}::{finding.affected_function}")
+        print(f"  [TestWriter]   Attempts: {attempts}/{self.MAX_ATTEMPTS}")
+        print(f"  [TestWriter]   Compiled: {compiled}  |  Exploit proven: {exploit_success}")
+        print(f"  [TestWriter]   Confidence: {original_conf} -> {final_confidence} (adjustment={adjustment:+d})")
+        print(f"  [TestWriter]   Used real source: {bool(real_sources_full)}")
+        if error_history:
+            print(f"  [TestWriter]   Last error: {error_history[-1][:150]}")
+        print(f"{'='*70}\n")
 
         return WorkerOutput(
             worker_type=self.get_worker_type(),

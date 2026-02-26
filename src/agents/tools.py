@@ -100,6 +100,9 @@ def create_coordinator_tools(graph: nx.DiGraph) -> List[StructuredTool]:
                     "contract": h.contract,
                     "function": h.function,
                     "risk_score": h.risk_score,
+                    "structural_score": h.structural_score,
+                    "exploitability_score": h.exploitability_score,
+                    "impact_score": h.impact_score,
                     "priority": h.priority,
                     "risk_categories": h.risk_categories,
                 }

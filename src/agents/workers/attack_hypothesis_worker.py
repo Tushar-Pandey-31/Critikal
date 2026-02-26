@@ -228,8 +228,28 @@ class AttackHypothesisWorker(WorkerAgent):
             "is_unprotected_mutator": hotspot.signals.get("is_unprotected_mutator", False),
             "can_escalate_privileges": hotspot.signals.get("can_escalate_privileges", False),
             "state_write_after_external_call": hotspot.signals.get("state_write_after_external_call", False),
+            "state_write_after_reentrant_call": hotspot.signals.get("state_write_after_reentrant_call", False),
+            "cei_violation_only": hotspot.signals.get("cei_violation_only", False),
             "makes_external_call": hotspot.signals.get("makes_external_call", False),
             "reachable_from_external_entry": hotspot.signals.get("reachable_from_external_entry", True),
+            "has_array_length_mutation": hotspot.signals.get("has_array_length_mutation", False),
+            "delegatecall_storage_risk": hotspot.signals.get("delegatecall_storage_risk", False),
+            "uses_spot_price_oracle": hotspot.signals.get("uses_spot_price_oracle", False),
+            "oracle_sources": hotspot.signals.get("oracle_sources", []),
+            "oracle_manipulation_risk": hotspot.signals.get("oracle_manipulation_risk", False),
+            "twap_window_short": hotspot.signals.get("twap_window_short", False),
+            "division_before_multiplication": hotspot.signals.get("division_before_multiplication", False),
+            "unchecked_with_state_write": hotspot.signals.get("unchecked_with_state_write", False),
+            "unsafe_type_cast": hotspot.signals.get("unsafe_type_cast", False),
+            "uses_signature_validation": hotspot.signals.get("uses_signature_validation", False),
+            "signature_includes_chainid": hotspot.signals.get("signature_includes_chainid", False),
+            "signature_includes_nonce": hotspot.signals.get("signature_includes_nonce", False),
+            "signature_marks_used": hotspot.signals.get("signature_marks_used", False),
+            "signature_replay_risk": hotspot.signals.get("signature_replay_risk", False),
+            "contract_tier": hotspot.tier,
+            "structural_score": hotspot.structural_score,
+            "exploitability_score": hotspot.exploitability_score,
+            "impact_score": hotspot.impact_score,
         }
 
         if hotspot.signals.get("can_escalate_privileges"):
@@ -252,9 +272,18 @@ class AttackHypothesisWorker(WorkerAgent):
         source_code = fn_ctx.get("source_code") or fn_ctx.get("code", "Source code not available")
         signals = graph_context.get("signals_summary", {})
 
-        # Determine expected vulnerability class from signals
         expected_class = "unknown"
-        if signals.get("state_write_after_external_call") or signals.get("reentrancy_risk"):
+        if signals.get("oracle_manipulation_risk"):
+            expected_class = "oracle_manipulation"
+        elif signals.get("signature_replay_risk"):
+            expected_class = "signature_replay"
+        elif signals.get("division_before_multiplication") or signals.get("unchecked_with_state_write"):
+            expected_class = "arithmetic_precision"
+        elif signals.get("delegatecall_storage_risk"):
+            expected_class = "delegatecall_storage_collision"
+        elif signals.get("has_array_length_mutation"):
+            expected_class = "array_length_manipulation"
+        elif signals.get("state_write_after_external_call") or signals.get("reentrancy_risk"):
             expected_class = "reentrancy or cei_violation"
         elif signals.get("is_unprotected_mutator"):
             expected_class = "unprotected_mutator"
@@ -265,7 +294,7 @@ class AttackHypothesisWorker(WorkerAgent):
 Contract: {hotspot.contract}
 Function: {hotspot.function}
 Node ID (for reference): {hotspot.node_id}
-Risk Score: {hotspot.risk_score}
+Risk Score: {hotspot.risk_score} (structural={signals.get("structural_score", "?")}, exploitability={signals.get("exploitability_score", "?")}, impact={signals.get("impact_score", "?")})
 Expected Vulnerability Class (from static analysis): {expected_class}
 
 ## Source Code
@@ -274,11 +303,68 @@ Expected Vulnerability Class (from static analysis): {expected_class}
 ## Graph Signals (deterministic — trust these completely)
 - reentrancy_risk: {signals.get("reentrancy_risk")}
 - state_write_after_external_call: {signals.get("state_write_after_external_call")}
+- state_write_after_reentrant_call: {signals.get("state_write_after_reentrant_call")}
+- cei_violation_only: {signals.get("cei_violation_only")}
 - is_unprotected_mutator: {signals.get("is_unprotected_mutator")}
 - can_escalate_privileges: {signals.get("can_escalate_privileges")}
 - makes_external_call: {signals.get("makes_external_call")}
 - reachable_from_external_entry: {signals.get("reachable_from_external_entry")}
+- has_array_length_mutation: {signals.get("has_array_length_mutation")}
+- delegatecall_storage_risk: {signals.get("delegatecall_storage_risk")}
+- oracle_manipulation_risk: {signals.get("oracle_manipulation_risk")}
+- signature_replay_risk: {signals.get("signature_replay_risk")}
+- division_before_multiplication: {signals.get("division_before_multiplication")}
+- unchecked_with_state_write: {signals.get("unchecked_with_state_write")}
+- contract_tier: {signals.get("contract_tier", "INFRA")}
+"""
 
+        if signals.get("oracle_manipulation_risk"):
+            oracle_src = signals.get("oracle_sources", [])
+            user_content += f"""
+## ORACLE MANIPULATION SIGNAL DETECTED
+This function reads a spot price oracle ({oracle_src}) that can be moved within a single transaction using a flash loan.
+
+Standard attack:
+1. Attacker flash loans a large amount
+2. Attacker swaps to move the spot price in target direction
+3. Attacker calls this function — it reads the manipulated price
+4. Attacker profits from the price-dependent decision
+5. Attacker repays flash loan
+
+Classify as ORACLE_MANIPULATION. Confidence >= 70 if function makes a price-dependent decision (liquidation threshold, swap pricing, collateral valuation, reward calculation).
+"""
+
+        if signals.get("signature_replay_risk"):
+            user_content += f"""
+## SIGNATURE REPLAY SIGNAL DETECTED
+This function validates an ECDSA signature but is missing replay protection.
+
+Missing protections:
+- Chain ID included: {signals.get("signature_includes_chainid")}
+- Nonce included: {signals.get("signature_includes_nonce")}
+- Marks signature as used: {signals.get("signature_marks_used")}
+
+Attack variants based on what's missing:
+- Missing chain ID: attacker replays a valid mainnet signature on a fork/testnet/L2
+- Missing nonce: attacker replays the same signature multiple times on the same chain
+- Missing mark-as-used: signature can be reused indefinitely until state changes
+
+Classify as SIGNATURE_REPLAY. Confidence >= 75.
+"""
+
+        if signals.get("division_before_multiplication") or signals.get("unchecked_with_state_write"):
+            user_content += """
+## ARITHMETIC PRECISION SIGNAL DETECTED
+This function contains arithmetic patterns that may cause exploitable precision loss or overflow.
+
+Detected patterns:
+- Division before multiplication (precision loss via integer truncation)
+- Unchecked arithmetic with state write (overflow/underflow reintroduced)
+
+Classify as ARITHMETIC_PRECISION. Check if the precision loss or overflow can be triggered by attacker-controlled inputs and whether it affects financial calculations.
+"""
+
+        user_content += f"""
 ## Internal Calls Made by This Function
 {self._format_list(graph_context.get("internal_calls", []))}
 
