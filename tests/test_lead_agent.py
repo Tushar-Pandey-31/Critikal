@@ -123,28 +123,27 @@ def test_finding_priority_sorts_by_confidence_then_severity():
 
     low = Finding(
         id="1", hotspot_node_id="A::a", vulnerability_class="x", title="", hypothesis="",
-        evidence_nodes=[], attack_path=[], status=FindingStatus.DRAFT, confidence=70,
-        impact="", preconditions=[], affected_contract="A", affected_function="a",
-        severity_estimate="MEDIUM", severity="MEDIUM",
+        evidence_nodes=[], attack_path=[], status=FindingStatus.UNCONFIRMED, confidence=70,
+        impact="", affected_contract="A", affected_function="a",
+        severity_estimate="MEDIUM",
     )
     high = Finding(
         id="2", hotspot_node_id="B::b", vulnerability_class="x", title="", hypothesis="",
-        evidence_nodes=[], attack_path=[], status=FindingStatus.DRAFT, confidence=90,
-        impact="", preconditions=[], affected_contract="B", affected_function="b",
-        severity_estimate="HIGH", severity="HIGH",
+        evidence_nodes=[], attack_path=[], status=FindingStatus.UNCONFIRMED, confidence=90,
+        impact="", affected_contract="B", affected_function="b",
+        severity_estimate="HIGH",
     )
     mid = Finding(
         id="3", hotspot_node_id="C::c", vulnerability_class="x", title="", hypothesis="",
-        evidence_nodes=[], attack_path=[], status=FindingStatus.DRAFT, confidence=80,
-        impact="", preconditions=[], affected_contract="C", affected_function="c",
-        severity_estimate="CRITICAL", severity="CRITICAL",
+        evidence_nodes=[], attack_path=[], status=FindingStatus.UNCONFIRMED, confidence=80,
+        impact="", affected_contract="C", affected_function="c",
+        severity_estimate="CRITICAL",
     )
-    # Same confidence: CRITICAL before HIGH
     same_conf_high = Finding(
         id="4", hotspot_node_id="D::d", vulnerability_class="x", title="", hypothesis="",
-        evidence_nodes=[], attack_path=[], status=FindingStatus.DRAFT, confidence=80,
-        impact="", preconditions=[], affected_contract="D", affected_function="d",
-        severity_estimate="HIGH", severity="HIGH",
+        evidence_nodes=[], attack_path=[], status=FindingStatus.UNCONFIRMED, confidence=80,
+        impact="", affected_contract="D", affected_function="d",
+        severity_estimate="HIGH",
     )
     findings = [low, high, mid, same_conf_high]
     sorted_findings = sorted(findings, key=_finding_priority)

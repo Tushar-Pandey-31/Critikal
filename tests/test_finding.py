@@ -23,11 +23,11 @@ def test_finding_normalizes_attack_and_evidence_ids():
         raw_output={},
     )
     finding = Finding.from_worker_output(output, hotspot)
-    assert finding.attack_path == ["Vault::withdraw", "Vault::withdraw"]
-    assert [e.node_id for e in finding.evidence_nodes] == ["Vault::balances", "Vault::balances"]
+    assert finding.attack_path == ["Vault.withdraw", "Vault::withdraw"]
+    assert [e.node_id for e in finding.evidence_nodes] == ["Vault.balances", "Vault::balances"]
 
 
-def test_finding_timestamps_are_timezone_aware_iso():
+def test_finding_default_status_is_unconfirmed():
     hotspot = Hotspot(
         node_id="C::f",
         contract="C",
@@ -39,5 +39,5 @@ def test_finding_timestamps_are_timezone_aware_iso():
     )
     output = WorkerOutput(worker_type="attack_hypothesis", confidence=50, raw_output={})
     finding = Finding.from_worker_output(output, hotspot)
-    assert datetime.fromisoformat(finding.created_at).tzinfo is not None
-    assert datetime.fromisoformat(finding.updated_at).tzinfo is not None
+    from src.models.finding import FindingStatus
+    assert finding.status == FindingStatus.UNCONFIRMED

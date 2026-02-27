@@ -293,6 +293,29 @@ class SandboxManager:
             print(f"  [Sandbox] RUN ERROR: {cmd}  {e}  after {elapsed:.1f}s")
             return Result(success=False, stdout="", stderr=str(e))
 
+    def setup_bridge_mode_toml(self) -> None:
+        """
+        Write a foundry.toml for bridge mode: no global solc pin so Foundry
+        auto-detects per-file pragmas. Legacy contracts compile with their
+        own pragma, test files compile with ^0.8.0. deployCode() reads
+        from compiled artifacts in out/, so src must point to contract dir.
+        """
+        src_dir = "contracts" if (self.tmp_dir / "contracts").is_dir() else "src"
+        toml_content = f"""\
+[profile.default]
+src = "{src_dir}"
+test = "test"
+out = "out"
+libs = ["lib"]
+ignored_error_codes = [8429, 2424, 3628, 5740]
+
+[profile.default.fuzz]
+runs = 10
+"""
+        toml_path = self.tmp_dir / "foundry.toml"
+        toml_path.write_text(toml_content)
+        print(f"  [Sandbox] Wrote bridge-mode foundry.toml (src={src_dir}, no global solc pin)")
+
     def cleanup(self) -> None:
         print(f"  [Sandbox] Cleaning up {self.tmp_dir}")
         try:

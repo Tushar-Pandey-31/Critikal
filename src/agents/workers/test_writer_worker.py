@@ -11,7 +11,15 @@ logger = logging.getLogger(__name__)
 from src.agents.base_worker import WorkerAgent, WorkerTask, WorkerOutput
 from src.models.finding import Finding
 from src.agents.workers.test_writer_sandbox import SandboxManager
-from src.agents.workers.test_writer_prompts import TEST_WRITER_SYSTEM_PROMPT, TEST_WRITER_REAL_SOURCE_SYSTEM_PROMPT
+from src.agents.workers.test_writer_prompts import (
+    TEST_WRITER_SYSTEM_PROMPT,
+    TEST_WRITER_REAL_SOURCE_SYSTEM_PROMPT,
+    BRIDGE_MODE_SYSTEM_PROMPT,
+)
+from src.agents.workers.bridge_interface_generator import (
+    generate_bridge_interfaces,
+    resolve_deploy_code_path,
+)
 
 
 class TestWriterWorker(WorkerAgent):
@@ -219,6 +227,94 @@ class TestWriterWorker(WorkerAgent):
                 if version_str not in ("", ">=0.5.0", ">=0.4.0"):
                     return version_str
         return None
+
+    @staticmethod
+    def _parse_pragma_major_minor(pragma_str: str) -> tuple[int, int]:
+        """Extract (major, minor) from pragma strings like '^0.5.16', '>=0.6.0'."""
+        match = re.search(r'(\d+)\.(\d+)', pragma_str)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+        return 0, 8
+
+    def _build_bridge_prompt(
+        self,
+        finding: Finding,
+        relevant_code: dict[str, str],
+        error_history: list[str],
+        bridge_interfaces_src: str,
+        deploy_paths: dict[str, str],
+        contract_signatures: dict[str, str] | None = None,
+        real_sources: dict[str, str] | None = None,
+        skip_rag: bool = False,
+    ) -> list[dict[str, str]]:
+        """Build the LLM prompt for bridge mode (legacy Solidity repos)."""
+        error_context = self._format_error_history(error_history)
+
+        source_section = ""
+
+        # Deploy path hints
+        source_section += "\n=== DEPLOY PATHS (use these exact strings in deployCode()) ===\n"
+        for contract_name, path in sorted(deploy_paths.items()):
+            source_section += f'  deployCode("{path}")  // deploys {contract_name}\n'
+        source_section += "\n"
+
+        # Bridge interfaces content
+        source_section += "\n=== BridgeInterfaces.sol (already written to test/ — just import \"./BridgeInterfaces.sol\") ===\n"
+        source_section += bridge_interfaces_src + "\n"
+
+        # Starter template
+        target_contract = finding.affected_contract
+        target_path = deploy_paths.get(target_contract, f"contracts/{target_contract}.sol:{target_contract}")
+        source_section += "\n=== STARTER TEMPLATE (use this structure) ===\n"
+        source_section += f"pragma solidity ^0.8.0;\n"
+        source_section += f'import "forge-std/Test.sol";\n'
+        source_section += f'import "./BridgeInterfaces.sol";\n\n'
+        source_section += f"contract ExploitTest is Test {{\n"
+        source_section += f"    I{target_contract} target;\n\n"
+        source_section += f"    function setUp() public {{\n"
+        source_section += f'        address deployed = deployCode("{target_path}");\n'
+        source_section += f"        target = I{target_contract}(deployed);\n"
+        source_section += f"    }}\n\n"
+        source_section += f"    function test_exploit() public {{\n"
+        source_section += f"        // your exploit here\n"
+        source_section += f"    }}\n"
+        source_section += f"}}\n\n"
+
+        # Contract signatures for reference
+        if contract_signatures:
+            source_section += "\n=== CONTRACT SIGNATURES (for reference — call via interface) ===\n"
+            for fn_name, sig in sorted(contract_signatures.items()):
+                source_section += f"  {fn_name}: {sig}\n"
+            source_section += "\n"
+
+        # Real source as READ-ONLY context (not for import)
+        if real_sources:
+            source_section += "\n=== REAL CONTRACT SOURCE (READ-ONLY CONTEXT — do NOT import these files) ===\n"
+            source_section += "Use this to understand the contract logic, constructor args, and function behavior.\n\n"
+            for rel_path, code in real_sources.items():
+                source_section += f"// File: {rel_path}\n{code}\n\n"
+
+        rag_context = "" if skip_rag else self._fetch_rag_context(finding)
+        error_rag = "" if skip_rag else (self._fetch_error_rag_context(error_history) if error_history else "")
+
+        user_content = (
+            f"Vulnerability Class: {finding.vulnerability_class}\n"
+            f"Affected Contract: {finding.affected_contract}\n"
+            f"Affected Function: {finding.affected_function}\n"
+            f"Hypothesis: {finding.hypothesis}\n"
+            f"Attack Path: {' -> '.join(finding.attack_path)}\n"
+            f"Impact: {finding.impact}\n"
+            f"{source_section}"
+            f"{rag_context}\n"
+            f"{error_rag}\n"
+            f"{error_context}\n\n"
+            "Generate a complete Foundry test using the VERSION BRIDGE PATTERN that proves this vulnerability."
+        )
+
+        return [
+            {"role": "system", "content": BRIDGE_MODE_SYSTEM_PROMPT},
+            {"role": "user", "content": user_content}
+        ]
 
     def _collect_repo_sources(self, finding: Finding, repo_path: str | None, remappings: dict[str, str], _lib_imports_out: set[str] | None = None) -> dict[str, str]:
         if not repo_path:
@@ -730,6 +826,49 @@ class TestWriterWorker(WorkerAgent):
             print(f"  [TestWriter] No pragma detected — LLM will use default")
             logger.info(f"[TestWriter] No pragma detected — LLM will use default")
 
+        # Determine if we need bridge mode (legacy Solidity < 0.8)
+        is_legacy = False
+        bridge_interfaces_src = ""
+        deploy_paths: dict[str, str] = {}
+        if target_pragma:
+            major, minor = self._parse_pragma_major_minor(target_pragma)
+            is_legacy = major == 0 and minor < 8
+
+        if is_legacy:
+            print(f"  [TestWriter] BRIDGE MODE activated (pragma {target_pragma} is pre-0.8)")
+
+            # Collect signatures for all contracts referenced in the finding
+            from src.utils.graph_queries import get_contract_signatures as _get_sigs
+            bridge_contracts = [finding.affected_contract]
+            if self.graph is not None:
+                for node_id, nd in self.graph.nodes(data=True):
+                    if nd.get("type") == "contract" and nd.get("contract") == finding.affected_contract:
+                        continue
+                    if nd.get("type") == "function" and nd.get("contract") and nd.get("contract") != finding.affected_contract:
+                        cname = nd["contract"]
+                        if cname not in bridge_contracts:
+                            bridge_contracts.append(cname)
+                            if len(bridge_contracts) >= 10:
+                                break
+
+            all_sigs: dict[str, dict[str, str]] = {}
+            for cname in bridge_contracts:
+                if self.graph is not None:
+                    sigs = _get_sigs(self.graph, cname)
+                    if sigs:
+                        all_sigs[cname] = sigs
+
+            bridge_interfaces_src = generate_bridge_interfaces(
+                bridge_contracts, all_sigs, graph=self.graph,
+            )
+            for cname in bridge_contracts:
+                deploy_paths[cname] = resolve_deploy_code_path(cname, repo_manifest)
+
+            print(f"  [TestWriter] Generated bridge interfaces for {len(bridge_contracts)} contracts")
+            print(f"  [TestWriter] Deploy paths: {deploy_paths}")
+        else:
+            print(f"  [TestWriter] Standard mode (pragma {target_pragma or 'default'} is 0.8+)")
+
         # Pre-analyze repo for naming conflicts and abstract contracts.
         repo_conflicts = self._detect_repo_contract_conflicts(
             repo_path if real_sources_full else None
@@ -759,29 +898,71 @@ class TestWriterWorker(WorkerAgent):
                 logger.info("[TestWriter] forge-std missing — forcing lib/ copy")
                 sandbox._ensure_foundry_deps()
 
+            # Bridge mode: write BridgeInterfaces.sol and override foundry.toml
+            if is_legacy:
+                sandbox.setup_bridge_mode_toml()
+                bridge_path = sandbox.tmp_dir / "test" / "BridgeInterfaces.sol"
+                bridge_path.parent.mkdir(parents=True, exist_ok=True)
+                bridge_path.write_text(bridge_interfaces_src)
+                print(f"  [Sandbox] Wrote BridgeInterfaces.sol ({len(bridge_interfaces_src)} chars)")
+
             print(f"  [TestWriter] Starting attempt loop (max={self.MAX_ATTEMPTS}, LLM timeout={self.LLM_TIMEOUT}s)")
 
             while attempts < self.MAX_ATTEMPTS:
                 attempts += 1
-                print(f"\n  [TestWriter] ── Attempt {attempts}/{self.MAX_ATTEMPTS} ──")
+                print(f"\n  [TestWriter] ── Attempt {attempts}/{self.MAX_ATTEMPTS} {'(BRIDGE)' if is_legacy else ''} ──")
                 sources_for_attempt = real_sources_full if attempts >= 3 else real_sources_minimal
                 source_mode = "FULL" if attempts >= 3 else "MINIMAL"
                 print(f"  [TestWriter] Source mode: {source_mode} ({len(sources_for_attempt) if sources_for_attempt else 0} files)")
                 logger.info(f"[TestWriter] Attempt {attempts}/{self.MAX_ATTEMPTS} building prompt...")
 
-                prompt = self._build_prompt(
-                    finding,
-                    relevant_code,
-                    error_history,
-                    real_sources=sources_for_attempt,
-                    remappings=remappings,
-                    contract_signatures=contract_signatures,
-                    repo_manifest=repo_manifest,
-                    skip_rag=(attempts == 1),
-                    import_cheatsheet=import_cheatsheet,
-                    repo_conflicts=repo_conflicts,
-                    target_pragma=target_pragma,
-                )
+                # Bridge-aware error escalation: if LLM broke rules, inject correction
+                if is_legacy and error_history:
+                    last_err = error_history[-1]
+                    if "incompatible versions" in last_err.lower():
+                        error_history[-1] = (
+                            "CRITICAL: You imported a legacy .sol file directly. This is FORBIDDEN in bridge mode.\n"
+                            "REMOVE ALL imports from contracts/. Use ONLY forge-std/Test.sol and ./BridgeInterfaces.sol.\n"
+                            "Deploy legacy contracts with deployCode(), NOT import.\n\n" + last_err
+                        )
+                    elif "BridgeInterfaces.sol" in last_err:
+                        error_history[-1] = (
+                            "BridgeInterfaces.sol has a compilation error. Do NOT import BridgeInterfaces.sol.\n"
+                            "Instead, define all interfaces you need INLINE in your test file (pragma ^0.8.0).\n"
+                            "Only import forge-std/Test.sol. Define minimal interfaces for the functions you call.\n\n"
+                            + last_err
+                        )
+                    elif "DeclarationError" in last_err:
+                        error_history[-1] = (
+                            "A function or type is missing from BridgeInterfaces.sol. "
+                            "Define any missing interfaces inline in your test file (pragma ^0.8.0).\n\n" + last_err
+                        )
+
+                if is_legacy:
+                    prompt = self._build_bridge_prompt(
+                        finding,
+                        relevant_code,
+                        error_history,
+                        bridge_interfaces_src=bridge_interfaces_src,
+                        deploy_paths=deploy_paths,
+                        contract_signatures=contract_signatures,
+                        real_sources=sources_for_attempt,
+                        skip_rag=(attempts == 1),
+                    )
+                else:
+                    prompt = self._build_prompt(
+                        finding,
+                        relevant_code,
+                        error_history,
+                        real_sources=sources_for_attempt,
+                        remappings=remappings,
+                        contract_signatures=contract_signatures,
+                        repo_manifest=repo_manifest,
+                        skip_rag=(attempts == 1),
+                        import_cheatsheet=import_cheatsheet,
+                        repo_conflicts=repo_conflicts,
+                        target_pragma=target_pragma,
+                    )
                 prompt_chars = sum(len(m.get("content", "")) for m in prompt)
                 print(f"  [TestWriter] Prompt built: {len(prompt)} messages, {prompt_chars} total chars (RAG={'skip' if attempts==1 else 'on'})")
 
@@ -824,10 +1005,11 @@ class TestWriterWorker(WorkerAgent):
                         error_history.append("Generated test must include function test_exploit() exactly.")
                         continue
 
-                    test_code_generated = self._auto_correct_imports(
-                        test_code_generated, sandbox, remappings,
-                        collected_paths=list(sources_for_attempt.keys()) if sources_for_attempt else None,
-                    )
+                    if not is_legacy:
+                        test_code_generated = self._auto_correct_imports(
+                            test_code_generated, sandbox, remappings,
+                            collected_paths=list(sources_for_attempt.keys()) if sources_for_attempt else None,
+                        )
 
                     test_path = sandbox.get_test_path()
                     test_file = f"{test_path}/ExploitTest.t.sol"
@@ -847,17 +1029,22 @@ class TestWriterWorker(WorkerAgent):
                         "Compiler run failed" in test_logs
                         or "Error (" in test_logs
                         or "ParserError" in test_logs
+                        or "Found incompatible versions" in test_logs
+                        or "Error: Compilation failed" in test_logs
+                        or "Error: Solc" in test_logs
                     )
 
                     if not test_res.success and is_compile_error:
-                        err = test_logs[:1200]
                         err_lines = [
-                            ln for ln in err.splitlines()
-                            if "Error" in ln or "error" in ln.lower()
+                            ln for ln in test_logs.splitlines()
+                            if ("Error" in ln and "Warning" not in ln)
                             or ln.strip().startswith("-->")
                             or ln.strip().startswith("|")
                         ]
-                        short_err = "\n".join(err_lines[:15]) if err_lines else err[:400]
+                        if not err_lines:
+                            err_lines = [ln for ln in test_logs[:2000].splitlines()
+                                         if ln.strip() and "Warning:" not in ln]
+                        short_err = "\n".join(err_lines[:20]) if err_lines else test_logs[:600]
                         print(f"  [TestWriter] COMPILE FAILED (attempt {attempts}):")
                         for line in short_err.splitlines()[:10]:
                             print(f"    {line}")
@@ -923,13 +1110,13 @@ class TestWriterWorker(WorkerAgent):
         if compiled and exploit_success:
             adjustment = 60
         elif compiled:
-            adjustment = 20
+            adjustment = 0
         else:
-            adjustment = -40
+            adjustment = -10
         final_confidence = max(0, min(100, original_conf + adjustment))
 
         print(f"  [TestWriter] === RESULT === {finding.affected_contract}::{finding.affected_function}")
-        print(f"  [TestWriter]   Attempts: {attempts}/{self.MAX_ATTEMPTS}")
+        print(f"  [TestWriter]   Mode: {'BRIDGE' if is_legacy else 'STANDARD'}  |  Attempts: {attempts}/{self.MAX_ATTEMPTS}")
         print(f"  [TestWriter]   Compiled: {compiled}  |  Exploit proven: {exploit_success}")
         print(f"  [TestWriter]   Confidence: {original_conf} -> {final_confidence} (adjustment={adjustment:+d})")
         print(f"  [TestWriter]   Used real source: {bool(real_sources_full)}")
@@ -949,5 +1136,6 @@ class TestWriterWorker(WorkerAgent):
                 "attempts": attempts,
                 "last_error": error_history[-1] if error_history else None,
                 "used_real_source": bool(real_sources_full),
+                "bridge_mode": is_legacy,
             }
         )

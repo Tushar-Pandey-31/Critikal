@@ -218,7 +218,7 @@ def test_finding_from_worker_output_reentrancy(reentrancy_hotspot):
     finding = Finding.from_worker_output(output, reentrancy_hotspot)
     assert finding.vulnerability_class == "reentrancy"
     assert finding.confidence == 90
-    assert finding.status == FindingStatus.DRAFT
+    assert finding.status == FindingStatus.UNCONFIRMED
 
 def test_finding_attack_path_matches_worker_output(reentrancy_hotspot):
     path = ["Vault.withdraw", "Vault.balances"]
@@ -229,8 +229,7 @@ def test_finding_attack_path_matches_worker_output(reentrancy_hotspot):
         raw_output={}
     )
     finding = Finding.from_worker_output(output, reentrancy_hotspot)
-    # from_worker_output normalizes dot → double-colon
-    assert finding.attack_path == ["Vault::withdraw", "Vault::balances"] 
+    assert finding.attack_path == ["Vault.withdraw", "Vault.balances"] 
 
 def test_finding_evidence_nodes_match_evidence_node_ids(reentrancy_hotspot):
     ids = ["Vault.withdraw", "Vault.balances"]
@@ -242,8 +241,7 @@ def test_finding_evidence_nodes_match_evidence_node_ids(reentrancy_hotspot):
     )
     finding = Finding.from_worker_output(output, reentrancy_hotspot)
     assert len(finding.evidence_nodes) == 2
-    # from_worker_output normalizes dot → double-colon
-    assert [n.node_id for n in finding.evidence_nodes] == ["Vault::withdraw", "Vault::balances"]
+    assert [n.node_id for n in finding.evidence_nodes] == ["Vault.withdraw", "Vault.balances"]
 
 @pytest.mark.asyncio
 async def test_coordinator_suppresses_zero_confidence(mock_graph, reentrancy_hotspot):

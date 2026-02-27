@@ -22,14 +22,12 @@ def dummy_finding():
         hypothesis="Hypothesis text",
         evidence_nodes=[],
         attack_path=["Contract::entry", "Contract::vuln"],
-        status=FindingStatus.DRAFT,
+        status=FindingStatus.UNCONFIRMED,
         confidence=50,
         impact="High",
-        severity="HIGH",
         severity_estimate="HIGH",
         affected_contract="Contract",
-        affected_function="vuln",
-        preconditions=[]
+        affected_function="vuln"
     )
 
 def test_extends_worker_agent(mock_llm):
@@ -123,7 +121,7 @@ async def test_max_attempts_exceeded(mock_llm, dummy_finding, monkeypatch, tmp_p
     assert output.raw_output["attempts"] == 6
     assert output.raw_output["compiled"] is False
     assert "Build Failed" in output.raw_output["last_error"]
-    assert output.confidence == 10  # 50 - 40 = 10
+    assert output.confidence == 40  # 50 - 10 = 40 (compile failure penalty)
 
 @pytest.mark.asyncio
 async def test_extract_code_fallback(mock_llm, dummy_finding, monkeypatch, tmp_path):
@@ -178,7 +176,7 @@ async def test_exploit_fails_but_compiles(mock_llm, dummy_finding, monkeypatch, 
     assert output.raw_output["compiled"] is True
     assert output.raw_output["exploit_success"] is False
     assert "exploit check failed" in output.raw_output["last_error"]
-    assert output.confidence == 70  # 50 + 20 = 70
+    assert output.confidence == 50  # 50 + 0 = 50 (compiled but exploit not proven = no boost)
 
 @pytest.mark.asyncio
 async def test_missing_test_code_key(mock_llm, dummy_finding, monkeypatch, tmp_path):

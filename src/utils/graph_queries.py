@@ -480,6 +480,392 @@ class GraphQueries:
             })
         return results
 
+    # ════════════════════════════════════════════════════════════
+    #  Dev Story 1 — Guard & Access Pattern Precision Queries
+    # ════════════════════════════════════════════════════════════
+
+    def get_guarded_initializers(self, contract_name: str | None = None) -> List[Dict[str, Any]]:
+        """Returns functions with detected initializer guards."""
+        results = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            if not node_data.get("has_initializer_guard"):
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+            results.append({
+                "function_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "has_initializer_guard": True,
+                "safe_init_pattern": node_data.get("safe_init_pattern", False),
+                "has_initializer_modifier": node_data.get("has_initializer_modifier", False),
+                "is_protected": node_data.get("is_protected", False),
+            })
+        return results
+
+    def get_access_control_types(self, contract_name: str | None = None) -> List[Dict[str, Any]]:
+        """Returns functions annotated with their access_control_type classification."""
+        results = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+            ac_type = node_data.get("access_control_type", "none")
+            if ac_type == "none":
+                continue
+            results.append({
+                "function_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "access_control_type": ac_type,
+                "require_access_control_targets": node_data.get("require_access_control_targets", []),
+                "modifier_equivalences": node_data.get("modifier_equivalences", {}),
+                "is_protected": node_data.get("is_protected", False),
+            })
+        return results
+
+    def get_modifier_equivalences(self, contract_name: str | None = None) -> List[Dict[str, Any]]:
+        """Returns modifier nodes with their semantic category classification."""
+        results = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "modifier":
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+            results.append({
+                "modifier_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "semantic_category": node_data.get("semantic_category", "custom"),
+                "is_access_control": node_data.get("is_access_control", False),
+            })
+        return results
+
+    def get_safe_functions(self, contract_name: str | None = None) -> List[Dict[str, Any]]:
+        """
+        Returns functions considered safe due to guard patterns.
+        Useful for filtering out false positives from hotspot lists.
+        """
+        results = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+
+            safe_reasons: list[str] = []
+            if node_data.get("safe_init_pattern"):
+                safe_reasons.append("SAFE_INIT_PATTERN")
+            if node_data.get("has_reentrancy_guard"):
+                safe_reasons.append("REENTRANCY_GUARDED")
+            ac_type = node_data.get("access_control_type", "none")
+            if ac_type in ("modifier", "require-based", "both"):
+                safe_reasons.append(f"ACCESS_CONTROLLED({ac_type})")
+
+            if not safe_reasons:
+                continue
+
+            results.append({
+                "function_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "safe_reasons": safe_reasons,
+                "risk_categories": node_data.get("risk_categories", []),
+                "final_score": node_data.get("final_score", 0),
+            })
+        return results
+
+    # ════════════════════════════════════════════════════════════
+    #  Dev Story 2 — Taint & Dataflow Queries
+    # ════════════════════════════════════════════════════════════
+
+    def get_taint_critical_paths(self, contract_name: str | None = None) -> List[Dict[str, Any]]:
+        """Returns functions with taint flows into sensitive storage."""
+        results = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            if not node_data.get("has_taint_risk"):
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+            results.append({
+                "function_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "taint_sources": node_data.get("taint_sources", []),
+                "taint_risk_types": node_data.get("taint_risk_types", []),
+                "taint_critical_paths": node_data.get("taint_critical_paths", []),
+                "taint_risk_score": node_data.get("taint_risk_score", 0),
+                "cross_function_taint_paths": node_data.get("cross_function_taint_paths", []),
+            })
+        results.sort(key=lambda x: x["taint_risk_score"], reverse=True)
+        return results
+
+    def get_storage_sensitivity_tags(self, contract_name: str | None = None) -> List[Dict[str, Any]]:
+        """Returns state variables with sensitivity classifications."""
+        results = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "state_variable":
+                continue
+            if not node_data.get("is_sensitive"):
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+            results.append({
+                "variable_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "sensitivity_tags": node_data.get("sensitivity_tags", []),
+                "sensitivity_tag": node_data.get("sensitivity_tag"),
+                "tainted": node_data.get("tainted", False),
+                "taint_sources": node_data.get("taint_sources", []),
+                "tainted_by_functions": node_data.get("tainted_by_functions", []),
+            })
+        return results
+
+    def get_tainted_variables(self, contract_name: str | None = None) -> List[Dict[str, Any]]:
+        """Returns state variables that receive attacker-controlled data."""
+        results = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "state_variable":
+                continue
+            if not node_data.get("tainted"):
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+            results.append({
+                "variable_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "sensitivity_tags": node_data.get("sensitivity_tags", []),
+                "taint_sources": node_data.get("taint_sources", []),
+                "tainted_by_functions": node_data.get("tainted_by_functions", []),
+            })
+        return results
+
+    def get_taint_risks(
+        self,
+        risk_type: str | None = None,
+        contract_name: str | None = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Returns functions with specific taint risk types.
+
+        risk_type filter: TAINT_ACCOUNTING_RISK, TAINT_CAP_BYPASS,
+        TAINT_REWARD_RISK, TAINT_ACCESS_RISK, TAINT_LIQUIDITY_RISK,
+        UNCHECKED_EXT_RETURN, TAINT_CRITICAL_PATH
+        """
+        results = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            if not node_data.get("has_taint_risk"):
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+            func_risks = node_data.get("taint_risk_types", [])
+            if risk_type and risk_type not in func_risks:
+                continue
+            results.append({
+                "function_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "taint_risk_types": func_risks,
+                "taint_risk_score": node_data.get("taint_risk_score", 0),
+                "tainted_state_writes": node_data.get("tainted_state_writes", []),
+                "unchecked_external_return": node_data.get("unchecked_external_return", False),
+            })
+        results.sort(key=lambda x: x["taint_risk_score"], reverse=True)
+        return results
+
+    # ════════════════════════════════════════════════════════════
+    #  Dev Story 3 — Cross-Function State Transition Queries
+    # ════════════════════════════════════════════════════════════
+
+    def get_state_dependencies(self, contract_name: str | None = None) -> List[Dict[str, Any]]:
+        """Returns STATE_DEPENDENCY edges between functions sharing state."""
+        results = []
+        for src, dst, edge_data in self.graph.edges(data=True):
+            if edge_data.get("relationship") != "STATE_DEPENDENCY":
+                continue
+            src_data = self.graph.nodes.get(src, {})
+            if contract_name and src_data.get("contract") != contract_name:
+                continue
+            results.append({
+                "writer": src,
+                "reader": dst,
+                "shared_variables": edge_data.get("shared_variables", []),
+                "dependency_type": edge_data.get("dependency_type", ""),
+                "sensitivity_overlap": edge_data.get("sensitivity_overlap", []),
+            })
+        return results
+
+    def get_dangerous_sequences(self, contract_name: str | None = None) -> List[Dict[str, Any]]:
+        """Returns functions with dangerous state manipulation sequences."""
+        results = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            if not node_data.get("has_dangerous_sequence"):
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+            results.append({
+                "function_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "dangerous_sequences": node_data.get("dangerous_sequences", []),
+                "sequence_risk_score": node_data.get("sequence_risk_score", 0),
+            })
+        results.sort(key=lambda x: x["sequence_risk_score"], reverse=True)
+        return results
+
+    def get_exploit_chains(
+        self,
+        contract_name: str | None = None,
+        min_length: int = 2,
+    ) -> List[Dict[str, Any]]:
+        """
+        Returns auto-generated exploit chains for ExploitWriter consumption.
+
+        Each chain contains ordered steps with function signatures
+        and roles (MANIPULATE → INTERMEDIATE → EXTRACT).
+        """
+        results = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            if not node_data.get("is_chain_entry"):
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+            for chain in node_data.get("exploit_chains", []):
+                if chain.get("chain_length", 0) < min_length:
+                    continue
+                results.append({
+                    "entry_function": node_id,
+                    "contract": node_data.get("contract"),
+                    "steps": chain.get("steps", []),
+                    "exploit_sequence": chain.get("exploit_sequence", []),
+                    "shared_variables": chain.get("shared_variables", []),
+                    "sensitivity": chain.get("sensitivity", []),
+                    "danger_types": chain.get("danger_types", []),
+                    "chain_length": chain.get("chain_length", 0),
+                    "chain_score": chain.get("chain_score", 0),
+                })
+        results.sort(key=lambda x: x["chain_score"], reverse=True)
+        return results
+
+    # ════════════════════════════════════════════════════════════
+    #  Dev Story 4/5/6 — Accounting, Exploit Target, External Risk Queries
+    # ════════════════════════════════════════════════════════════
+
+    def get_accounting_invariant_risks(
+        self,
+        contract_name: str | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Returns functions flagged by accounting/invariant heuristics."""
+        results = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+
+            has_any = (
+                node_data.get("supply_consistency_issue")
+                or node_data.get("cap_enforcement_issue")
+                or node_data.get("reward_drift_issue")
+                or node_data.get("monotonicity_issue")
+            )
+            if not has_any:
+                continue
+
+            score = (
+                node_data.get("supply_consistency_score", 0)
+                + node_data.get("cap_enforcement_score", 0)
+                + node_data.get("reward_drift_score", 0)
+                + node_data.get("monotonicity_score", 0)
+            )
+            results.append({
+                "function_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "supply_consistency_flags": node_data.get("supply_consistency_flags", []),
+                "cap_enforcement_flags": node_data.get("cap_enforcement_flags", []),
+                "reward_drift_flags": node_data.get("reward_drift_flags", []),
+                "monotonicity_flags": node_data.get("monotonicity_flags", []),
+                "accounting_invariant_score": score,
+            })
+        results.sort(key=lambda x: x["accounting_invariant_score"], reverse=True)
+        return results
+
+    def get_external_call_risks(
+        self,
+        risk_tag: str | None = None,
+        contract_name: str | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Returns functions with external call risk tags (DS6)."""
+        results = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+            if not node_data.get("has_external_call_risk"):
+                continue
+
+            tags = node_data.get("external_risk_tags", [])
+            if risk_tag and risk_tag not in tags:
+                continue
+
+            results.append({
+                "function_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "external_risk_tags": tags,
+                "external_call_risk_score": node_data.get("external_call_risk_score", 0),
+                "state_write_after_external_call": node_data.get("state_write_after_external_call", False),
+                "unchecked_external_return": node_data.get("unchecked_external_return", False),
+            })
+        results.sort(key=lambda x: x["external_call_risk_score"], reverse=True)
+        return results
+
+    def get_exploit_targets(
+        self,
+        min_exploit_score: int = 65,
+        contract_name: str | None = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Returns functions eligible for ExploitWriter based on DS5 scoring.
+        """
+        results = []
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+            exploit_score = node_data.get("exploit_target_score", 0)
+            if exploit_score < min_exploit_score:
+                continue
+            if not node_data.get("send_to_exploit_writer", False):
+                continue
+            results.append({
+                "function_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "exploit_target_score": exploit_score,
+                "exploit_target_threshold": node_data.get("exploit_target_threshold", 65),
+                "final_score": node_data.get("final_score", node_data.get("risk_score", 0)),
+                "risk_categories": node_data.get("risk_categories", []),
+            })
+        results.sort(key=lambda x: x["exploit_target_score"], reverse=True)
+        return results
+
     def get_privilege_escalation_risks(self, contract_name: str | None = None) -> Dict[str, Any]:
         risky_functions = []
         risky_variables = []
@@ -524,6 +910,7 @@ class GraphQueries:
         min_score: int = 70,
         min_structural: int = 40,
         min_exploitability: int = 30,
+        require_exploit_target: bool = True,
     ) -> List[Any]:
         """
         Returns high-risk function hotspots using multi-dimensional gate.
@@ -552,8 +939,13 @@ class GraphQueries:
             final = data.get("final_score", data.get("risk_score", 0))
             structural = data.get("structural_score", 0)
             exploit = data.get("exploitability_score", 0)
+            eligible = data.get("send_to_exploit_writer", True)
 
             if final < min_score:
+                continue
+
+            if require_exploit_target and not eligible:
+                skipped_gate += 1
                 continue
 
             # Multi-dimensional gate (Epic 3, Story 3.1)
@@ -665,3 +1057,53 @@ def get_delegatecall_storage_risks(graph: nx.DiGraph, contract_name: str | None 
 
 def get_contract_tiers(graph: nx.DiGraph, tier: str | None = None) -> List[Dict[str, Any]]:
     return GraphQueries(graph).get_contract_tiers(tier)
+
+def get_guarded_initializers(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_guarded_initializers(contract_name)
+
+def get_access_control_types(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_access_control_types(contract_name)
+
+def get_modifier_equivalences(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_modifier_equivalences(contract_name)
+
+def get_safe_functions(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_safe_functions(contract_name)
+
+def get_taint_critical_paths(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_taint_critical_paths(contract_name)
+
+def get_storage_sensitivity_tags(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_storage_sensitivity_tags(contract_name)
+
+def get_tainted_variables(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_tainted_variables(contract_name)
+
+def get_taint_risks(graph: nx.DiGraph, risk_type: str | None = None, contract_name: str | None = None) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_taint_risks(risk_type, contract_name)
+
+def get_state_dependencies(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_state_dependencies(contract_name)
+
+def get_dangerous_sequences(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_dangerous_sequences(contract_name)
+
+def get_exploit_chains(graph: nx.DiGraph, contract_name: str | None = None, min_length: int = 2) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_exploit_chains(contract_name, min_length)
+
+def get_accounting_invariant_risks(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_accounting_invariant_risks(contract_name)
+
+def get_external_call_risks(
+    graph: nx.DiGraph,
+    risk_tag: str | None = None,
+    contract_name: str | None = None,
+) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_external_call_risks(risk_tag, contract_name)
+
+def get_exploit_targets(
+    graph: nx.DiGraph,
+    min_exploit_score: int = 65,
+    contract_name: str | None = None,
+) -> List[Dict[str, Any]]:
+    return GraphQueries(graph).get_exploit_targets(min_exploit_score, contract_name)
