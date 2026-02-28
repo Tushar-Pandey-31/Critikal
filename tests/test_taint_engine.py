@@ -725,3 +725,112 @@ class TestEndToEnd:
         types = g.nodes["C::adjustBorrow"]["taint_risk_types"]
         assert "TAINT_ACCOUNTING_RISK" in types
         assert "TAINT_CAP_BYPASS" in types
+
+    def test_arithmetic_taint_risk(self):
+        """Simulate math operation with tainted data."""
+        g = nx.DiGraph()
+        g.add_node("Token", type="contract", name="Token", tier="CORE")
+        var_id = _make_state_var(g, "Token", "rewardIndex")
+        _make_function_node(g, "Token", "claim",
+            source_code='function claim(uint256 amount) external {\n  uint256 reward = amount * rewardIndex;\n  rewardIndex += reward;\n}',
+            visibility="external",
+            writes_state=True,
+            state_variables_written=[var_id])
+
+        # We don't have a real Slither CFG to trigger uses_tainted_math in `_analyze_function_taint`
+        # We manually run the pipeline then patch the data to simulate the Slither CFG phase finding math
+        _run_taint_pipeline(g)
+        
+        data = g.nodes["Token::claim"]
+        data["uses_tainted_math"] = True
+        
+        # Now re-apply the heuristics so it captures the new uses_tainted_math tag
+        from src.graph_builder import GraphBuilder
+        # To run _apply_taint_vulnerability_heuristics, we need `func_taint` structure.
+        # Since _run_taint_pipeline ran without Slither, and it didn't use arithmetic, we manually mock the result it would have given:
+        func_taint = {
+            "Token::claim": {
+                "tainted_writes": [{
+                    "variable": var_id,
+                    "source_types": ["param:amount"],
+                    "sensitivity": ["REWARD_CRITICAL"],
+                    "paths": [["Token::claim"]]
+                }],
+                "taint_sources": ["param:amount"],
+                "unchecked_ext_returns": [],
+                "uses_tainted_math": True
+            }
+        }
+        
+        # Reset risk types and score to re-calculate
+        data["taint_risk_types"] = []
+        data["taint_risk_score"] = 0
+        
+        builder = GraphBuilder()
+        builder.graph = g
+        builder._apply_taint_vulnerability_heuristics(func_taint)
+
+        assert "TAINTED_MATH_RISK" in data["taint_risk_types"]
+        # Base 35 (Reward) + 50 (Math) + 30 (Math+Reward modifier) = 115
+        assert data["taint_risk_score"] == 115
+
+    def test_temporal_taint_exploit(self):
+        """Simulate A writes tainted state, B reads unprotected state and does external action."""
+        g = nx.DiGraph()
+        g.add_node("Vault", type="contract", name="Vault", tier="CORE")
+        var_id = _make_state_var(g, "Vault", "userBalance")
+        
+        # Function A: Writes tainted state (param -> userBalance)
+        _make_function_node(g, "Vault", "depositFor",
+            source_code='function depositFor(address u, uint256 a) external {\n  userBalance = a;\n}',
+            visibility="external",
+            writes_state=True,
+            state_variables_written=[var_id])
+            
+        # Function B: Reads userBalance and transfers funds (protected=False)
+        _make_function_node(g, "Vault", "withdraw",
+            source_code='function withdraw() external {\n  uint256 b = userBalance;\n  msg.sender.call{value: b}("");\n}',
+            visibility="external",
+            writes_state=False,
+            is_protected=False)
+            
+        # Hook edge to simulate _build_state_dependency_graph
+        g.add_edge("Vault::depositFor", "Vault::withdraw",
+                   relationship="STATE_DEPENDENCY",
+                   shared_variables=[var_id],
+                   dependency_type="write_read",
+                   sensitivity_overlap=["ACCOUNTING_CRITICAL"])
+
+        # Manually inject the dangerous sequences logic since we skip the full graph build
+        g.nodes["Vault::depositFor"]["dangerous_sequences"] = [{
+            "writer": "Vault::depositFor",
+            "reader": "Vault::withdraw",
+            "shared_variables": [var_id],
+            "sensitivity": ["ACCOUNTING_CRITICAL"],
+            "danger_types": ["ACCOUNTING_MANIPULATION"],
+            "writer_protected": False,
+            "reader_protected": False,
+            "score": 45
+        }]
+        
+        _run_taint_pipeline(g)
+
+        # Force the state writes so the temporal exploit pipeline picks it up
+        data = g.nodes["Vault::depositFor"]
+        data["tainted_state_writes"] = [{
+            "variable": var_id,
+            "source_types": ["param:a"],
+            "sensitivity": ["ACCOUNTING_CRITICAL"],
+            "paths": [["Vault::depositFor"]]
+        }]
+        
+        from src.graph_builder import GraphBuilder
+        builder = GraphBuilder()
+        builder.graph = g
+        builder._generate_exploit_chains()
+        
+        assert data.get("has_temporal_taint_exploit") is True
+        
+        chains = data.get("exploit_chains", [])
+        assert len(chains) > 0
+        assert "TEMPORAL_TAINT_EXPLOIT" in chains[0]["danger_types"]

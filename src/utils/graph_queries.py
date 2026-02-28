@@ -837,7 +837,7 @@ class GraphQueries:
 
     def get_exploit_targets(
         self,
-        min_exploit_score: int = 65,
+        min_exploit_score: int = 75,
         contract_name: str | None = None,
     ) -> List[Dict[str, Any]]:
         """
@@ -957,6 +957,11 @@ class GraphQueries:
                 continue
 
             if data.get("is_constructor"):
+                continue
+
+            # Exclude functions with detected initializer guards (Dev Story 1).
+            if data.get("has_initializer_guard") or data.get("safe_init_pattern"):
+                skipped_gate += 1
                 continue
 
             contract_name = data.get("contract", "")
@@ -1103,7 +1108,7 @@ def get_external_call_risks(
 
 def get_exploit_targets(
     graph: nx.DiGraph,
-    min_exploit_score: int = 65,
+    min_exploit_score: int = 75,
     contract_name: str | None = None,
 ) -> List[Dict[str, Any]]:
     return GraphQueries(graph).get_exploit_targets(min_exploit_score, contract_name)

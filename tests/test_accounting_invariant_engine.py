@@ -121,23 +121,27 @@ class TestAccountingInvariantHeuristics:
     def test_supply_cap_bypass_flagged(self):
         g = nx.DiGraph()
         _add_contract(g, "Vault")
-        v_cap = _add_var(g, "Vault", "supplyCap", ["CAP_CRITICAL"])
-        v_supply = _add_var(g, "Vault", "totalSupply", ["ACCOUNTING_CRITICAL"])
-        f = _add_func(g, "Vault", "mint", source_code="totalSupply += amount;")
+        v_cap = _add_var(g, "Vault", "supplyCap")
+        g.nodes[v_cap]["accounting_role"] = "CAP"
+        v_supply = _add_var(g, "Vault", "totalSupply")
+        g.nodes[v_supply]["accounting_role"] = "SUPPLY"
+        f = _add_func(g, "Vault", "mint", source_code="totalSupply += amount;", is_external_entry=True)
         _reads(g, f, v_cap)
         _writes(g, f, v_supply)
 
         _run_ds4_ds5_ds6(g)
         assert g.nodes[f]["cap_enforcement_issue"] is True
-        assert "SUPPLY_CAP_BYPASS" in g.nodes[f]["cap_enforcement_flags"]
+        assert "MISSING_CAP_ENFORCEMENT" in g.nodes[f]["cap_enforcement_flags"]
 
     def test_supply_cap_check_not_flagged(self):
         g = nx.DiGraph()
         _add_contract(g, "Vault")
-        v_cap = _add_var(g, "Vault", "supplyCap", ["CAP_CRITICAL"])
-        v_supply = _add_var(g, "Vault", "totalSupply", ["ACCOUNTING_CRITICAL"])
+        v_cap = _add_var(g, "Vault", "supplyCap")
+        g.nodes[v_cap]["accounting_role"] = "CAP"
+        v_supply = _add_var(g, "Vault", "totalSupply")
+        g.nodes[v_supply]["accounting_role"] = "SUPPLY"
         src = "require(totalSupply + amount <= supplyCap, 'cap'); totalSupply += amount;"
-        f = _add_func(g, "Vault", "mint", source_code=src)
+        f = _add_func(g, "Vault", "mint", source_code=src, is_external_entry=True)
         _reads(g, f, v_cap)
         _writes(g, f, v_supply)
 
@@ -164,7 +168,7 @@ class TestAccountingInvariantHeuristics:
 
         _run_ds4_ds5_ds6(g)
         assert g.nodes[f]["monotonicity_issue"] is True
-        assert any("MONOTONICITY_VIOLATION" in x for x in g.nodes[f]["monotonicity_flags"])
+        assert any("NON_MONOTONIC_INDEX" in x for x in g.nodes[f]["monotonicity_flags"])
 
 
 class TestExternalCallRiskAnalyzer:
@@ -215,7 +219,7 @@ class TestExploitTargetScoring:
             makes_external_call=True,
             reentrancy_risk=True,
             unchecked_external_return=True,
-            is_unprotected_mutator=True,
+            is_unprotected_mutator=True, has_taint_risk=True,
             taint_sources=["calldata:param1", "tx.origin"],
             cross_function_taint_paths=[{"from": "a", "to": "b"}],
             tainted_state_writes=[{"sensitivity": ["ACCOUNTING_CRITICAL", "ACCESS_CRITICAL"]}],
@@ -223,7 +227,7 @@ class TestExploitTargetScoring:
         )
         _run_ds4_ds5_ds6(g)
 
-        assert g.nodes[f]["exploit_target_score"] >= 65
+        assert g.nodes[f]["exploit_target_score"] >= 75
         assert g.nodes[f]["send_to_exploit_writer"] is True
 
     def test_low_signal_target_not_marked(self):
@@ -232,7 +236,114 @@ class TestExploitTargetScoring:
         f = _add_func(g, "Vault", "viewFn", is_external_entry=False, is_view_or_pure=True)
         _run_ds4_ds5_ds6(g)
 
-        assert g.nodes[f]["exploit_target_score"] < 65
+        assert g.nodes[f]["exploit_target_score"] < 75
+        assert g.nodes[f]["send_to_exploit_writer"] is False
+
+    def test_structural_only_signal_cannot_cross_exploit_threshold(self):
+        g = nx.DiGraph()
+        _add_contract(g, "Vault")
+        f = _add_func(
+            g,
+            "Vault",
+            "shapeOnly",
+            is_external_entry=True,
+            makes_external_call=True,
+            reentrancy_risk=True,
+            unchecked_external_return=True,
+            writes_state=False,
+            propagated_state_variables=[],
+            taint_sources=[],
+            tainted_state_writes=[],
+        )
+        _run_ds4_ds5_ds6(g)
+
+        assert g.nodes[f]["exploit_target_score"] < 75
+        assert g.nodes[f]["send_to_exploit_writer"] is False
+
+    def test_no_feasible_attacker_path_blocks_exploit_writer(self):
+        g = nx.DiGraph()
+        _add_contract(g, "Vault")
+        entry = _add_func(g, "Vault", "entry", is_external_entry=True)
+        target = _add_func(
+            g,
+            "Vault",
+            "_internalSink",
+            is_external_entry=False,
+            writes_state=True,
+            is_unprotected_mutator=True, makes_external_call=True, has_taint_risk=True,
+            taint_sources=["calldata:a", "calldata:b", "msg.value"],
+            cross_function_taint_paths=[{"from": "entry", "to": "_internalSink"}],
+            tainted_state_writes=[{"sensitivity": ["ACCOUNTING_CRITICAL", "ACCESS_CRITICAL"]}],
+            max_chain_length=4,
+            entry_points=[entry],  # Declared reachable, but no CALLS path exists.
+        )
+        _run_ds4_ds5_ds6(g)
+
+        assert g.nodes[target]["exploit_target_score"] >= 75
+        assert g.nodes[target]["has_viable_attacker_path"] is False
+        assert g.nodes[target]["send_to_exploit_writer"] is False
+
+    def test_feasible_attacker_path_enables_exploit_writer(self):
+        g = nx.DiGraph()
+        _add_contract(g, "Vault")
+        entry = _add_func(g, "Vault", "entry", is_external_entry=True, writes_state=False)
+        target = _add_func(
+            g,
+            "Vault",
+            "_internalSink",
+            is_external_entry=False,
+            writes_state=True,
+            is_unprotected_mutator=True, makes_external_call=True, has_taint_risk=True,
+            taint_sources=["calldata:a", "calldata:b", "msg.value"],
+            cross_function_taint_paths=[{"from": "entry", "to": "_internalSink"}],
+            tainted_state_writes=[{"sensitivity": ["ACCOUNTING_CRITICAL", "ACCESS_CRITICAL"]}],
+            max_chain_length=4,
+            entry_points=[entry],
+        )
+        g.add_edge(entry, target, relationship="CALLS", call_type="internal")
+        _run_ds4_ds5_ds6(g)
+
+        assert g.nodes[target]["exploit_target_score"] >= 75
+        assert g.nodes[target]["has_viable_attacker_path"] is True
+        assert g.nodes[target]["send_to_exploit_writer"] is True
+
+    def test_dev_story_5_boosts_applied_correctly(self):
+        g = nx.DiGraph()
+        _add_contract(g, "Vault")
+        f = _add_func(
+            g,
+            "Vault",
+            "exploitCandidate",
+            is_external_entry=True,
+            is_unprotected_mutator=True,
+            has_taint_risk=True,
+            taint_sources=["calldata:amount"],
+            uses_tainted_math=True,
+            cap_enforcement_flags=["MISSING_CAP_ENFORCEMENT"],
+            can_escalate_privileges=True,
+            tainted_state_writes=[{"sensitivity": ["ACCOUNTING_CRITICAL"]}],
+            max_chain_length=3,
+        )
+        _run_ds4_ds5_ds6(g)
+        score = g.nodes[f]["exploit_target_score"]
+        assert score >= 75
+        assert g.nodes[f]["send_to_exploit_writer"] is True
+
+    def test_dev_story_5_penalties_applied_correctly(self):
+        g = nx.DiGraph()
+        _add_contract(g, "Vault")
+        f = _add_func(
+            g,
+            "Vault",
+            "viewPrice",
+            is_external_entry=True,
+            is_view_or_pure=True,  # Heavy penalty
+            is_protected=True,     # Heavy penalty
+            has_taint_risk=False,  # Heavy penalty
+        )
+        _run_ds4_ds5_ds6(g)
+        score = g.nodes[f]["exploit_target_score"]
+        assert score < 75
         assert g.nodes[f]["send_to_exploit_writer"] is False
 
 
@@ -270,7 +381,7 @@ class TestQueries:
             reentrancy_risk=True,
             tainted_state_writes=[{"sensitivity": ["ACCESS_CRITICAL"]}],
             max_chain_length=3,
-            is_unprotected_mutator=True,
+            is_unprotected_mutator=True, has_taint_risk=True,
         )
         _run_ds4_ds5_ds6(g)
 

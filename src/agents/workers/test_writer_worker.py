@@ -21,6 +21,107 @@ from src.agents.workers.bridge_interface_generator import (
     resolve_deploy_code_path,
 )
 
+# ── Error taxonomy for targeted fix prompts ─────────────────────────────────
+
+_ERROR_RULES: list[tuple[str, str]] = [
+    (
+        r"9553",
+        "CAST FIX (Error 9553): You passed a contract-typed variable where `address` is expected.\n"
+        "Fix: Wrap every contract argument with explicit cast: `func(myContract)` → `func(address(myContract))`.\n"
+        "This applies to ALL function calls, not just one.",
+    ),
+    (
+        r"3656",
+        "ABSTRACT FIX (Error 3656): You are implementing an interface that has functions you didn't define, "
+        "OR you marked a contract abstract that Solidity 0.5.x doesn't support.\n"
+        "Fix: DO NOT inherit from ComptrollerInterface, InterestRateModel, or any large interface.\n"
+        "Write a minimal STANDALONE mock contract with only the 3-4 functions actually called in your test:\n"
+        "  contract MockComptroller {\n"
+        "      bool public constant isComptroller = true;\n"
+        "      function mintAllowed(address,address,uint256) external returns (uint256) { return 0; }\n"
+        "  }",
+    ),
+    (
+        r"incompatible versions|Found incompatible",
+        "BRIDGE VIOLATION (incompatible versions): You imported a legacy .sol file directly into your test.\n"
+        "Fix: REMOVE ALL imports from contracts/ or src/. Use ONLY:\n"
+        "  import \"forge-std/Test.sol\";\n"
+        "  import \"./BridgeInterfaces.sol\";\n"
+        "Deploy legacy contracts via deployCode(), NOT import. This is mandatory in bridge mode.",
+    ),
+    (
+        r"Identifier already declared|2333",
+        "DUPLICATE IDENTIFIER FIX (Error 2333): Two imported files define the same contract name.\n"
+        "Fix: Remove one of the conflicting imports entirely. Check the NAMING CONFLICT WARNINGS section above.\n"
+        "If you need both, alias one: `import {ERC20 as BaseERC20} from \"...\";`",
+    ),
+    (
+        r"uint256\(.*address\)|explicit type conversion.*address.*uint256",
+        "CAST FIX (address→uint256): In Solidity 0.8+, address cannot cast directly to uint256.\n"
+        "Fix: Use two-step cast: `uint256(uint160(someAddress))` instead of `uint256(someAddress)`.",
+    ),
+    (
+        r"Member.*not found.*after argument-dependent|9582",
+        "INTERFACE FIX (Error 9582): A function you are calling does not exist on the interface.\n"
+        "Fix: Define the missing function signature INLINE in your test file. Do not rely on BridgeInterfaces.sol "
+        "for functions it doesn't have — add them yourself:\n"
+        "  interface IMyContract {\n"
+        "      function missingFunction(...) external returns (...);\n"
+        "  }",
+    ),
+    (
+        r"Declaration.*not found|Undeclared identifier|7920",
+        "DECLARATION FIX: A variable, function, or type is used but not declared.\n"
+        "Fix: Check that all variables are declared before use, all interfaces are defined, "
+        "and all imported contracts actually export the name you are using.",
+    ),
+    (
+        r"Function.*not found in.*BridgeInterfaces|not found.*BridgeInterfaces",
+        "BRIDGE INTERFACE FIX: BridgeInterfaces.sol is missing a function you need.\n"
+        "Fix: Do NOT import BridgeInterfaces.sol at all. Define ALL interfaces you need "
+        "INLINE in your test file with pragma ^0.8.0. Only import forge-std/Test.sol.",
+    ),
+    (
+        r"contract.*should be marked as abstract|4614|cannot be instantiated",
+        "ABSTRACT CONTRACT FIX (Error 4614): You are calling `new X()` on an abstract contract.\n"
+        "Fix: Write a minimal CONCRETE subclass at file level before ExploitTest:\n"
+        "  contract ConcreteX is AbstractX {\n"
+        "      // implement all required functions\n"
+        "  }\n"
+        "Then deploy ConcreteX, not AbstractX.",
+    ),
+]
+
+_GUARD_PATTERNS: list[str] = [
+    "market may only be initialized once",
+    "only admin may initialize",
+    "already initialized",
+    "Initializable: contract is already initialized",
+    "contract is already initialized",
+    "has already been initialized",
+    "initialization function",
+]
+
+
+def _classify_compile_error(error_text: str) -> str | None:
+    """
+    Match error text against known patterns and return a targeted fix directive.
+    Returns None if no specific rule matches (caller falls back to generic error).
+    """
+    for pattern, directive in _ERROR_RULES:
+        if re.search(pattern, error_text, re.IGNORECASE):
+            return f"TARGETED FIX REQUIRED — read this carefully before writing any code:\n{directive}"
+    return None
+
+
+def _detect_guard_hit(test_logs: str) -> bool:
+    """
+    Returns True if the test failed because a real guard blocked the exploit.
+    These are FALSIFICATION signals — no point retrying.
+    """
+    logs_lower = test_logs.lower()
+    return any(p.lower() in logs_lower for p in _GUARD_PATTERNS)
+
 
 class TestWriterWorker(WorkerAgent):
     MAX_ATTEMPTS = 6
@@ -95,6 +196,63 @@ class TestWriterWorker(WorkerAgent):
 
     def _has_exact_test_exploit(self, code: str) -> bool:
         return bool(re.search(r"\bfunction\s+test_exploit\s*\(", code))
+
+    def _check_test_authenticity(
+        self,
+        test_code: str,
+        target_contract: str,
+        is_legacy: bool,
+    ) -> tuple[bool, str]:
+        """
+        Checks whether the test actually deploys the real contract or a mock the LLM wrote.
+
+        Returns (is_authentic, reason_string).
+
+        Rules:
+        1. Bridge mode tests MUST contain deployCode() — if absent, LLM deployed a mock.
+        2. Any contract definition in the test file that fuzzy-matches the target name
+           (but isn't the target itself) is a mock shadow → fabricated.
+        """
+        # Rule 1: bridge mode requires deployCode()
+        if is_legacy and "deployCode(" not in test_code:
+            return False, (
+                f"FABRICATED: bridge mode test contains no deployCode() call. "
+                f"The LLM deployed its own mock instead of the real {target_contract}. "
+                f"You MUST use: address deployed = deployCode(\"<path>:{target_contract}\");"
+            )
+
+        # Rule 2: look for contract definitions that shadow the target
+        # Strip comments first to avoid false positives in NatSpec
+        stripped = TestWriterWorker._strip_solidity_comments(test_code)
+        defined_contracts = re.findall(r'\bcontract\s+(\w+)', stripped)
+
+        # These names are always allowed — they are the test infrastructure
+        allowed = {"ExploitTest", "AttackContract", "Attacker", "Exploit"}
+
+        target_lower = target_contract.lower()
+        target_parts = [p for p in re.split(r'[_A-Z]', target_contract) if len(p) > 3]
+
+        for name in defined_contracts:
+            if name in allowed:
+                continue
+            if name == target_contract:
+                # LLM re-defined the target contract itself — clear fabrication
+                return False, (
+                    f"FABRICATED: test defines `contract {name}` which is the target contract itself. "
+                    f"You must NOT redefine {target_contract} in the test file. "
+                    f"Deploy the real contract via deployCode() or direct import."
+                )
+            name_lower = name.lower()
+            # Fuzzy: Mock + target name, or target name embedded in mock name
+            if "mock" in name_lower or "fake" in name_lower or "dummy" in name_lower:
+                if target_lower in name_lower or any(p in name_lower for p in target_parts if p):
+                    return False, (
+                        f"FABRICATED: test defines `contract {name}` which is a mock of the target {target_contract}. "
+                        f"You must NOT write your own mock of the target. "
+                        f"Deploy the real contract via deployCode() or direct import and test against it."
+                    )
+
+        return True, "AUTHENTIC"
 
     _AUTOCORRECT_IMPORT_RE = re.compile(
         r'import\s+"([^"]+)"\s*;|import\s+\{[^}]+\}\s+from\s+"([^"]+)"\s*;'
@@ -886,6 +1044,7 @@ class TestWriterWorker(WorkerAgent):
         exploit_success = False
         test_code_generated = None
         test_logs = ""
+        persistent_error_codes: dict[str, int] = {}
 
         use_repo = repo_path if real_sources_full else None
         sandbox = SandboxManager(repo_path=use_repo)
@@ -1045,11 +1204,41 @@ class TestWriterWorker(WorkerAgent):
                             err_lines = [ln for ln in test_logs[:2000].splitlines()
                                          if ln.strip() and "Warning:" not in ln]
                         short_err = "\n".join(err_lines[:20]) if err_lines else test_logs[:600]
+
                         print(f"  [TestWriter] COMPILE FAILED (attempt {attempts}):")
                         for line in short_err.splitlines()[:10]:
                             print(f"    {line}")
                         logger.info(f"[TestWriter] Attempt {attempts} build error:\n{short_err}")
-                        error_history.append(f"Build Failed:\n{short_err}")
+
+                        # ── Classify error and inject targeted fix directive ──────────────
+                        targeted_fix = _classify_compile_error(short_err)
+                        if targeted_fix:
+                            print(f"  [TestWriter] Error classified — injecting targeted fix")
+                            error_entry = f"{targeted_fix}\n\nFull compiler output:\n{short_err}"
+                        else:
+                            error_entry = f"Build Failed:\n{short_err}"
+
+                        # ── Loop detection: same error code appearing 2+ times ───────────
+                        error_codes_this_attempt = re.findall(r'Error \((\d+)\)', short_err)
+                        for code in error_codes_this_attempt:
+                            persistent_error_codes[code] = persistent_error_codes.get(code, 0) + 1
+
+                        looping_codes = [c for c, n in persistent_error_codes.items() if n >= 2]
+                        if looping_codes:
+                            loop_msg = (
+                                f"\n\nLOOP DETECTED — Error(s) {looping_codes} appeared "
+                                f"{max(persistent_error_codes.get(c, 0) for c in looping_codes)} times in a row. "
+                                f"Your current approach is NOT working. You MUST completely change strategy:\n"
+                                f"- If you inherited a large interface → drop it, write minimal standalone mock\n"
+                                f"- If you used contract types as function arguments → switch all to address\n"
+                                f"- If you imported from contracts/ or src/ → stop, use deployCode() only\n"
+                                f"- If you wrote a mock of the target contract → stop, deploy the real one\n"
+                                f"Do not repeat any pattern from your previous attempts."
+                            )
+                            error_entry += loop_msg
+                            print(f"  [TestWriter] Loop detected on error codes {looping_codes} — injecting strategy switch")
+
+                        error_history.append(error_entry)
                         compiled = False
                         out_dir = Path(sandbox.tmp_dir) / "out"
                         if out_dir.exists():
@@ -1063,8 +1252,28 @@ class TestWriterWorker(WorkerAgent):
                     print(f"  [TestWriter] COMPILED OK  |  forge_success={test_res.success}  |  [PASS] in logs={passed_by_logs}  |  exploit_success={exploit_success}")
 
                     if exploit_success:
-                        print(f"  [TestWriter] EXPLOIT PROVEN on attempt {attempts}!")
-                        # Show relevant test output
+                        # ── Authenticity gate ─────────────────────────────────────────────
+                        authentic, auth_reason = self._check_test_authenticity(
+                            test_code_generated,
+                            finding.affected_contract,
+                            is_legacy,
+                        )
+                        if not authentic:
+                            print(f"  [TestWriter] FABRICATED PROOF REJECTED: {auth_reason}")
+                            logger.info(f"[TestWriter] Attempt {attempts}: Fabricated proof detected — {auth_reason}")
+                            exploit_success = False
+                            error_history.append(
+                                f"FABRICATED TEST REJECTED — your test did not test the real contract:\n"
+                                f"{auth_reason}\n\n"
+                                f"You MUST:\n"
+                                f"  1. Deploy the real {finding.affected_contract} via deployCode() (bridge mode) "
+                                f"or direct import (standard mode)\n"
+                                f"  2. NOT define `contract {finding.affected_contract}` or any mock of it in your test\n"
+                                f"  3. Test the actual deployed contract, not a fictional version you wrote yourself\n"
+                            )
+                            continue
+
+                        print(f"  [TestWriter] EXPLOIT PROVEN (authentic) on attempt {attempts}!")
                         for line in test_logs.splitlines():
                             if "[PASS]" in line or "test_exploit" in line:
                                 print(f"    {line.strip()}")
@@ -1075,6 +1284,17 @@ class TestWriterWorker(WorkerAgent):
                     fail_lines = [ln for ln in test_logs.splitlines() if "[FAIL]" in ln or "Error" in ln or "revert" in ln.lower()]
                     for line in fail_lines[:5]:
                         print(f"    {line.strip()}")
+
+                    # ── Guard hit detection ───────────────────────────────────────────────
+                    if _detect_guard_hit(test_logs):
+                        print(f"  [TestWriter] GUARD CONFIRMED — real protection exists, exploit is falsified")
+                        print(f"  [TestWriter] Stopping early — no point retrying against a real guard")
+                        logger.info(f"[TestWriter] Attempt {attempts}: Guard hit detected — FALSIFIED. Stopping.")
+                        # compiled=True intentional: guard hit is useful signal, confidence adjustment should be 0 not -10
+                        # Mark as compiled (we got useful signal) but not proven
+                        # Break so the loop exits and we return compiled=True, exploit_success=False
+                        break
+
                     error_history.append(f"Test compiled but exploit check failed.\nLogs:\n{test_logs[:400]}")
                     logger.info(f"[TestWriter] Attempt {attempts}: Test compiled but exploit FAILED.")
                     logger.info(f"[TestWriter]   test_res.success={test_res.success}, passed_by_logs={passed_by_logs}")

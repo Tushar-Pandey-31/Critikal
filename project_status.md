@@ -456,8 +456,51 @@ First reasoning-heavy worker for exploit validation:
 
 
 ### Phase Progress
-**Current Phase**: Phase 5 - Advanced Vulnerability Detection (NEXT)
-**Status**: 🟢 **Phase 4 Complete**
+**Current Phase**: Phase 5 - Advanced Vulnerability Detection
+**Status**: 🟢 **Phase 5 Active / Partially Complete**
+
+### Story 5.1 - Inline Guard & Access Pattern Precision Layer (Dev Story 1) ✅ **[COMPLETE]**
+**Phase**: 5 - Advanced Vulnerability Detection
+**Completion Date**: February 27, 2026
+
+Enriched the Knowledge Graph with deep inspection of inline access control:
+- ✅ **Inline Guard Detection**: Recognizes `require(msg.sender == owner)` deep inside the CFG.
+- ✅ **Initializer Patterns**: Detects `require(!initialized)` to classify initializer functions.
+- ✅ **Improved Precision**: Drastically boosts the precision of the `is_protected` attribute on functions, minimizing false-positive "unprotected mutator" alerts.
+
+### Story 5.2 - Inter-Procedural Taint & Dataflow Engine (Dev Story 2) ✅ **[COMPLETE]**
+**Phase**: 5 - Advanced Vulnerability Detection
+**Completion Date**: February 27, 2026
+
+Implemented robust cross-function taint analysis:
+- ✅ **Recursive Taint Tracking**: Traces taint through internal call chains using DFS and `InternalCall` IR matching.
+- ✅ **State Variable Sensitivity**: Automatically categorizes variables by sensitivity (`ACCOUNTING_CRITICAL`, `ACCESS_CRITICAL`, `CAP_CRITICAL`, `REWARD_CRITICAL`, `LIQUIDITY_CRITICAL`).
+- ✅ **Risk Flagging**: Injects comprehensive risk flags (e.g., `TAINT_ACCOUNTING_RISK`, `TAINTED_MATH_RISK`) directly on Function nodes.
+
+### Story 5.3 - Cross-Function State Transition Modeling (Dev Story 3) ✅ **[COMPLETE]**
+**Phase**: 5 - Advanced Vulnerability Detection
+**Completion Date**: February 27, 2026
+
+Mapped complex, multi-transaction state manipulation attacks using `STATE_DEPENDENCY` edges:
+- ✅ **`STATE_DEPENDENCY` Edges**: Formed between two functions (A → B) when A writes to a variable that B reads or writes.
+- ✅ **Dangerous Sequences**: Matches specific semantic sequence patterns (e.g., `ACCOUNTING_MANIPULATION`, `TEMPORAL_TAINT_EXPLOIT`).
+- ✅ **Exploit Chains**: Dynamically generates step-by-step ordered execution graphs (`exploit_chains`) demonstrating how an initial attacker interaction could cascade into an invariant break. Identifies high-severity bounty templates ("Inflate -> Claim -> Withdraw", "Deposit -> Manipulate Index -> Redeem", "Set Role -> Upgrade -> Drain").
+- ✅ **Adversarial State Generation**: Recommends test scenario parameters for variables inside an exploit chain.
+
+### Story 5.4 - Accounting & Invariant Heuristics Engine (Dev Story 4) ✅ **[COMPLETE]**
+**Phase**: 5 - Advanced Vulnerability Detection
+**Completion Date**: February 27, 2026
+
+Added specialized modeling dedicated to DeFi economic fundamentals:
+- ✅ **Variable Roles**: Understands the difference between standard storage and domain-specific concepts by context parsing (`is_supply_variable`, `is_reward_variable`).
+- ✅ **Anomaly Detection**: Tracks missing cap enforcement (`has_cap_enforcement_issue`). Detects mathematically problematic trends, like `has_reward_drift` (precision loss/rounding accumulation) and `has_monotonic_break` (bypassing strict increments).
+
+### Story 5.5 - Enhanced Call & Exploit Analyzers (Dev Stories 5 & 6) ✅ **[COMPLETE]**
+**Phase**: 5 - Advanced Vulnerability Detection
+**Completion Date**: February 27, 2026
+
+- ✅ **External Call Risk Analyzer**: Consolidates risks behind low-level interactions (`UNCHECKED_EXT_RETURN`).
+- ✅ **Exploit Target Scoring**: Better weighting scales the exploitability and severity for automated workers, generating more refined findings reports with significantly reduced noise.
 
 **Project Health**: 🟢 **Excellent**
 - **100% Pass Rate** (197 / 197 total tests)

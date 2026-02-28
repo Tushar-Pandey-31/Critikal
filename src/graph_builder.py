@@ -5,6 +5,7 @@ from collections import deque
 from slither.slither import Slither
 from slither.core.cfg.node import NodeType
 from typing import Dict, Any, List
+from .economic_analyzer import EconomicAnalyzer
 
 class GraphBuilder:
     def __init__(self):
@@ -91,6 +92,9 @@ class GraphBuilder:
 
         # Dev Story 6: External Call Risk Analyzer
         self._analyze_external_call_risks()
+
+        # Dev Story 1: Precision upgrade — negative safety evidence
+        self._compute_negative_safety_signals()
 
         # Story 4.2: Compute final risk scores
         self._compute_global_risk_scores()
@@ -1864,6 +1868,11 @@ class GraphBuilder:
         re.compile(r'require\s*\(\s*initializing\s*==\s*0\b'),
         re.compile(r'require\s*\(\s*_initialized\s*==\s*0\b'),
         re.compile(r'require\s*\(\s*_initialized\s*<\s'),
+        # Compound / Cream Finance inline accounting guard (Dev Story 1 / Fix)
+        re.compile(r'accrualBlockNumber\s*==\s*0'),
+        re.compile(r'borrowIndex\s*==\s*0'),
+        re.compile(r'market may only be initialized once', re.IGNORECASE),
+        re.compile(r'only admin may initialize the market', re.IGNORECASE),
     ]
 
     # Modifier names that semantically map to known categories.
@@ -1898,15 +1907,7 @@ class GraphBuilder:
     def _detect_initializer_guards(self, slither_obj: Slither):
         """
         Dev Story 1.1 — Detects inline initializer guards in function bodies.
-
-        Scans for patterns like:
-            require(!initialized);
-            require(initialized == false);
-            if (initialized) revert();
-
-        Sets on function nodes:
-            has_initializer_guard: bool
-            safe_init_pattern: bool  (guard + access control present)
+        Also checks one level of callees to catch super.initialize() patterns.
         """
         slither_func_lookup: Dict[str, Any] = {}
         for contract in slither_obj.contracts:
@@ -1919,8 +1920,21 @@ class GraphBuilder:
                 continue
 
             has_guard = False
+            
+            # 1. Collect sources (self + one level of callees)
+            sources = []
+            sources.append(node_data.get("source_code", ""))
+            
+            # Check internal calls (Story 3.1 CALLS edges)
+            for _, target, edge_data in self.graph.out_edges(node_id, data=True):
+                if edge_data.get("relationship") == "CALLS":
+                    callee_data = self.graph.nodes.get(target, {})
+                    if callee_data:
+                        sources.append(callee_data.get("source_code", ""))
+            
+            combined_source = "\n".join(sources)
 
-            # IR-based detection: look for require(!initialized) in Slither IR
+            # 2. IR-based detection within the main function
             slither_func = slither_func_lookup.get(node_id)
             if slither_func:
                 try:
@@ -1933,29 +1947,33 @@ class GraphBuilder:
                                 continue
                             expr_str = str(cfg_node.expression) if cfg_node.expression else str(ir)
                             expr_lower = expr_str.lower()
-                            if any(kw in expr_lower for kw in
-                                   ("initialized", "_initialized", "initializing", "_initializing")):
+                            # Check for both standard and Compound patterns in IR/Expression
+                            if any(kw in expr_lower for kw in ("initialized", "_initialized", "initializing", "_initializing", "accrualblocknumber", "borrowindex")):
                                 has_guard = True
                                 break
                 except Exception:
                     pass
 
-            # Source-code fallback: regex patterns
-            if not has_guard:
-                source = node_data.get("source_code", "")
-                if source:
-                    for pat in self._INIT_GUARD_PATTERNS:
-                        if pat.search(source):
-                            has_guard = True
-                            break
-
-            is_protected = node_data.get("is_protected", False)
-            has_init_modifier = node_data.get("has_initializer_modifier", False)
-
-            safe_init = has_guard and (is_protected or has_init_modifier)
+            # 3. Source-code fallback: regex patterns on combined source
+            if not has_guard and combined_source:
+                for pat in self._INIT_GUARD_PATTERNS:
+                    if pat.search(combined_source):
+                        has_guard = True
+                        break
 
             node_data["has_initializer_guard"] = has_guard
+
+            is_protected_original = node_data.get("is_protected", False)
+            has_init_modifier = node_data.get("has_initializer_modifier", False)
+            safe_init = has_guard and (is_protected_original or has_init_modifier)
             node_data["safe_init_pattern"] = safe_init
+            
+            # If a guard is found, update protection status and remove from unprotected mutators
+            # (Dev Story 1 / Step 3 Fix)
+            if has_guard:
+                node_data["is_protected"] = True
+                node_data["is_unprotected_mutator"] = False
+                node_data["unprotected_risk_level"] = "NONE"
 
     def _detect_require_access_control(self, slither_obj: Slither):
         """
@@ -2271,6 +2289,7 @@ class GraphBuilder:
         tainted_writes: list[Dict] = []
         unchecked_ext_returns: list[str] = []
         param_to_taint: Dict[str, set] = {}
+        uses_tainted_math = False
 
         vis = str(getattr(slither_func, "visibility", "internal"))
         contract_name = node_data.get("contract", "")
@@ -2311,6 +2330,16 @@ class GraphBuilder:
                         )
                         if not rv_checked:
                             unchecked_ext_returns.append(lv_name)
+
+                # Track arithmetic operations with tainted variables
+                if ir_type == "Binary":
+                    op_type = getattr(ir, "type", None)
+                    if op_type:
+                        op_name = getattr(op_type, "name", "")
+                        if op_name in ("MULTIPLICATION", "DIVISION", "POWER", "ADDITION", "SUBTRACTION"):
+                            used = getattr(ir, "used", None) or []
+                            if any(str(v) in tainted for v in used if v is not None):
+                                uses_tainted_math = True
 
                 # msg.sender / msg.value / tx.origin as taint sources
                 for src_name, src_tag in (
@@ -2362,6 +2391,7 @@ class GraphBuilder:
                         "variable": var_node_id,
                         "source_types": list(source_types),
                         "sensitivity": sensitivity,
+                        "paths": [[node_id]],
                     })
 
         return {
@@ -2370,6 +2400,8 @@ class GraphBuilder:
             "tainted_vars": tainted,
             "unchecked_ext_returns": unchecked_ext_returns,
             "param_to_taint": param_to_taint,
+            "taint_paths": [[node_id]],
+            "uses_tainted_math": uses_tainted_math,
         }
 
     def _is_return_value_validated(self, call_ir, slither_func, call_node) -> bool:
@@ -2425,6 +2457,8 @@ class GraphBuilder:
                 "tainted_vars": set(),
                 "unchecked_ext_returns": [],
                 "param_to_taint": {},
+                "taint_paths": [[node_id]],
+                "uses_tainted_math": False,
             }
 
         if "msg.value" in source:
@@ -2461,6 +2495,7 @@ class GraphBuilder:
                             "variable": var_id,
                             "source_types": list(source_types),
                             "sensitivity": sensitivity,
+                            "paths": [[node_id]],
                         })
                         break
                 else:
@@ -2470,6 +2505,7 @@ class GraphBuilder:
                             "variable": var_id,
                             "source_types": list(source_types),
                             "sensitivity": sensitivity,
+                            "paths": [[node_id]],
                         })
 
         return {
@@ -2478,6 +2514,8 @@ class GraphBuilder:
             "tainted_vars": param_names | {"msg.value", "msg.sender"} if source_types else set(),
             "unchecked_ext_returns": [],
             "param_to_taint": {p: {f"param:{p}"} for p in param_names},
+            "taint_paths": [[node_id]],
+            "uses_tainted_math": False,
         }
 
     # ── Phase 2: Inter-procedural propagation ─────────────────
@@ -2536,16 +2574,28 @@ class GraphBuilder:
                             before = len(new_sources)
                             for st in caller_result["taint_sources"]:
                                 new_sources.add(st)
-                            if len(new_sources) > before:
+                                
+                            paths_changed = False
+                            for cp in caller_result.get("taint_paths", [[node_id]]):
+                                np = cp + [target_id]
+                                if np not in callee_result.setdefault("taint_paths", []):
+                                    callee_result["taint_paths"].append(np)
+                                    paths_changed = True
+
+                            if len(new_sources) > before or paths_changed:
                                 callee_result["taint_sources"] = list(new_sources)
+                                for tw in callee_result["tainted_writes"]:
+                                    for p in callee_result["taint_paths"]:
+                                        if p not in tw.setdefault("paths", []):
+                                            tw["paths"].append(p)
                                 changed = True
                         continue
 
                     # IR-level argument matching
                     injected = self._inject_caller_taint(
                         slither_caller, slither_callee,
-                        caller_tainted, callee_result, target_id,
-                        target_data,
+                        caller_result, callee_result, target_id,
+                        target_data, node_id
                     )
                     if injected:
                         changed = True
@@ -2557,10 +2607,11 @@ class GraphBuilder:
         self,
         slither_caller,
         slither_callee,
-        caller_tainted: set,
+        caller_result: Dict,
         callee_result: Dict,
         callee_node_id: str,
         callee_node_data: Dict,
+        caller_node_id: str,
     ) -> bool:
         """
         Scans caller's IR for InternalCall operations targeting callee.
@@ -2572,6 +2623,7 @@ class GraphBuilder:
         callee_name = callee_node_data.get("name", "")
         callee_contract = callee_node_data.get("contract", "")
         callee_tainted = callee_result.get("tainted_vars", set())
+        caller_tainted = caller_result.get("tainted_vars", set())
         original_size = len(callee_tainted)
         injected_params: set[str] = set()
 
@@ -2606,7 +2658,19 @@ class GraphBuilder:
 
         # Propagate new taint sources
         for pname in injected_params:
-            callee_result["taint_sources"].append(f"cross:{pname}")
+            if f"cross:{pname}" not in callee_result["taint_sources"]:
+                callee_result["taint_sources"].append(f"cross:{pname}")
+
+        paths_changed = False
+        for cp in caller_result.get("taint_paths", [[caller_node_id]]):
+            np = cp + [callee_node_id]
+            if np not in callee_result.setdefault("taint_paths", []):
+                callee_result["taint_paths"].append(np)
+                paths_changed = True
+
+        paths_expanded = paths_changed
+        if len(callee_tainted) > original_size:
+            paths_expanded = True
 
         # Re-derive tainted writes for the callee with expanded taint
         slither_callee_func = None
@@ -2626,21 +2690,29 @@ class GraphBuilder:
                         used = getattr(ir, "used", None) or []
                         if any(str(v) in callee_tainted for v in used if v is not None):
                             var_data = self.graph.nodes.get(var_node_id, {})
-                            already = any(
-                                tw["variable"] == var_node_id
-                                for tw in callee_result["tainted_writes"]
-                            )
-                            if not already:
+                            already_idx = -1
+                            for idx, tw in enumerate(callee_result["tainted_writes"]):
+                                if tw["variable"] == var_node_id:
+                                    already_idx = idx
+                                    break
+
+                            if already_idx == -1:
                                 callee_result["tainted_writes"].append({
                                     "variable": var_node_id,
                                     "source_types": list(callee_result["taint_sources"]),
                                     "sensitivity": var_data.get("sensitivity_tags", []),
+                                    "paths": list(callee_result["taint_paths"]),
                                 })
+                            else:
+                                tw = callee_result["tainted_writes"][already_idx]
+                                for p in callee_result["taint_paths"]:
+                                    if p not in tw.setdefault("paths", []):
+                                        tw["paths"].append(p)
                             break
         except Exception:
             pass
 
-        return len(callee_tainted) > original_size
+        return paths_expanded
 
     # ── Phase 3: Mark state variables as tainted ──────────────
 
@@ -2684,7 +2756,27 @@ class GraphBuilder:
             TAINT_ACCESS_RISK     — tainted data modifies access control state
             TAINT_LIQUIDITY_RISK  — tainted data influences liquidity state
             UNCHECKED_EXT_RETURN  — external call return used without validation
+            TAINTED_MATH_RISK     — arithmetic operations on tainted data
         """
+        # Gather all paths by their entry function to assign cross-function paths correctly
+        all_paths_by_entry: Dict[str, list[Dict]] = {fid: [] for fid in func_taint.keys()}
+
+        for sink_id, result in func_taint.items():
+            for tw in result.get("tainted_writes", []):
+                for path in tw.get("paths", [[sink_id]]):
+                    entry_func = path[0]
+                    if entry_func in all_paths_by_entry:
+                        existing = all_paths_by_entry[entry_func]
+                        new_path = {
+                            "source_types": tw["source_types"],
+                            "sink_variable": tw["variable"],
+                            "sensitivity": tw.get("sensitivity", []),
+                            "sink_function": sink_id,
+                            "path": path,
+                        }
+                        if new_path not in existing:
+                            existing.append(new_path)
+
         for node_id, node_data in self.graph.nodes(data=True):
             if node_data.get("type") != "function":
                 continue
@@ -2693,6 +2785,7 @@ class GraphBuilder:
             tainted_writes = result.get("tainted_writes", [])
             taint_sources = result.get("taint_sources", [])
             unchecked = result.get("unchecked_ext_returns", [])
+            uses_tainted_math = result.get("uses_tainted_math", False)
 
             risk_types: list[str] = []
             critical_paths: list[Dict] = []
@@ -2711,12 +2804,29 @@ class GraphBuilder:
                         if risk_type and risk_type not in risk_types:
                             risk_types.append(risk_type)
 
-                    critical_paths.append({
-                        "source_types": tw["source_types"],
-                        "sink_variable": var_id,
-                        "sensitivity": sensitivity_tags,
-                        "function": node_id,
-                    })
+                    for path in tw.get("paths", [[node_id]]):
+                        cp = {
+                            "source_types": tw["source_types"],
+                            "sink_variable": var_id,
+                            "sensitivity": sensitivity_tags,
+                            "function": node_id,
+                            "path": path,
+                        }
+                        if cp not in critical_paths:
+                            critical_paths.append(cp)
+
+            # Add paths where THIS function is the entry point
+            cross_paths = all_paths_by_entry.get(node_id, [])
+            for cp in cross_paths:
+                if len(cp["path"]) > 1:
+                    if cp not in critical_paths:
+                        critical_paths.append(cp)
+                    if "TAINT_CRITICAL_PATH" not in risk_types:
+                        risk_types.append("TAINT_CRITICAL_PATH")
+                    for stag in cp.get("sensitivity", []):
+                        risk_type = self._SENSITIVITY_TO_RISK.get(stag)
+                        if risk_type and risk_type not in risk_types:
+                            risk_types.append(risk_type)
 
             # Score taint risk based on what categories are hit
             if "TAINT_ACCOUNTING_RISK" in risk_types:
@@ -2730,16 +2840,16 @@ class GraphBuilder:
             if "TAINT_LIQUIDITY_RISK" in risk_types:
                 taint_score += 35
 
+            if uses_tainted_math:
+                risk_types.append("TAINTED_MATH_RISK")
+                # Heavy score increase for math + taint
+                taint_score += 50
+                if "TAINT_ACCOUNTING_RISK" in risk_types or "TAINT_REWARD_RISK" in risk_types:
+                    taint_score += 30
+
             if unchecked:
                 risk_types.append("UNCHECKED_EXT_RETURN")
                 taint_score += 25
-
-            # Cross-function paths: check if this function's callees have taint writes
-            cross_paths = self._build_cross_function_paths(node_id, func_taint)
-            if cross_paths:
-                critical_paths.extend(cross_paths)
-                if "TAINT_CRITICAL_PATH" not in risk_types:
-                    risk_types.append("TAINT_CRITICAL_PATH")
 
             node_data["taint_sources"] = taint_sources
             node_data["tainted_state_writes"] = tainted_writes
@@ -2748,44 +2858,7 @@ class GraphBuilder:
             node_data["has_taint_risk"] = len(risk_types) > 0
             node_data["taint_risk_score"] = taint_score
             node_data["unchecked_external_return"] = len(unchecked) > 0
-            node_data["cross_function_taint_paths"] = cross_paths
-
-    def _build_cross_function_paths(
-        self, caller_id: str, func_taint: Dict[str, Dict]
-    ) -> list[Dict]:
-        """
-        Finds cross-function taint paths where caller passes tainted data
-        to a callee that writes it to sensitive storage.
-        """
-        paths: list[Dict] = []
-        caller_result = func_taint.get(caller_id, {})
-        if not caller_result.get("taint_sources"):
-            return paths
-
-        for _, target_id, edge_data in self.graph.out_edges(caller_id, data=True):
-            if edge_data.get("relationship") != "CALLS":
-                continue
-            callee_result = func_taint.get(target_id, {})
-            if not callee_result:
-                continue
-            for tw in callee_result.get("tainted_writes", []):
-                sensitivity = tw.get("sensitivity", [])
-                if not sensitivity:
-                    continue
-                # Only flag cross-function if the callee's taint came from this caller
-                cross_sources = [
-                    s for s in callee_result.get("taint_sources", [])
-                    if s.startswith("cross:")
-                ]
-                if cross_sources or set(caller_result["taint_sources"]) & set(callee_result["taint_sources"]):
-                    paths.append({
-                        "entry_function": caller_id,
-                        "sink_function": target_id,
-                        "sink_variable": tw["variable"],
-                        "sensitivity": sensitivity,
-                        "source_types": caller_result["taint_sources"],
-                    })
-        return paths
+            node_data["cross_function_taint_paths"] = [p for p in cross_paths if len(p.get("path", [])) > 1]
 
     # ================================================================
     # Dev Story 3 — Cross-Function State Transition Modeling
@@ -3042,6 +3115,34 @@ class GraphBuilder:
 
         for entry_id in external_funcs:
             entry_data = self.graph.nodes.get(entry_id, {})
+            
+            # Dev Story 2.2 — Storage Read/Write Temporal Model
+            # A temporal taint exploit is: A writes tainted state, B reads it unprotected.
+            # We hook into the dangerous sequences array.
+            if entry_data.get("dangerous_sequences"):
+                for seq in entry_data["dangerous_sequences"]:
+                    writer_id = seq["writer"]
+                    writer_data = self.graph.nodes.get(writer_id, {})
+                    reader_id = seq["reader"]
+                    reader_data = self.graph.nodes.get(reader_id, {})
+
+                    # Taint injection: does the writer write tainted data to the shared variables?
+                    if writer_data.get("has_taint_risk"):
+                        shared = seq["shared_variables"]
+                        for tw in writer_data.get("tainted_state_writes", []):
+                            if tw["variable"] in shared:
+                                # Found temporal taint exploit chain!
+                                # If B reads this, it's dangerous.
+                                # Check if B makes high-impact actions (writes state, external call)
+                                b_writes = reader_data.get("writes_state", False)
+                                b_unprotected = not reader_data.get("is_protected", False)
+                                if b_writes or b_unprotected:
+                                    if "TEMPORAL_TAINT_EXPLOIT" not in seq["danger_types"]:
+                                        seq["danger_types"].append("TEMPORAL_TAINT_EXPLOIT")
+                                        seq["score"] += 50
+                                        entry_data["has_temporal_taint_exploit"] = True
+                                        reader_data["has_temporal_taint_exploit"] = True
+
             if not entry_data.get("dangerous_sequences"):
                 continue
 
@@ -3062,6 +3163,13 @@ class GraphBuilder:
                 if len(chain) >= 4:
                     chain_score += 10
 
+                matched_templates = self._match_exploit_templates(chain, seq["shared_variables"])
+                adversarial_snapshots = self._generate_adversarial_snapshots(seq["shared_variables"])
+                
+                # Boost score if it matches a known high-severity bounty template
+                if matched_templates:
+                    chain_score += 25
+
                 chain_desc = {
                     "steps": chain,
                     "shared_variables": seq["shared_variables"],
@@ -3069,8 +3177,12 @@ class GraphBuilder:
                     "danger_types": seq["danger_types"],
                     "chain_length": len(chain),
                     "chain_score": chain_score,
+                    "matched_templates": matched_templates,
+                    "adversarial_state_snapshots": adversarial_snapshots,
                     "exploit_sequence": self._format_exploit_sequence(chain),
                 }
+
+                self._evaluate_chain_feasibility(chain_desc)
 
                 all_chains[entry_id].append(chain_desc)
 
@@ -3083,6 +3195,72 @@ class GraphBuilder:
             data["exploit_chains"] = chains[:5]
             data["max_chain_length"] = max((c["chain_length"] for c in chains), default=0)
             data["is_chain_entry"] = len(chains) > 0
+
+    def _match_exploit_templates(self, chain: list[str], shared_vars: list[str]) -> list[str]:
+        """
+        Dev Story 3.1 — Matches discovered sequences against known state manipulation templates.
+        Templates:
+          - "Inflate -> Claim -> Withdraw"
+          - "Deposit -> Manipulate Index -> Redeem"
+          - "Set Role -> Upgrade -> Drain"
+          - "Deposit small -> Trigger rounding -> Amplify"
+        """
+        if len(chain) < 2:
+            return []
+            
+        templates = []
+        chain_names = [self.graph.nodes.get(fid, {}).get("name", "").lower() for fid in chain]
+        roles_assigned = [self.graph.nodes.get(fid, {}).get("modifies_sensitive_storage", False) for fid in chain]
+        is_payable = [self.graph.nodes.get(fid, {}).get("is_payable", False) for fid in chain]
+        has_math = [self.graph.nodes.get(fid, {}).get("uses_tainted_math", False) for fid in chain]
+
+        # Template 1: Inflate -> Claim -> Withdraw
+        # Look for math manipulation followed by a claim/withdraw action
+        if any(m for m in has_math[:-1]) and any(n in ("withdraw", "claim") for n in chain_names[-1:]):
+            templates.append("Inflate -> Claim -> Withdraw")
+
+        # Template 2: Deposit -> Manipulate Index -> Redeem
+        if any("deposit" in n for n in chain_names) and any(m for m in has_math) and any("redeem" in n or "withdraw" in n for n in chain_names):
+            templates.append("Deposit -> Manipulate Index -> Redeem")
+
+        # Template 3: Set Role -> Upgrade -> Drain
+        # Look for access control var manipulated, followed by a risky call
+        if any("grant" in n or "setrole" in n or "transferownership" in n for n in chain_names):
+            if any(self.graph.nodes.get(fid, {}).get("can_escalate_privileges", False) for fid in chain):
+                templates.append("Set Role -> Upgrade -> Drain")
+
+        # Template 4: Deposit small -> Trigger rounding -> Amplify
+        if any("deposit" in n for n in chain_names) and any(m for m in has_math):
+            templates.append("Deposit small -> Trigger rounding -> Amplify")
+            
+        return list(set(templates))
+
+    def _generate_adversarial_snapshots(self, shared_vars: list[str]) -> list[Dict[str, str]]:
+        """
+        Dev Story 3.2 — Generates adversarial state snapshots for specific variables.
+        """
+        snapshots = []
+        for var_id in shared_vars:
+            var_data = self.graph.nodes.get(var_id, {})
+            name = var_data.get("name", "").lower()
+            
+            if "balance" in name or "amount" in name or "supply" in name:
+                snapshots.extend([
+                    {"variable": var_id, "state": "large (type(uint256).max)"},
+                    {"variable": var_id, "state": "small (1 wei)"},
+                    {"variable": var_id, "state": "zero (0)"},
+                ])
+            elif "reward" in name or "index" in name or "rate" in name:
+                snapshots.extend([
+                    {"variable": var_id, "state": "abnormally high"},
+                    {"variable": var_id, "state": "abnormally low"},
+                ])
+            elif "cap" in name or "limit" in name or "max" in name:
+                snapshots.extend([
+                    {"variable": var_id, "state": "at or slightly above limit"},
+                    {"variable": var_id, "state": "slightly below limit"},
+                ])
+        return snapshots
 
     def _extend_chain(
         self,
@@ -3106,6 +3284,20 @@ class GraphBuilder:
             if next_id in current_chain:
                 continue
             if next_id not in external_funcs:
+                continue
+
+            next_data = self.graph.nodes.get(next_id, {})
+            
+            # Dev Story 3.3 - Filter nodes to prevent combinatorial explosion
+            # Only extend if node is interesting (taint, sensitive write, high impact)
+            is_interesting = (
+                next_data.get("has_taint_risk", False) or
+                next_data.get("modifies_sensitive_storage", False) or
+                next_data.get("impact_score", 0) >= 20 or
+                next_data.get("writes_state", False)
+            )
+            
+            if not is_interesting:
                 continue
 
             next_sensitivity = edge_data.get("sensitivity_overlap", [])
@@ -3159,12 +3351,86 @@ class GraphBuilder:
             steps.append(step)
         return steps
 
+    def _evaluate_chain_feasibility(self, chain_desc: Dict) -> None:
+        """
+        Dev Story 7 — Feasibility Scoring Validator.
+        Instead of hard dropping, assigns feasibility_score (0-1).
+        If 0, chain is deterministically impossible.
+        """
+        score = 1.0
+        steps = chain_desc.get("steps", [])
+        if not steps:
+            chain_desc["feasibility_score"] = 0.0
+            chain_desc["is_deterministically_impossible"] = True
+            return
+
+        # 1. External Entry Verification
+        has_reachable_attacker_entry = False
+        for step in steps:
+            node_data = self.graph.nodes.get(step, {})
+            is_reachable = node_data.get("reachable_from_external_entry", False) or node_data.get("is_external_entry", False)
+            has_attacker_influence = node_data.get("attacker_controlled_input", False) or node_data.get("has_taint_risk", False)
+            if is_reachable and has_attacker_influence:
+                has_reachable_attacker_entry = True
+                break
+        
+        if not has_reachable_attacker_entry:
+            chain_desc["feasibility_score"] = 0.0
+            chain_desc["is_deterministically_impossible"] = True
+            return
+            
+        # 2. Attacker-Controlled Origin
+        first_step = steps[0]
+        first_data = self.graph.nodes.get(first_step, {})
+        has_influence = first_data.get("attacker_controlled_input", False) or first_data.get("has_taint_risk", False) or first_data.get("is_external_entry", False) or first_data.get("reachable_from_external_entry", False)
+        if not has_influence:
+            chain_desc["feasibility_score"] = 0.0
+            chain_desc["is_deterministically_impossible"] = True
+            return
+
+        # 3. Strict Access Guards
+        for i, step in enumerate(steps):
+            node_data = self.graph.nodes.get(step, {})
+            is_protected = node_data.get("is_protected", False) or node_data.get("strict_role_based_access", False)
+            if is_protected:
+                prior_mutation = False
+                for j in range(i):
+                    prev_data = self.graph.nodes.get(steps[j], {})
+                    if prev_data.get("can_escalate_privileges", False) or prev_data.get("modifies_sensitive_storage", False):
+                        prior_mutation = True
+                        break
+                
+                if not prior_mutation:
+                    ac_type = node_data.get("access_control_type", "none")
+                    score -= 0.5
+                    
+                    if ac_type in ("modifier", "require-based", "both"):
+                        any_mutation = any(self.graph.nodes.get(s, {}).get("can_escalate_privileges", False) for s in steps)
+                        any_sensitive = any(self.graph.nodes.get(s, {}).get("modifies_sensitive_storage", False) for s in steps)
+                        if not any_mutation and not any_sensitive:
+                            score = 0.0
+                            break
+
+        # 4. Deterministic Revert Check
+        for i in range(1, len(steps)):
+            b_data = self.graph.nodes.get(steps[i], {})
+            src = b_data.get("source_code", "").lower()
+            if "require(" in src or "revert(" in src or "assert(" in src:
+                if re.search(r"require\([^=]+==\s*(true|false|\d+)[^\)]*\)", src):
+                    score -= 0.2
+        
+        score = max(0.0, score)
+        
+        chain_desc["feasibility_score"] = score
+        chain_desc["is_deterministically_impossible"] = (score == 0.0)
+
     # ================================================================
     # Dev Story 4 — Accounting & Invariant Heuristics Engine
     # ================================================================
 
     def _run_accounting_invariant_heuristics(self):
         """Runs all accounting and invariant-focused heuristic detectors."""
+        self._infer_state_variable_roles()
         self._detect_supply_consistency_issues()
         self._detect_cap_enforcement_issues()
         self._detect_reward_drift_issues()
@@ -3192,6 +3458,31 @@ class GraphBuilder:
         writes.update(self.graph.nodes.get(function_id, {}).get("propagated_state_variables", []))
         return reads, writes
 
+    def _infer_state_variable_roles(self):
+        """
+        Dev Story 4.1 — Variable Role Inference.
+        Tags variables with abstract roles: SUPPLY, CAP, INDEX, RESERVE, BALANCE.
+        """
+        for var_id, var_data in self.graph.nodes(data=True):
+            if var_data.get("type") != "state_variable":
+                continue
+
+            name = str(var_data.get("name", "")).lower()
+            role = "UNKNOWN"
+
+            if self._name_has_any(name, ["maxsupply", "cap", "limit", "max"]):
+                role = "CAP"
+            elif self._name_has_any(name, ["rewardindex", "rate", "accumulator", "index", "interestindex", "accreward"]):
+                role = "INDEX"
+            elif self._name_has_any(name, ["totalsupply", "totalshares", "supply", "totalassets", "totaldebt", "totalborrows"]):
+                role = "SUPPLY"
+            elif self._name_has_any(name, ["reserve", "liquidity", "pool"]):
+                role = "RESERVE"
+            elif self._name_has_any(name, ["balance", "balances", "amount", "shares", "accountborrows"]):
+                role = "BALANCE"
+
+            var_data["accounting_role"] = role
+
     def _detect_supply_consistency_issues(self):
         """
         Story 4.1 — Supply consistency detector.
@@ -3200,8 +3491,6 @@ class GraphBuilder:
           Detect functions likely to violate sum(balances) ~= totalSupply by
           updating supply/accounting state asymmetrically.
         """
-        balance_hints = ["balance", "balances", "shares", "accountborrows"]
-        supply_hints = ["totalsupply", "totalshares", "totalassets", "totaldebt", "totalborrows"]
         mutator_hints = ["mint", "burn", "deposit", "withdraw", "transfer", "borrow", "repay"]
 
         for node_id, node_data in self.graph.nodes(data=True):
@@ -3209,13 +3498,11 @@ class GraphBuilder:
                 continue
 
             reads, writes = self._function_state_sets(node_id)
-            write_names = [self.graph.nodes.get(v, {}).get("name", "") for v in writes]
-            read_names = [self.graph.nodes.get(v, {}).get("name", "") for v in reads]
-
-            writes_balance_like = any(self._name_has_any(n, balance_hints) for n in write_names)
-            writes_supply_like = any(self._name_has_any(n, supply_hints) for n in write_names)
-            reads_balance_like = any(self._name_has_any(n, balance_hints) for n in read_names)
-            reads_supply_like = any(self._name_has_any(n, supply_hints) for n in read_names)
+            
+            writes_balance_like = any(self.graph.nodes.get(v, {}).get("accounting_role") == "BALANCE" for v in writes)
+            writes_supply_like = any(self.graph.nodes.get(v, {}).get("accounting_role") == "SUPPLY" for v in writes)
+            reads_balance_like = any(self.graph.nodes.get(v, {}).get("accounting_role") == "BALANCE" for v in reads)
+            reads_supply_like = any(self.graph.nodes.get(v, {}).get("accounting_role") == "SUPPLY" for v in reads)
 
             name = node_data.get("name", "")
             looks_like_supply_mutator = self._name_has_any(name, mutator_hints)
@@ -3244,10 +3531,10 @@ class GraphBuilder:
 
     def _detect_cap_enforcement_issues(self):
         """
-        Story 4.2 — Cap enforcement detector.
+        Story 4.3 — Cap Enforcement Completeness.
 
-        If contract has supply/borrow cap variables, ensure mint/borrow paths
-        appear to enforce caps using require/assert style checks.
+        Find all mint/borrow supply paths.
+        Ensure every path enforces limit via REQUIRE against a CAP role variable.
         """
         for node_id, node_data in self.graph.nodes(data=True):
             if node_data.get("type") != "function":
@@ -3260,9 +3547,8 @@ class GraphBuilder:
                     continue
                 if var_data.get("contract") != contract_name:
                     continue
-                vname = var_data.get("name", "")
-                if self._name_has_any(vname, ["supplycap", "borrowcap"]):
-                    contract_cap_vars.append(vname)
+                if var_data.get("accounting_role") == "CAP":
+                    contract_cap_vars.append(var_data.get("name", "").lower())
 
             if not contract_cap_vars:
                 node_data["cap_enforcement_flags"] = []
@@ -3271,8 +3557,7 @@ class GraphBuilder:
                 continue
 
             reads, writes = self._function_state_sets(node_id)
-            touched_vars = reads | writes
-            touched_names = [self.graph.nodes.get(v, {}).get("name", "").lower() for v in touched_vars]
+            touched_roles = [self.graph.nodes.get(v, {}).get("accounting_role") for v in (reads | writes)]
 
             fname = (node_data.get("name", "") or "").lower()
             src = node_data.get("source_code", "") or ""
@@ -3280,31 +3565,29 @@ class GraphBuilder:
             is_external = node_data.get("is_external_entry", False)
             weak_access = not node_data.get("is_protected", False)
 
-            likely_supply_path = any(k in fname for k in ("mint", "deposit", "supply")) or any(
-                "supplycap" in n for n in touched_names
-            )
-            likely_borrow_path = "borrow" in fname or any("borrowcap" in n for n in touched_names)
+            likely_supply_path = any(k in fname for k in ("mint", "deposit", "supply")) or ("SUPPLY" in touched_roles)
+            likely_borrow_path = "borrow" in fname or ("BALANCE" in touched_roles and likely_supply_path)
 
-            has_require = ("require(" in src_low) or ("assert(" in src_low)
-            checks_supply_cap = has_require and ("supplycap" in src_low) and ("<=" in src_low or "<" in src_low)
-            checks_borrow_cap = has_require and ("borrowcap" in src_low) and ("<=" in src_low or "<" in src_low)
+            has_require = ("require(" in src_low) or ("assert(" in src_low) or ("revert(" in src_low)
+            reads_any_cap = any(cap in src_low for cap in contract_cap_vars)
+            enforces_cap = has_require and reads_any_cap and ("<=" in src_low or "<" in src_low)
 
             flags: list[str] = []
             score = 0
 
-            if is_external and likely_supply_path and any("supplycap" in v.lower() for v in contract_cap_vars):
-                if not checks_supply_cap:
-                    flags.append("SUPPLY_CAP_BYPASS")
-                    score += 40
+            if is_external and likely_supply_path:
+                if not enforces_cap:
+                    flags.append("MISSING_CAP_ENFORCEMENT")
+                    score += 50
 
-            if is_external and likely_borrow_path and any("borrowcap" in v.lower() for v in contract_cap_vars):
-                if not checks_borrow_cap:
+            if is_external and likely_borrow_path:
+                if not enforces_cap and "MISSING_CAP_ENFORCEMENT" not in flags:
                     flags.append("BORROW_CAP_BYPASS")
                     score += 40
 
             if weak_access and flags:
                 flags.append("UNPROTECTED_CAP_MUTATION_PATH")
-                score += 10
+                score += 15
 
             node_data["cap_enforcement_flags"] = flags
             node_data["cap_enforcement_issue"] = len(flags) > 0
@@ -3317,7 +3600,6 @@ class GraphBuilder:
         Flags reward-index reset/inflation/manipulation patterns that can cause
         hidden inflation vectors.
         """
-        reward_hints = ["rewardindex", "rewardpertoken", "accrewardpershare", "compspeed", "rewardrate", "rewards"]
         for node_id, node_data in self.graph.nodes(data=True):
             if node_data.get("type") != "function":
                 continue
@@ -3326,12 +3608,12 @@ class GraphBuilder:
             reward_writes = []
             for var_id in writes:
                 vdata = self.graph.nodes.get(var_id, {})
-                vname = vdata.get("name", "")
-                tags = vdata.get("sensitivity_tags", [])
-                if "REWARD_CRITICAL" in tags or self._name_has_any(vname, reward_hints):
-                    reward_writes.append(vname.lower())
+                vname = str(vdata.get("name", "")).lower()
+                tags = vdata.get("sensitivity_tags", []) or []
+                if str(vdata.get("accounting_role", "")) == "INDEX" or "REWARD_CRITICAL" in tags:
+                    reward_writes.append(vname)
 
-            src = (node_data.get("source_code", "") or "").lower()
+            src = str(node_data.get("source_code", "") or "").lower()
             weak_access = not node_data.get("is_protected", False)
             flags: list[str] = []
             score = 0
@@ -3358,38 +3640,42 @@ class GraphBuilder:
 
     def _detect_monotonic_variable_issues(self):
         """
-        Story 4.4 — Monotonic variable detector.
+        Story 4.2 — Monotonic Verification.
 
-        Detects unexpected decreases in monotonic variables such as borrowIndex,
-        rewardIndex, and accumulators.
+        Detects unexpected decreases or unprotected resets in INDEX variables.
         """
-        mono_hints = ["borrowindex", "rewardindex", "accumulator", "accreward", "interestindex"]
-
         for node_id, node_data in self.graph.nodes(data=True):
             if node_data.get("type") != "function":
                 continue
 
             _, writes = self._function_state_sets(node_id)
-            mono_vars = []
+            idx_vars = []
             for var_id in writes:
-                vname = (self.graph.nodes.get(var_id, {}).get("name", "") or "").lower()
-                if self._name_has_any(vname, mono_hints):
-                    mono_vars.append(vname)
+                vdata = self.graph.nodes.get(var_id, {})
+                if str(vdata.get("accounting_role", "")) == "INDEX":
+                    idx_vars.append(str(vdata.get("name", "")).lower())
 
-            src = (node_data.get("source_code", "") or "").lower()
+            src = str(node_data.get("source_code", "") or "").lower()
+            weak_access = not node_data.get("is_protected", False)
             flags: list[str] = []
             score = 0
 
-            if mono_vars:
-                for mv in mono_vars:
+            if idx_vars:
+                for iv in idx_vars:
                     decreases = (
-                        f"{mv} -=" in src
-                        or f"{mv}-=" in src
-                        or re.search(rf"{re.escape(mv)}\s*=\s*{re.escape(mv)}\s*-\s*", src) is not None
+                        f"{iv} -=" in src
+                        or f"{iv}-=" in src
+                        or re.search(rf"{re.escape(iv)}\s*=\s*{re.escape(iv)}\s*-\s*", src) is not None
                     )
+                    resets = f"{iv} = 0" in src or f"{iv}=0" in src
+                    
                     if decreases:
-                        flags.append(f"MONOTONICITY_VIOLATION:{mv}")
-                        score += 40
+                        flags.append(f"NON_MONOTONIC_INDEX:{iv}")
+                        score += 50
+                    
+                    if resets and weak_access:
+                        flags.append(f"UNGUARDED_INDEX_MUTATION:{iv}")
+                        score += 50
 
             node_data["monotonicity_flags"] = flags
             node_data["monotonicity_issue"] = len(flags) > 0
@@ -3398,6 +3684,48 @@ class GraphBuilder:
     # ================================================================
     # Dev Story 6 — External Call Risk Analyzer
     # ================================================================
+
+    def _classify_external_call(self, caller_contract: str, target_id: str, edge_data: dict) -> str:
+        """
+        Classifies an external call into one of:
+        TOKEN_TRANSFER, ORACLE, SELF_CALL, DELEGATECALL, LOW_LEVEL_CALL, UNTRUSTED_CONTRACT
+        """
+        target_name = ""
+        target_contract = ""
+        call_type = edge_data.get("call_type", "")
+        expr = str(edge_data.get("target_expression", "")).lower()
+
+        if target_id and self.graph.has_node(target_id):
+            target_data = self.graph.nodes[target_id]
+            target_name = str(target_data.get("name", "")).lower()
+            target_contract = target_data.get("contract", "")
+
+        # 1. SELF_CALL
+        if caller_contract and target_contract and caller_contract == target_contract:
+            return "SELF_CALL"
+        if "this." in expr:
+            return "SELF_CALL"
+
+        # 2. DELEGATECALL
+        if "delegatecall" in call_type.lower() or "delegatecall(" in expr:
+            return "DELEGATECALL"
+
+        # 3. LOW_LEVEL_CALL
+        if ".call{" in expr or ".call(" in expr or ".staticcall(" in expr:
+            return "LOW_LEVEL_CALL"
+
+        # 4. TOKEN_TRANSFER
+        transfer_keywords = ["transfer", "transferfrom", "approve", "safetransfer"]
+        if any(k in target_name for k in transfer_keywords) or any(k in expr for k in transfer_keywords):
+            return "TOKEN_TRANSFER"
+
+        # 5. ORACLE
+        oracle_keywords = ["price", "latestrounddata", "oracle", "getexchangerate"]
+        if any(k in target_name for k in oracle_keywords) or any(k in expr for k in oracle_keywords):
+            return "ORACLE"
+
+        # 6. UNTRUSTED_CONTRACT (Default)
+        return "UNTRUSTED_CONTRACT"
 
     def _analyze_external_call_risks(self):
         """
@@ -3412,48 +3740,71 @@ class GraphBuilder:
 
             tags: list[str] = []
             score = 0
-
-            if node_data.get("reentrancy_risk"):
-                tags.append("REENTRANCY_RISK")
-                score += 45
-
-            if node_data.get("unchecked_external_return"):
-                tags.append("UNCHECKED_RETURN")
-                score += 25
-
-            # Fallback path: edge-level unchecked calls.
-            has_unchecked_edge = False
-            has_external_dependency = False
             caller_contract = node_data.get("contract", "")
+
+            # Baseline flags from previous passes
+            raw_reentrancy = node_data.get("reentrancy_risk", False)
+            raw_unchecked = node_data.get("unchecked_external_return", False)
+
+            has_risky_call = False
+            has_unchecked_risky_call = False
+            has_risky_call_before_write = False
+
+            call_classes = set()
+
             for _, target, edge_data in self.graph.out_edges(node_id, data=True):
                 if edge_data.get("relationship") != "EXTERNAL_CALL":
                     continue
+                
+                # Dev Story 6: Classify the call
+                call_class = self._classify_external_call(caller_contract, target, edge_data)
+                call_classes.add(call_class)
 
-                if edge_data.get("return_value_checked") is False:
-                    has_unchecked_edge = True
+                # Determine if this call is inherently "risky" contextually
+                is_untrusted = call_class in ("UNTRUSTED_CONTRACT", "LOW_LEVEL_CALL", "DELEGATECALL")
+                is_tainted = len(node_data.get("taint_sources", [])) > 0 or node_data.get("has_taint_risk", False)
+                is_unchecked = edge_data.get("return_value_checked") is False
 
+                # We consider it a contextually risky external dependency if it's untrusted
+                # OR if it uses tainted parameters (implying attacker controls the target/input).
+                if is_untrusted or is_tainted:
+                    has_risky_call = True
+                    if is_unchecked:
+                        has_unchecked_risky_call = True
+
+                # Determine if a risky call happens BEFORE a state update
                 target_data = self.graph.nodes.get(target, {})
-                if target_data.get("type") == "function":
-                    callee_contract = target_data.get("contract", "")
-                    cross_contract = callee_contract and callee_contract != caller_contract
-                    if cross_contract:
-                        if (
-                            target_data.get("writes_state")
-                            or len(target_data.get("propagated_state_variables", [])) > 0
-                            or target_data.get("has_dangerous_sequence")
-                        ):
-                            has_external_dependency = True
+                writes_state = target_data.get("writes_state", False) or len(target_data.get("propagated_state_variables", [])) > 0
+                if (is_untrusted or is_tainted) and (writes_state or node_data.get("state_write_after_external_call", False)):
+                    has_risky_call_before_write = True
 
-            if has_unchecked_edge and "UNCHECKED_RETURN" not in tags:
-                tags.append("UNCHECKED_RETURN")
-                score += 25
+            node_data["external_call_classes"] = list(call_classes)
 
-            # Also treat CEI-style external side effects as external dependency risk.
-            if has_external_dependency or (
-                node_data.get("makes_external_call", False)
-                and node_data.get("state_write_after_external_call", False)
-            ):
-                tags.append("EXTERNAL_DEPENDENCY_RISK")
+            # --- Apply Contextual Scoring ---
+
+            # Reentrancy: Only boost if there is actually a risky external call.
+            # Standard token transfers (without other risky flags) do not get the massive 45pt reentrancy penalty.
+            if raw_reentrancy:
+                tags.append("REENTRANCY_RISK")
+                if has_risky_call or has_risky_call_before_write:
+                    score += 45
+                else:
+                    # Token/Oracle reentrancy is a known anti-pattern but vastly lower risk.
+                    score += 10
+
+            # Unchecked Return: Only penalize if the call itself was risky (or raw is flagged).
+            if raw_unchecked or has_unchecked_risky_call:
+                if "UNCHECKED_RETURN" not in tags:
+                    tags.append("UNCHECKED_RETURN")
+                if has_risky_call:
+                    score += 25
+                else:
+                    score += 5
+
+            # External Dependency:
+            if has_risky_call or has_risky_call_before_write:
+                if "EXTERNAL_DEPENDENCY_RISK" not in tags:
+                    tags.append("EXTERNAL_DEPENDENCY_RISK")
                 score += 30
 
             node_data["external_risk_tags"] = tags
@@ -3463,6 +3814,152 @@ class GraphBuilder:
     # ================================================================
     # Story 4.2 / Epic 3, Story 3.1 — Multi-Dimensional Risk Scoring
     # ================================================================
+    def _node_has_sensitive_action(self, node_data: Dict[str, Any]) -> bool:
+        """
+        True when a function performs state mutation or impacts sensitive state.
+        Used by exploit path feasibility checks.
+        """
+        if node_data.get("writes_state") or len(node_data.get("propagated_state_variables", [])) > 0:
+            return True
+        if node_data.get("can_escalate_privileges") or node_data.get("is_unprotected_mutator"):
+            return True
+        if node_data.get("has_dangerous_sequence"):
+            return True
+        for tw in node_data.get("tainted_state_writes", []):
+            if tw.get("sensitivity"):
+                return True
+        for var_id in node_data.get("propagated_state_variables", []):
+            var_data = self.graph.nodes.get(var_id, {})
+            if var_data.get("type") == "state_variable" and var_data.get("is_sensitive"):
+                return True
+        return False
+
+    def _has_viable_attacker_path(self, target_node_id: str) -> bool:
+        """
+        Returns True iff at least one CALLS path from an external entry reaches
+        target_node_id and that path contains state mutation or sensitive action.
+        """
+        target_data = self.graph.nodes.get(target_node_id, {})
+        if target_data.get("type") != "function":
+            return False
+
+        entry_points = target_data.get("entry_points", [])
+        if not entry_points and target_data.get("is_external_entry"):
+            entry_points = [target_node_id]
+        if not entry_points:
+            return False
+
+        for entry in entry_points:
+            if not self.graph.has_node(entry):
+                continue
+            entry_data = self.graph.nodes.get(entry, {})
+            if entry_data.get("type") != "function":
+                continue
+
+            queue = deque([(entry, self._node_has_sensitive_action(entry_data))])
+            visited = {(entry, self._node_has_sensitive_action(entry_data))}
+
+            while queue:
+                current, seen_sensitive_action = queue.popleft()
+                if current == target_node_id and seen_sensitive_action:
+                    return True
+
+                for _, nxt, edge_data in self.graph.out_edges(current, data=True):
+                    if edge_data.get("relationship") != "CALLS":
+                        continue
+                    nxt_data = self.graph.nodes.get(nxt, {})
+                    if nxt_data.get("type") != "function":
+                        continue
+                    next_seen = seen_sensitive_action or self._node_has_sensitive_action(nxt_data)
+                    state = (nxt, next_seen)
+                    if state in visited:
+                        continue
+                    visited.add(state)
+                    queue.append(state)
+
+        return False
+
+    def _compute_negative_safety_signals(self):
+        """
+        Dev Story 1 — precision hard-filter.
+
+        Computes function-level negative evidence and assigns:
+          - safety_score: higher means stronger structural evidence of safety.
+          - modifies_sensitive_storage: direct/indirect writes to sensitive vars.
+        """
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+
+            ac_type = node_data.get("access_control_type", "none")
+            strict_role_based_access = ac_type in ("modifier", "require-based", "both")
+
+            has_external_edges = any(
+                edge_data.get("relationship") == "EXTERNAL_CALL"
+                for _, _, edge_data in self.graph.out_edges(node_id, data=True)
+            )
+            no_external_calls = (
+                not node_data.get("makes_external_call", False)
+                and not has_external_edges
+            )
+
+            no_state_mutation = (
+                not node_data.get("writes_state", False)
+                and len(node_data.get("propagated_state_variables", [])) == 0
+            )
+
+            no_tainted_inputs = (
+                not node_data.get("has_taint_risk", False)
+                and len(node_data.get("taint_sources", [])) == 0
+                and len(node_data.get("cross_function_taint_paths", [])) == 0
+            )
+
+            sensitive_writes = set()
+            for var_id in node_data.get("propagated_state_variables", []):
+                var_data = self.graph.nodes.get(var_id, {})
+                if var_data.get("type") != "state_variable":
+                    continue
+                if var_data.get("is_sensitive"):
+                    sensitive_writes.add(var_id)
+            for tw in node_data.get("tainted_state_writes", []):
+                if tw.get("sensitivity"):
+                    sensitive_writes.add(tw.get("state_var", "__unknown_sensitive_write"))
+
+            modifies_sensitive_storage = len(sensitive_writes) > 0
+            no_critical_storage_writes = not modifies_sensitive_storage
+
+            safety_score = 0
+            if strict_role_based_access:
+                safety_score += 12
+            if no_external_calls:
+                safety_score += 12
+            if no_state_mutation:
+                safety_score += 14
+            if no_tainted_inputs:
+                safety_score += 14
+            if no_critical_storage_writes:
+                safety_score += 18
+
+            safe_profile = (
+                strict_role_based_access
+                and no_external_calls
+                and no_state_mutation
+                and no_tainted_inputs
+                and no_critical_storage_writes
+                and not modifies_sensitive_storage
+            )
+            if safe_profile:
+                safety_score += 30
+
+            node_data["strict_role_based_access"] = strict_role_based_access
+            node_data["no_external_calls"] = no_external_calls
+            node_data["no_state_mutation"] = no_state_mutation
+            node_data["no_tainted_inputs"] = no_tainted_inputs
+            node_data["no_critical_storage_writes"] = no_critical_storage_writes
+            node_data["modifies_sensitive_storage"] = modifies_sensitive_storage
+            node_data["safe_profile"] = safe_profile
+            node_data["safety_score"] = max(0, min(100, int(round(safety_score))))
+
     def _compute_global_risk_scores(self):
         """
         Computes multi-dimensional risk scores for each function node.
@@ -3483,6 +3980,10 @@ class GraphBuilder:
 
         Backward-compatible: risk_score is kept as an alias for final_score.
         """
+        # Ensure negative evidence metadata exists even when tests call this
+        # scorer directly without running the full build_graph pipeline.
+        self._compute_negative_safety_signals()
+
         for node_id, node_data in self.graph.nodes(data=True):
             if node_data.get("type") != "function":
                 continue
@@ -3679,11 +4180,35 @@ class GraphBuilder:
                 + exploitability * 0.35
                 + impact * 0.25
             )
-            final_int = int(round(final))
+
+            has_taint_involvement = (
+                node_data.get("has_taint_risk", False)
+                or len(node_data.get("taint_sources", [])) > 0
+                or len(node_data.get("cross_function_taint_paths", [])) > 0
+                or len(node_data.get("tainted_state_writes", [])) > 0
+            )
+            has_state_mutation = (
+                node_data.get("writes_state", False)
+                or len(node_data.get("propagated_state_variables", [])) > 0
+            )
+            has_sensitive_impact = (
+                node_data.get("modifies_sensitive_storage", False)
+                or any(tw.get("sensitivity") for tw in node_data.get("tainted_state_writes", []))
+            )
+
+            if not (has_taint_involvement or has_state_mutation or has_sensitive_impact):
+                # Structural-only shape should not clear hotspot thresholds by itself.
+                final = min(final, 55.0)
+
+            base_int = int(round(final))
+            safety_score = int(node_data.get("safety_score", 0) or 0)
+            final_int = max(0, base_int - safety_score)
 
             node_data["structural_score"] = structural
             node_data["exploitability_score"] = exploitability
             node_data["impact_score"] = impact
+            node_data["base_score"] = base_int
+            node_data["safety_score"] = safety_score
             node_data["final_score"] = final_int
             node_data["risk_score"] = final_int   # backward compat
             node_data["risk_categories"] = risk_categories
@@ -3696,12 +4221,28 @@ class GraphBuilder:
         Computes an exploit-target score (0-100) and eligibility flag for
         ExploitWriter prioritization.
         """
-        threshold = 65
+        threshold = 75
+        economic_analyzer = EconomicAnalyzer(self.graph)
         for node_id, node_data in self.graph.nodes(data=True):
             if node_data.get("type") != "function":
                 continue
 
             score = 0
+
+            has_taint_involvement = (
+                node_data.get("has_taint_risk", False)
+                or len(node_data.get("taint_sources", [])) > 0
+                or len(node_data.get("cross_function_taint_paths", [])) > 0
+                or len(node_data.get("tainted_state_writes", [])) > 0
+            )
+            has_state_mutation = (
+                node_data.get("writes_state", False)
+                or len(node_data.get("propagated_state_variables", [])) > 0
+            )
+            has_sensitive_impact = (
+                node_data.get("modifies_sensitive_storage", False)
+                or any(tw.get("sensitivity") for tw in node_data.get("tainted_state_writes", []))
+            )
 
             # Taint depth proxy
             taint_sources = node_data.get("taint_sources", [])
@@ -3730,17 +4271,70 @@ class GraphBuilder:
             # Multi-function exploit chain depth
             chain_len = node_data.get("max_chain_length", 0)
             if chain_len >= 2:
-                score += min(20, (chain_len - 1) * 7)
+                score += chain_len * 10
+
+            # --- Dev Story 5: Target Score Calibration Boosts ---
+            if has_taint_involvement:
+                score += 20
+            if has_sensitive_impact:
+                score += 20
+            if node_data.get("uses_tainted_math"):
+                score += 15
+            if "MISSING_CAP_ENFORCEMENT" in node_data.get("cap_enforcement_flags", []):
+                score += 15
+            if node_data.get("can_escalate_privileges"):
+                score += 20
+
+            # --- Dev Story 5: Target Score Calibration Penalties ---
+            if node_data.get("is_protected"):
+                score -= 20
+            if node_data.get("is_view_or_pure"):
+                score -= 50
+            if not node_data.get("is_external_entry"):
+                score -= 30
+            if not has_taint_involvement:
+                score -= 20
 
             # Blend with global final score so exploit targeting aligns with
             # core risk model but still emphasizes exploitability signals.
             final_score = node_data.get("final_score", node_data.get("risk_score", 0))
             score = int(round(score * 0.7 + min(100, final_score) * 0.3))
+
+            # Dev Story 7 & 8: Filter out impossible chains and apply feasibility + economic weighting
+            best_feasibility = 0.0
+            best_economic_impact = 1.0
+            has_valid_chains = False
+            
+            if node_data.get("is_chain_entry") and len(node_data.get("exploit_chains", [])) > 0:
+                valid_chains = [c for c in node_data["exploit_chains"] if c.get("feasibility_score", 0.0) > 0.0]
+                if valid_chains:
+                    has_valid_chains = True
+                    for c in valid_chains:
+                        economic_analyzer.evaluate_chain_economic_impact(c)
+                        
+                    best_feasibility = max((c.get("feasibility_score", 0.0) for c in valid_chains), default=0.0)
+                    best_economic_impact = max((c.get("economic_impact_score", 1.0) for c in valid_chains), default=1.0)
+                else:
+                    score = 0
+            
+            if has_valid_chains:
+                feasibility_weight = 0.4 + 0.6 * best_feasibility
+                score = int(round(score * feasibility_weight * best_economic_impact))
+
+            if not (has_taint_involvement or has_state_mutation or has_sensitive_impact):
+                # Structural-only/shape-only evidence is insufficient for exploit writer handoff.
+                score = min(score, threshold - 1)
+
             score = max(0, min(100, score))
+
+            has_viable_attacker_path = self._has_viable_attacker_path(node_id)
+            if node_data.get("is_chain_entry") and len(node_data.get("exploit_chains", [])) > 0 and not has_valid_chains:
+                has_viable_attacker_path = False
 
             node_data["exploit_target_score"] = score
             node_data["exploit_target_threshold"] = threshold
-            node_data["send_to_exploit_writer"] = score >= threshold
+            node_data["has_viable_attacker_path"] = has_viable_attacker_path
+            node_data["send_to_exploit_writer"] = score >= threshold and has_viable_attacker_path
 
     # ================================================================
     # Epic 8 — Semantic Vulnerability Detection
@@ -3834,6 +4428,15 @@ class GraphBuilder:
             unc_write = unchecked and writes
             unsafe = bool(UNSAFE_CAST_RE.search(src))
 
+            # Dev Story 8 Arithmetic Extractions
+            uses_division = bool(re.search(r'(?<!/)/(?!/|\*)|\.div\(', src))
+            uses_multiplication = bool(re.search(r'\*(?!\*)|\.mul\(', src))
+            uses_ratio_math = uses_division and uses_multiplication
+            updates_reward_index = bool(re.search(r'(?i)(reward_?index|reward_?per_?token|acc_?reward|reward_?rate)\s*(\+?=|-?=|=)', src))
+            mints_shares_proportionally = bool(re.search(r'(?i)(mint|issue).*(shares|liquidity|pool_?tokens?)', src)) and uses_ratio_math
+            writes_total_supply = bool(re.search(r'(?i)totalSupply\s*(\+?=|-?=|=)', src)) or bool(re.search(r'(?i)_mint\(', src))
+            writes_total_assets = bool(re.search(r'(?i)totalAssets\s*(\+?=|-?=|=)', src)) or bool(re.search(r'(?i)totalBorrows\s*(\+?=|-?=|=)', src))
+
             arith_score = 0
             cats = list(self.graph.nodes[node_id].get("risk_categories", []))
 
@@ -3853,6 +4456,14 @@ class GraphBuilder:
                 "unchecked_with_state_write":     unc_write,
                 "unsafe_type_cast":               unsafe,
                 "arithmetic_risk_score":          arith_score,
+                # Dev Story 8 Metadata
+                "uses_division": uses_division,
+                "uses_multiplication": uses_multiplication,
+                "uses_ratio_math": uses_ratio_math,
+                "updates_reward_index": updates_reward_index,
+                "mints_shares_proportionally": mints_shares_proportionally,
+                "writes_total_supply": writes_total_supply,
+                "writes_total_assets": writes_total_assets,
             })
 
             if arith_score > 0:

@@ -232,6 +232,52 @@ COMMON deployCode() MISTAKES TO AVOID:
 - CORRECT: deployCode("contracts/CErc20.sol:CErc20")
 - CORRECT: deployCode("contracts/CErc20.sol:CErc20", abi.encode(arg1, arg2))
 
+═══════════════════════════════════════════════════════
+SOLIDITY 0.5.x COMPATIBILITY — VIOLATIONS CAUSE COMPILE FAILURE
+═══════════════════════════════════════════════════════
+
+These rules apply because the TARGET contracts use Solidity 0.5.x, even though your
+TEST FILE uses ^0.8.0. The mocks you write must be 0.8-safe; the calls you make via
+interfaces go to 0.5.x contracts.
+
+RULE A — NO ABSTRACT CONTRACTS IN 0.5.x:
+  The `abstract` keyword does NOT exist in Solidity 0.5.x.
+  When you write a mock for a dependency (e.g. Comptroller, InterestRateModel):
+  DO NOT inherit from the legacy interface. Write a standalone minimal mock:
+
+  WRONG (causes Error 3656):
+    contract MockComptroller is ComptrollerInterface {
+        // forces you to implement 20+ functions
+    }
+
+  CORRECT:
+    contract MockComptroller {
+        bool public constant isComptroller = true;
+        function mintAllowed(address,address,uint256) external returns (uint256) { return 0; }
+        // ONLY add functions actually called in your test — nothing else
+    }
+
+RULE B — EXPLICIT address() CAST REQUIRED IN 0.5.x ABI:
+  When calling a legacy function that takes `address` but you have a contract variable,
+  you MUST cast explicitly. This applies even in your 0.8 test file calling via interface.
+
+  WRONG (causes Error 9553):
+    target.initialize(mockComptroller, mockIRM, ...)
+
+  CORRECT:
+    target.initialize(address(mockComptroller), address(mockIRM), ...)
+
+  Apply this to EVERY argument where you pass a contract variable to an address parameter.
+
+RULE C — NO uint256(address) IN 0.8 CODE:
+  WRONG:  uint256(someAddress)
+  CORRECT: uint256(uint160(someAddress))
+
+RULE D — DO NOT RE-INITIALIZE ALREADY-INITIALIZED CONTRACTS:
+  If a function reverts with "market may only be initialized once" or similar,
+  the contract has an initialization guard. This is NOT a vulnerability.
+  Stop retrying this exploit — the guard is real and working.
+
 GOAL:
 - Write a test that passes ONLY if the exploit succeeds.
 - Deploy the target contract via deployCode() in setUp().
