@@ -138,6 +138,7 @@ def _build_interface(
         visibility = "external"
         mutability = ""
         returns_clause = ""
+        is_payable = False
 
         if graph is not None:
             node_id = f"{contract_name}::{fn_name}"
@@ -147,12 +148,30 @@ def _build_interface(
             if node_data.get("is_view_or_pure"):
                 pure = node_data.get("is_pure", False)
                 mutability = " pure" if pure else " view"
+            # Check if function is payable from graph data
+            is_payable = bool(node_data.get("is_payable", False))
+        else:
+            # No graph: for pre-0.8 contracts, non-view functions default to payable
+            # because Solidity 0.4/0.5 functions were payable by default
+            is_payable = True
+
+        # If graph exists but doesn't have is_payable field, fall back to
+        # assuming payable for any non-view/non-pure function in a legacy contract
+        if graph is not None and not mutability and not is_payable:
+            node_id = f"{contract_name}::{fn_name}"
+            node_data = graph.nodes.get(node_id, {})
+            # If there's no explicit is_payable=False set, assume payable for safety
+            # Legacy 0.4.x contracts had payable as default behavior
+            if "is_payable" not in node_data:
+                is_payable = True
 
         params_str = ", ".join(
             f"{_sanitize_type(t)} arg{i}" for i, t in enumerate(param_types)
         )
 
-        fn_line = f"    function {fn_name}({params_str}){visibility and ' external'}{mutability}{returns_clause};"
+        # Build the function line with payable if needed
+        payable_kw = " payable" if (is_payable and not mutability) else ""
+        fn_line = f"    function {fn_name}({params_str}) external{payable_kw}{mutability}{returns_clause};"
         fn_lines.append(fn_line)
 
     if not fn_lines:
@@ -163,7 +182,7 @@ def _build_interface(
     return header + "\n" + "\n".join(fn_lines) + "\n" + footer
 
 
-def resolve_deploy_code_path(contract_name: str, repo_manifest: list[str]) -> str:
+def resolve_deploy_code_path(contract_name: str, repo_manifest: list[str], real_sources: dict[str, str] | None = None) -> str:
     """
     Resolve the correct artifact path for Foundry's deployCode() cheatcode.
 
@@ -183,5 +202,12 @@ def resolve_deploy_code_path(contract_name: str, repo_manifest: list[str]) -> st
     ]
     if fuzzy_matches:
         return f"{sorted(fuzzy_matches, key=len)[0]}:{contract_name}"
+
+    if real_sources:
+        import re
+        pattern = re.compile(rf'\b(?:contract|library|interface)\s+{contract_name}\b')
+        for path, code in real_sources.items():
+            if pattern.search(code):
+                return f"{path}:{contract_name}"
 
     return f"contracts/{contract_name}.sol:{contract_name}"

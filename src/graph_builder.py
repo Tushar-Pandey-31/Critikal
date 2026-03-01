@@ -10,20 +10,55 @@ from .economic_analyzer import EconomicAnalyzer
 class GraphBuilder:
     def __init__(self):
         self.graph = nx.DiGraph()
+        self._file_cache: dict[str, str] = {}
+
+    def _read_file_cached(self, path: str) -> str:
+        """Read a file with caching to avoid re-reading the same .sol file for every function."""
+        if path not in self._file_cache:
+            with open(path, "r", encoding="utf-8") as f:
+                self._file_cache[path] = f.read()
+        return self._file_cache[path]
+
+    @staticmethod
+    def _is_library_contract(contract) -> bool:
+        """Return True if a contract lives inside a lib/ or node_modules/ dependency tree."""
+        try:
+            if contract.source_mapping and contract.source_mapping.filename:
+                src = str(contract.source_mapping.filename.absolute).replace("\\", "/")
+                if "/lib/" in src or "/node_modules/" in src:
+                    return True
+        except Exception:
+            pass
+        return False
 
     def build_graph(self, slither_obj: Slither):
         """
         Iterates through the Slither object and constructs the Knowledge Graph.
+        Library contracts (under lib/ or node_modules/) are added as lightweight
+        nodes for reference but excluded from expensive enrichment passes.
         """
+        project_contracts = []
+        lib_count = 0
+
         for contract in slither_obj.contracts:
+            is_lib = self._is_library_contract(contract)
             self._add_contract_node(contract)
             self._add_inheritance_edges(contract)
-            
+
+            if is_lib:
+                lib_count += 1
+                continue
+
+            project_contracts.append(contract)
+
             for function in contract.functions:
                 self._add_function_node(contract, function)
                 self._add_edge_defines(contract, function)
                 self._add_call_edges(contract, function)
                 self._add_state_access_edges(contract, function)
+
+        if lib_count:
+            print(f"  [GraphBuilder] Skipped {lib_count} library contracts from enrichment (kept as reference nodes).")
         
         # Enrich function nodes with storage mutation metadata
         self._enrich_storage_mutations()
@@ -101,33 +136,40 @@ class GraphBuilder:
         # Dev Story 5: Exploit Target Scoring Engine
         self._compute_exploit_target_scores()
 
+        self._file_cache.clear()
+
 
     def _add_contract_node(self, contract):
         node_id = contract.name
+        source_file = ""
+        try:
+            if contract.source_mapping and contract.source_mapping.filename:
+                source_file = str(contract.source_mapping.filename.absolute)
+        except Exception:
+            pass
         metadata = {
             "type": "contract",
             "name": contract.name,
             "is_upgradeable": contract.is_upgradeable,
             "is_library": getattr(contract, "is_library", False),
             "is_interface": getattr(contract, "is_interface", False),
+            "source_file": source_file,
         }
         self.graph.add_node(node_id, **metadata)
 
     def _add_function_node(self, contract, function):
-        # Unique ID: ContractName::FunctionName
-        # Handling function overloading might require adding signature, but for now simple name
         node_id = f"{contract.name}::{function.name}"
         
-        # Get source code if available
         source_code = ""
+        source_file = ""
         if function.source_mapping:
             try:
                 src_mapping = function.source_mapping
-                with open(src_mapping.filename.absolute, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    source_code = content[src_mapping.start:src_mapping.start + src_mapping.length]
-            except Exception as e:
-                # Log warning or carry on
+                abs_path = str(src_mapping.filename.absolute)
+                source_file = abs_path
+                content = self._read_file_cached(abs_path)
+                source_code = content[src_mapping.start:src_mapping.start + src_mapping.length]
+            except Exception:
                 pass
 
         # Get modifiers
@@ -165,6 +207,7 @@ class GraphBuilder:
             "is_external_entry": is_external_entry,
             "is_view_or_pure": is_view_or_pure,
             "source_code": source_code,
+            "source_file": source_file,
             "modifiers": modifiers,
             "signature": signature or "",
         }
@@ -516,6 +559,8 @@ class GraphBuilder:
         """
         # --- Phase 1: Extract modifier definitions and create nodes ---
         for contract in slither_obj.contracts:
+            if self._is_library_contract(contract):
+                continue
             for modifier in contract.modifiers:
                 mod_node_id = f"{contract.name}::modifier::{modifier.name}"
                 
@@ -1792,6 +1837,8 @@ class GraphBuilder:
         """
         contract_creates: Dict[str, bool] = {}
         for contract in slither_obj.contracts:
+            if self._is_library_contract(contract):
+                continue
             creates = False
             for function in contract.functions:
                 if creates:
@@ -1811,9 +1858,8 @@ class GraphBuilder:
                     try:
                         if function.source_mapping:
                             sm = function.source_mapping
-                            with open(sm.filename.absolute, "r", encoding="utf-8") as fh:
-                                content = fh.read()
-                                expression = content[sm.start:sm.start + sm.length]
+                            content = self._read_file_cached(str(sm.filename.absolute))
+                            expression = content[sm.start:sm.start + sm.length]
                     except Exception:
                         pass
                     if re.search(r"\bnew\s+[A-Z]\w*\s*\(", expression):

@@ -85,6 +85,12 @@ async def async_main():
         default=None,
         help='Optional JSON mapping for on-chain recon, e.g. \'{"Vault":"0x...","Token":"0x..."}\'',
     )
+    parser.add_argument(
+        "--auto-ingest",
+        action="store_true",
+        default=False,
+        help="Auto-ingest RAG knowledge base if ChromaDB is empty",
+    )
     args = parser.parse_args()
 
     print("Initializing Penteam Coordinator Workflow...")
@@ -102,6 +108,26 @@ async def async_main():
     if "GOOGLE_API_KEY" not in os.environ:
         print("Error: GOOGLE_API_KEY not set in .env")
         sys.exit(1)
+
+    # 1b. Auto-ingest RAG knowledge base if empty
+    if args.auto_ingest:
+        from src.knowledge.paths import CHROMA_DB_PATH
+        _chroma_empty = True
+        if CHROMA_DB_PATH.exists():
+            try:
+                import chromadb
+                _client = chromadb.PersistentClient(path=str(CHROMA_DB_PATH))
+                _cols = _client.list_collections()
+                if _cols and any(c.count() > 0 for c in _cols):
+                    _chroma_empty = False
+            except Exception:
+                pass
+        if _chroma_empty:
+            print("RAG knowledge base is empty — running ingest...")
+            from src.knowledge.ingest import ingest_knowledge
+            ingest_knowledge()
+        else:
+            print("RAG knowledge base already populated — skipping ingest.")
 
     # 2. Ingest Repository
     print(f"Targeting Repository: {args.repo}")

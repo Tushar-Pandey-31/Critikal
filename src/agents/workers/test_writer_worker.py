@@ -25,6 +25,24 @@ from src.agents.workers.bridge_interface_generator import (
 
 _ERROR_RULES: list[tuple[str, str]] = [
     (
+        r"7006|Cannot set option.*value.*non-payable",
+        "PAYABLE FIX (Error 7006): You called a function with {value: X} but the interface "
+        "function is not marked `payable`.\n"
+        "The BridgeInterfaces.sol stub is missing `payable`. Do NOT import BridgeInterfaces.sol.\n"
+        "Fix: Define your OWN inline interface in your test file with `payable` on every "
+        "function that sends or receives ETH:\n\n"
+        "  WRONG (causes 7006):\n"
+        "    interface ITarget {\n"
+        "        function myFunc() external;\n"
+        "    }\n\n"
+        "  CORRECT:\n"
+        "    interface ITarget {\n"
+        "        function myFunc() external payable;\n"
+        "    }\n\n"
+        "Rule: ANY function you call with {value: X} MUST be `external payable` in the interface.\n"
+        "Do NOT import BridgeInterfaces.sol — define this interface yourself inline.",
+    ),
+    (
         r"9553",
         "CAST FIX (Error 9553): You passed a contract-typed variable where `address` is expected.\n"
         "Fix: Wrap every contract argument with explicit cast: `func(myContract)` → `func(address(myContract))`.\n"
@@ -51,9 +69,22 @@ _ERROR_RULES: list[tuple[str, str]] = [
     ),
     (
         r"Identifier already declared|2333",
-        "DUPLICATE IDENTIFIER FIX (Error 2333): Two imported files define the same contract name.\n"
-        "Fix: Remove one of the conflicting imports entirely. Check the NAMING CONFLICT WARNINGS section above.\n"
-        "If you need both, alias one: `import {ERC20 as BaseERC20} from \"...\";`",
+        "DUPLICATE IDENTIFIER FIX (Error 2333): You have a duplicate identifier in AttackContract.sol.\n\n"
+        "MOST COMMON CAUSE: You declared `bool public exploitSucceeded` (which auto-creates a getter)\n"
+        "AND ALSO wrote `function exploitSucceeded()`. Remove the function — the public variable\n"
+        "is sufficient. `bool public exploitSucceeded;` already provides `exploitSucceeded()` as a getter.\n\n"
+        "OTHER CAUSE: You defined the same interface or contract name TWICE in your file.\n"
+        "Fix: Define each interface EXACTLY ONCE, at the top of the file, before AttackContract.\n\n"
+        "CORRECT structure:\n"
+        "  pragma solidity ^0.8.0;\n"
+        "  interface ITarget {            ← define ONCE here\n"
+        "      function myFunc() external payable;\n"
+        "  }\n"
+        "  contract AttackContract {      ← then the contract\n"
+        "      bool public exploitSucceeded;  ← NO explicit function for this\n"
+        "      ITarget target;\n"
+        "      ...\n"
+        "  }                              ← NO second interface or function exploitSucceeded()\n"
     ),
     (
         r"uint256\(.*address\)|explicit type conversion.*address.*uint256",
@@ -102,6 +133,25 @@ _GUARD_PATTERNS: list[str] = [
     "initialization function",
 ]
 
+# Solidity patterns that indicate a time-lock guard on withdraw/collect
+_TIMELOCK_PATTERNS: list[re.Pattern] = [
+    re.compile(r'\bunlockTime\b', re.IGNORECASE),
+    re.compile(r'\blockTime\b', re.IGNORECASE),
+    re.compile(r'\block_time\b', re.IGNORECASE),
+    re.compile(r'now\s*[><=]+\s*\w*[Tt]ime', re.IGNORECASE),
+    re.compile(r'block\.timestamp\s*[><=]+\s*\w*[Tt]ime', re.IGNORECASE),
+    re.compile(r'\w*[Tt]ime\s*[><=]+\s*now', re.IGNORECASE),
+    re.compile(r'\w*[Tt]ime\s*[><=]+\s*block\.timestamp', re.IGNORECASE),
+    re.compile(r'require\s*\(.*[Tt]ime.*\)', re.IGNORECASE),
+]
+
+def _detect_timelock_in_source(source_code: str) -> bool:
+    """Return True if any time-lock guard pattern is found in the Solidity source."""
+    for pattern in _TIMELOCK_PATTERNS:
+        if pattern.search(source_code):
+            return True
+    return False
+
 
 def _classify_compile_error(error_text: str) -> str | None:
     """
@@ -121,6 +171,28 @@ def _detect_guard_hit(test_logs: str) -> bool:
     """
     logs_lower = test_logs.lower()
     return any(p.lower() in logs_lower for p in _GUARD_PATTERNS)
+
+
+def _detect_timelock_failure(test_logs: str) -> bool:
+    """
+    Returns True if the forge trace shows a time-lock silent no-op:
+    the collect/withdraw call returns immediately with [Stop] and no state change.
+    Signature: very low gas (< 5000) on the withdraw call after a deposit succeeds.
+    """
+    lines = test_logs.splitlines()
+    for i, line in enumerate(lines):
+        # Look for the withdraw/collect call that terminates immediately
+        if re.search(r'(Collect|CashOut|withdraw)\s*\(', line, re.IGNORECASE):
+            # Check if the next non-empty line is just a ← [Stop] with tiny gas
+            for j in range(i + 1, min(i + 5, len(lines))):
+                next_line = lines[j].strip()
+                if next_line and '←' in next_line and '[Stop]' in next_line:
+                    # Extract gas number from the call line, e.g. [2802]
+                    gas_match = re.search(r'\[(\d+)\]', line)
+                    if gas_match and int(gas_match.group(1)) < 10_000:
+                        return True
+                    break
+    return False
 
 
 class TestWriterWorker(WorkerAgent):
@@ -194,6 +266,111 @@ class TestWriterWorker(WorkerAgent):
             return candidate
         return ""
 
+    @staticmethod
+    def _deduplicate_interfaces(solidity_code: str) -> str:
+        """
+        Remove duplicate interface definitions from LLM-generated Solidity.
+        The LLM sometimes defines the same interface twice in AttackContract.sol.
+        Keep only the FIRST occurrence of each interface name.
+        """
+        import re
+        
+        # Match full interface blocks: interface IFoo { ... }
+        # Uses a simple brace-counting approach since regex can't handle nested braces
+        seen_interfaces: set[str] = set()
+        result_lines = []
+        lines = solidity_code.split('\n')
+        
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            # Check if this line starts an interface definition
+            m = re.match(r'^\s*interface\s+(\w+)\s*\{?\s*$', line)
+            if m:
+                iface_name = m.group(1)
+                if iface_name in seen_interfaces:
+                    # Skip this duplicate interface block entirely
+                    # Find the closing brace at the same nesting level
+                    depth = line.count('{') - line.count('}')
+                    i += 1
+                    while i < len(lines) and depth > 0:
+                        depth += lines[i].count('{') - lines[i].count('}')
+                        i += 1
+                    # Skip the closing brace line too if depth hit 0
+                    continue
+                else:
+                    seen_interfaces.add(iface_name)
+                    result_lines.append(line)
+                    # If opening brace is on same line, track depth
+                    depth = line.count('{') - line.count('}')
+                    if depth > 0:
+                        i += 1
+                        while i < len(lines) and depth > 0:
+                            depth += lines[i].count('{') - lines[i].count('}')
+                            result_lines.append(lines[i])
+                            i += 1
+                        continue
+            else:
+                result_lines.append(line)
+            i += 1
+        
+        return '\n'.join(result_lines)
+
+    @staticmethod
+    def _fix_exploit_succeeded_conflict(solidity_code: str) -> str:
+        """
+        Remove explicit `function exploitSucceeded()` when `bool public exploitSucceeded`
+        already exists. The public variable auto-generates a getter with the same
+        signature, so having both causes Error 2333 (Identifier already declared).
+        """
+        import re
+
+        has_public_var = bool(re.search(
+            r'\bbool\s+public\s+exploitSucceeded\b', solidity_code
+        ))
+        if not has_public_var:
+            return solidity_code
+
+        has_explicit_fn = bool(re.search(
+            r'\bfunction\s+exploitSucceeded\s*\(', solidity_code
+        ))
+        if not has_explicit_fn:
+            return solidity_code
+
+        lines = solidity_code.split('\n')
+        result_lines = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if re.match(r'\s*function\s+exploitSucceeded\s*\(', line):
+                depth = line.count('{') - line.count('}')
+                if depth > 0:
+                    i += 1
+                    while i < len(lines) and depth > 0:
+                        depth += lines[i].count('{') - lines[i].count('}')
+                        i += 1
+                    continue
+                elif '{' not in line:
+                    i += 1
+                    while i < len(lines):
+                        depth += lines[i].count('{') - lines[i].count('}')
+                        if depth > 0:
+                            i += 1
+                            while i < len(lines) and depth > 0:
+                                depth += lines[i].count('{') - lines[i].count('}')
+                                i += 1
+                            break
+                        i += 1
+                    continue
+                else:
+                    i += 1
+                    continue
+            else:
+                result_lines.append(line)
+            i += 1
+
+        return '\n'.join(result_lines)
+
     def _has_exact_test_exploit(self, code: str) -> bool:
         return bool(re.search(r"\bfunction\s+test_exploit\s*\(", code))
 
@@ -253,6 +430,394 @@ class TestWriterWorker(WorkerAgent):
                     )
 
         return True, "AUTHENTIC"
+
+    def _generate_test_scaffold(
+        self,
+        finding: "Finding",
+        deploy_path: str,
+        is_legacy: bool,
+        target_pragma: str | None,
+        bytecode_hex: str | None = None,
+        dep_bytecodes: dict[str, str] | None = None,
+        ctor_inputs: list[dict] | None = None,
+        hardcoded_addrs: list[str] | None = None,
+        addr_setters: list[str] | None = None,
+        warp_seconds: int = 0,
+    ) -> str:
+        """
+        Generate ExploitTest.t.sol from a fixed template.
+        This is YOUR CODE, not LLM output.
+
+        If bytecode_hex is provided (legacy pre-compiled contract), deploys
+        via inline assembly.  Otherwise uses Foundry's deployCode().
+        When dep_bytecodes and ctor_inputs are provided, deploys dependency
+        contracts first and passes their addresses as constructor args.
+        """
+        pragma = "^0.8.0" if is_legacy else (target_pragma or "^0.8.17")
+        contract = finding.affected_contract
+        vuln = (finding.vulnerability_class or "").lower()
+        is_reentrancy = "reentrancy" in vuln or "cei" in vuln
+
+        if is_reentrancy:
+            pre_state = "uint256 targetBefore = address(target).balance;"
+            assertion = (
+                'assertGt(address(attacker).balance, 0, "attacker drained nothing");\n'
+                '        assertLt(address(target).balance, targetBefore, '
+                '"target balance unchanged");'
+            )
+        elif "access_control" in vuln or "unprotected" in vuln:
+            pre_state = "// capture pre-state"
+            assertion = (
+                'assertTrue(attacker.exploitSucceeded(), '
+                '"access control exploit failed");'
+            )
+        elif "overflow" in vuln or "underflow" in vuln or "arithmetic" in vuln:
+            pre_state = "uint256 balanceBefore = address(target).balance;"
+            assertion = (
+                'assertTrue(attacker.exploitSucceeded(), '
+                '"arithmetic exploit failed");'
+            )
+        else:
+            pre_state = "uint256 stateBefore = address(target).balance;"
+            assertion = 'assertTrue(attacker.exploitSucceeded(), "exploit failed");'
+
+        bridge_import = ""
+
+        if bytecode_hex:
+            deploy_block, init_block = self._build_legacy_deploy_block(
+                bytecode_hex, dep_bytecodes or {}, ctor_inputs or [],
+                hardcoded_addrs or [], addr_setters or [],
+            )
+        else:
+            deploy_block = f'address targetAddr = deployCode("{deploy_path}");'
+            init_block = ""
+
+        deal_target = ""
+        if is_reentrancy:
+            deal_target = "\n        vm.deal(target, 10 ether);"
+
+        warp_line = ""
+        if warp_seconds > 0:
+            warp_line = f"\n        vm.warp(block.timestamp + {warp_seconds});"
+
+        return f"""// SPDX-License-Identifier: UNLICENSED
+// AUTO-GENERATED SCAFFOLD — do not edit
+// LLM writes AttackContract.sol only. This file is fixed.
+pragma solidity {pragma};
+import "forge-std/Test.sol";
+{bridge_import}
+import "./AttackContract.sol";
+
+contract ExploitTest is Test {{
+    address target;
+    AttackContract attacker;
+
+    function setUp() public {{
+        {deploy_block}
+        target = targetAddr;{init_block}{deal_target}
+        attacker = new AttackContract(target);
+        vm.deal(address(attacker), 10 ether);
+    }}
+
+    function test_exploit() public {{
+        {pre_state}{warp_line}
+        attacker.execute();
+        {assertion}
+    }}
+}}
+"""
+
+    @staticmethod
+    def _build_legacy_deploy_block(
+        bytecode_hex: str,
+        dep_bytecodes: dict[str, str],
+        ctor_inputs: list[dict],
+        hardcoded_addrs: list[str] | None = None,
+        addr_setters: list[str] | None = None,
+    ) -> tuple[str, str]:
+        """Build inline-assembly deployment code for legacy contracts.
+
+        Returns (deploy_block, init_block):
+          deploy_block — deploys deps + target
+          init_block   — vm.etch at hardcoded addrs + call setters on target
+        """
+        hardcoded_addrs = hardcoded_addrs or []
+        addr_setters = addr_setters or []
+        usable_deps = {
+            name: bc for name, bc in dep_bytecodes.items() if len(bc) > 0
+        }
+
+        lines: list[str] = []
+        dep_vars: list[str] = []
+
+        # Deploy dependency contracts
+        for i, (dep_name, dep_bc) in enumerate(usable_deps.items()):
+            var = f"_dep{i}"
+            lines.append(
+                f'bytes memory {var}Bc = hex"{dep_bc}";\n'
+                f"        address {var};\n"
+                f"        assembly {{ {var} := create(0, add({var}Bc, 0x20), mload({var}Bc)) }}"
+            )
+            dep_vars.append(var)
+
+        # vm.etch dep code at hardcoded addresses
+        etch_lines: list[str] = []
+        if dep_vars and hardcoded_addrs:
+            for hc_addr in hardcoded_addrs:
+                etch_lines.append(
+                    f"vm.etch({hc_addr}, {dep_vars[0]}.code);"
+                )
+
+        # Build target deployment
+        addr_param_count = sum(
+            1 for inp in ctor_inputs if inp.get("type") == "address"
+        )
+
+        if addr_param_count > 0 and dep_vars:
+            ctor_arg_parts: list[str] = []
+            dep_idx = 0
+            for inp in ctor_inputs:
+                if inp.get("type") == "address" and dep_idx < len(dep_vars):
+                    ctor_arg_parts.append(dep_vars[dep_idx])
+                    dep_idx += 1
+                elif inp.get("type", "").startswith(("uint", "int")):
+                    ctor_arg_parts.append(f'{inp["type"]}(0)')
+                elif inp.get("type") == "bool":
+                    ctor_arg_parts.append("false")
+                elif inp.get("type") == "address":
+                    ctor_arg_parts.append("address(0)")
+                else:
+                    ctor_arg_parts.append(f'{inp["type"]}(0)')
+
+            ctor_args_str = ", ".join(ctor_arg_parts)
+            target_deploy = (
+                f'bytes memory _bc = hex"{bytecode_hex}";\n'
+                f"        bytes memory _args = abi.encode({ctor_args_str});\n"
+                f"        bytes memory _deployData = bytes.concat(_bc, _args);\n"
+                f"        address targetAddr;\n"
+                f"        assembly {{ targetAddr := create(0, add(_deployData, 0x20), mload(_deployData)) }}\n"
+                f'        require(targetAddr != address(0), "legacy deploy failed");'
+            )
+        else:
+            target_deploy = (
+                f'bytes memory _bc = hex"{bytecode_hex}";\n'
+                f"        address targetAddr;\n"
+                f"        assembly {{ targetAddr := create(0, add(_bc, 0x20), mload(_bc)) }}\n"
+                f'        require(targetAddr != address(0), "legacy deploy failed");'
+            )
+
+        # Assemble deploy_block
+        all_deploy: list[str] = []
+        if lines:
+            all_deploy.append("\n        ".join(lines))
+        if etch_lines:
+            all_deploy.append("\n        ".join(etch_lines))
+        all_deploy.append(target_deploy)
+        deploy_block = "\n        ".join(all_deploy)
+
+        # Build init_block: call address setters on target
+        init_parts: list[str] = []
+        if addr_setters and dep_vars:
+            for setter_sig in addr_setters:
+                init_parts.append(
+                    f'target.call(abi.encodeWithSignature("{setter_sig}", {dep_vars[0]}));'
+                )
+
+        init_block = ""
+        if init_parts:
+            init_block = "\n        " + "\n        ".join(init_parts)
+
+        return deploy_block, init_block
+
+    def _build_attack_only_prompt(
+        self,
+        finding: "Finding",
+        error_history: list[str],
+        real_sources: dict[str, str] | None,
+        deploy_path: str,
+        is_legacy: bool,
+        target_pragma: str | None,
+        skip_rag: bool = False,
+        warp_seconds: int = 0,
+    ) -> list[dict[str, str]]:
+        """
+        Prompt that asks LLM to write ONLY AttackContract.sol.
+        ExploitTest.t.sol is already written by _generate_test_scaffold().
+        """
+        error_context = self._format_error_history(error_history)
+        pragma = "^0.8.0" if is_legacy else (target_pragma or "^0.8.17")
+        contract = finding.affected_contract
+
+        timelock_section = ""
+        if warp_seconds > 0:
+            timelock_section = f"""
+══════════════════════════════════════════════════
+TIME-LOCK GUARD DETECTED — READ CAREFULLY
+══════════════════════════════════════════════════
+This contract has a time-lock: the deposit/Put function sets `unlockTime = now + lockDuration`.
+The withdraw/Collect function silently returns (NO revert) if `now <= unlockTime`.
+
+The scaffold has already called `vm.warp(block.timestamp + {warp_seconds})` BEFORE execute() runs.
+The EVM clock is already past any reasonable lock period when your execute() is called.
+
+Your execute() MUST:
+  1. Call the DEPOSIT function (Put/deposit) with _lockTime = 0 (if it takes a lockTime arg)
+     This registers your account. Since vm.warp already ran, now > unlockTime = now + 0.
+  2. Call the WITHDRAW/COLLECT function — now > unlockTime is TRUE, so it will proceed
+  3. Re-enter inside receive() to drain more ETH each callback
+
+DO NOT call vm.warp inside AttackContract — the scaffold handles this.
+CRITICAL: If Put(uint _lockTime) exists, pass _lockTime = 0 — NOT any positive value.
+══════════════════════════════════════════════════
+"""
+        source_section = timelock_section
+        if real_sources:
+            source_section += (
+                "\n=== REAL CONTRACT SOURCE "
+                "(READ ONLY — understand logic, do not import) ===\n"
+            )
+            for path, code in real_sources.items():
+                source_section += f"// {path}\n{code}\n\n"
+
+        rag = "" if skip_rag else self._fetch_rag_context(finding)
+        err_rag = "" if skip_rag else (
+            self._fetch_error_rag_context(error_history) if error_history else ""
+        )
+
+        system = f"""You are an expert smart-contract exploit developer.
+You must write ONLY AttackContract.sol — the attack logic contract.
+
+══════════════════════════════════════════════════
+WHAT YOU ARE WRITING
+══════════════════════════════════════════════════
+A single Solidity file: AttackContract.sol
+
+It MUST contain exactly:
+  contract AttackContract {{
+      constructor(address _target) {{ ... }}
+      receive() external payable {{}}        ← MANDATORY always
+      fallback() external payable {{}}       ← MANDATORY always
+      function execute() external {{ ... }}    ← NOT payable, funded via vm.deal
+      bool public exploitSucceeded;          ← auto-generates getter, NO explicit function
+  }}
+
+CRITICAL: `bool public exploitSucceeded;` auto-generates a getter function.
+Do NOT also define `function exploitSucceeded()` — that causes Error 2333 (duplicate identifier).
+Use the public variable ONLY. Set it to true inside your logic when the exploit succeeds.
+
+══════════════════════════════════════════════════
+WHAT YOU ARE NOT WRITING
+══════════════════════════════════════════════════
+- Do NOT write ExploitTest.t.sol — already generated
+- Do NOT write setUp() or test_exploit() — already in scaffold
+- Do NOT import forge-std/Test.sol
+- Do NOT define or deploy {contract} — it is passed to your constructor
+- Do NOT write a mock of {contract}
+
+══════════════════════════════════════════════════
+PRAGMA AND IMPORTS
+══════════════════════════════════════════════════
+pragma solidity {pragma};
+// No imports needed — define interface inline
+
+══════════════════════════════════════════════════
+INLINE INTERFACE (define at file level, before AttackContract)
+══════════════════════════════════════════════════
+Define a minimal interface for {contract} with ONLY the functions you call.
+Mark ETH-receiving functions as payable:
+
+  interface I{contract} {{
+      function depositFunction() external payable;
+      function withdrawFunction(uint256 _am) external payable;
+      // Replace depositFunction/withdrawFunction with the REAL function names
+      // from the target contract. Do NOT assume Deposit/Collect — read the signatures.
+  }}
+
+══════════════════════════════════════════════════
+CRITICAL — DO NOT REDEFINE INTERFACES FROM BridgeInterfaces.sol:
+══════════════════════════════════════════════════
+  The scaffold does NOT import BridgeInterfaces.sol in two-file mode.
+  You are free to define any interface you need inline in AttackContract.sol.
+  Just make sure you only define each interface ONCE.
+  If you define `interface I{contract}` at line 5, do NOT define it again at line 50.
+
+══════════════════════════════════════════════════
+REENTRANCY PATTERN
+══════════════════════════════════════════════════
+The reentrancy loop lives in receive(), not execute().
+execute() seeds the deposit and triggers the first withdraw.
+The loop continues through receive() callbacks:
+
+  bool public exploitSucceeded;
+  uint256 reentryCount;
+  uint256 constant MAX_REENTRY = 3;
+  I{contract} target;
+
+  constructor(address _target) {{
+      target = I{contract}(_target);
+  }}
+
+  receive() external payable {{
+      if (reentryCount < MAX_REENTRY && address(target).balance >= 1 ether) {{
+          reentryCount++;
+          target.withdrawFunction(1 ether);
+      }} else {{
+          exploitSucceeded = true;
+      }}
+  }}
+
+  fallback() external payable {{}}
+
+  function execute() external {{
+      reentryCount = 0;
+      target.depositFunction{{value: 1 ether}}();
+      target.withdrawFunction(1 ether);
+  }}
+
+IMPORTANT: Replace depositFunction/withdrawFunction with the REAL function names
+from the target contract. Do NOT use Deposit/Collect unless those are the actual names.
+
+══════════════════════════════════════════════════
+FUNDING — HOW THE CONTRACT GETS ETH
+══════════════════════════════════════════════════
+The scaffold calls vm.deal(address(attacker), 10 ether) in setUp().
+Your contract already has 10 ETH when execute() is called.
+execute() is called WITHOUT msg.value — do NOT check msg.value.
+
+WRONG (will always revert):
+  require(msg.value >= 1 ether, "need ether");
+
+RIGHT (use existing balance):
+  target.depositFunction{{value: 1 ether}}();   // spends from balance
+
+Do NOT add ANY require() or if-check on msg.value in execute().
+The ETH is in address(this).balance, not msg.value.
+
+CRITICAL: `bool public exploitSucceeded` auto-generates a getter function.
+Do NOT also define `function exploitSucceeded()` — that causes Error 2333.
+
+══════════════════════════════════════════════════
+TARGET INFO
+══════════════════════════════════════════════════
+Contract: {contract}
+Function: {finding.affected_function}
+Vulnerability: {finding.vulnerability_class}
+Hypothesis: {finding.hypothesis}
+"""
+
+        user = (
+            f"{source_section}"
+            f"{rag}\n"
+            f"{err_rag}\n"
+            f"{error_context}\n\n"
+            "Write AttackContract.sol. "
+            "Output ONLY the Solidity code in a ```solidity block."
+        )
+
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
 
     _AUTOCORRECT_IMPORT_RE = re.compile(
         r'import\s+"([^"]+)"\s*;|import\s+\{[^}]+\}\s+from\s+"([^"]+)"\s*;'
@@ -498,6 +1063,17 @@ class TestWriterWorker(WorkerAgent):
                     continue
             if target_path:
                 break
+        if not target_path and self.graph is not None:
+            graph_source = self.graph.nodes.get(contract_name, {}).get("source_file", "")
+            if graph_source:
+                candidate = repo / graph_source
+                if not candidate.exists():
+                    candidate = repo / Path(graph_source.replace("\\", "/"))
+                if candidate.exists():
+                    target_path = candidate
+                    logger.info(
+                        f"[TestWriter] Resolved {contract_name} via graph source_file: {graph_source}"
+                    )
         if not target_path:
             return {}
         collected: dict[str, str] = {}
@@ -992,6 +1568,10 @@ class TestWriterWorker(WorkerAgent):
             major, minor = self._parse_pragma_major_minor(target_pragma)
             is_legacy = major == 0 and minor < 8
 
+        # Two-file mode: bridge mode uses ReX architecture.
+        # LLM writes AttackContract.sol, scaffold generates ExploitTest.t.sol.
+        use_two_file_mode = is_legacy
+
         if is_legacy:
             print(f"  [TestWriter] BRIDGE MODE activated (pragma {target_pragma} is pre-0.8)")
 
@@ -1020,7 +1600,7 @@ class TestWriterWorker(WorkerAgent):
                 bridge_contracts, all_sigs, graph=self.graph,
             )
             for cname in bridge_contracts:
-                deploy_paths[cname] = resolve_deploy_code_path(cname, repo_manifest)
+                deploy_paths[cname] = resolve_deploy_code_path(cname, repo_manifest, real_sources_full)
 
             print(f"  [TestWriter] Generated bridge interfaces for {len(bridge_contracts)} contracts")
             print(f"  [TestWriter] Deploy paths: {deploy_paths}")
@@ -1037,6 +1617,16 @@ class TestWriterWorker(WorkerAgent):
         if repo_conflicts["abstract_contracts"]:
             print(f"  [TestWriter] Abstract contracts: {repo_conflicts['abstract_contracts']}")
             logger.info(f"[TestWriter] Abstract contracts detected: {repo_conflicts['abstract_contracts']}")
+
+        # Detect time-lock guard in real source — requires vm.warp() before exploit
+        has_timelock = False
+        warp_seconds = 0
+        all_source_text = "\n".join((real_sources_full or real_sources_minimal or {}).values())
+        if all_source_text and _detect_timelock_in_source(all_source_text):
+            has_timelock = True
+            warp_seconds = 3601  # 1 hour + 1 second — clears any reasonable lock
+            print(f"  [TestWriter] TIME-LOCK detected in source — scaffold will vm.warp(+{warp_seconds}s)")
+            logger.info(f"[TestWriter] Time-lock guard detected — injecting vm.warp(+{warp_seconds}s) into scaffold")
 
         attempts = 0
         error_history: list[str] = []
@@ -1058,22 +1648,56 @@ class TestWriterWorker(WorkerAgent):
                 sandbox._ensure_foundry_deps()
 
             # Bridge mode: write BridgeInterfaces.sol and override foundry.toml
+            precompiled_data: dict[str, dict] = {}
             if is_legacy:
-                sandbox.setup_bridge_mode_toml()
+                primary_sources = real_sources_full or real_sources_minimal
+                target_source_rel = next(iter(primary_sources), None) if primary_sources else None
+                deploy_paths, precompiled_data = sandbox.setup_bridge_mode_toml(
+                    deploy_paths=deploy_paths,
+                    target_contract=finding.affected_contract,
+                    target_source_path=target_source_rel,
+                )
                 bridge_path = sandbox.tmp_dir / "test" / "BridgeInterfaces.sol"
                 bridge_path.parent.mkdir(parents=True, exist_ok=True)
                 bridge_path.write_text(bridge_interfaces_src)
                 print(f"  [Sandbox] Wrote BridgeInterfaces.sol ({len(bridge_interfaces_src)} chars)")
 
-            print(f"  [TestWriter] Starting attempt loop (max={self.MAX_ATTEMPTS}, LLM timeout={self.LLM_TIMEOUT}s)")
+            # Two-file mode: write the fixed scaffold before the attempt loop starts.
+            # The LLM will never touch this file.
+            if use_two_file_mode:
+                target_deploy_path = deploy_paths.get(finding.affected_contract, "")
+                pc = precompiled_data.get(finding.affected_contract, {})
+                scaffold_code = self._generate_test_scaffold(
+                    finding, target_deploy_path, is_legacy, target_pragma,
+                    bytecode_hex=pc.get("bytecode"),
+                    dep_bytecodes=pc.get("dep_bytecodes", {}),
+                    ctor_inputs=pc.get("ctor_inputs", []),
+                    hardcoded_addrs=pc.get("hardcoded_addrs", []),
+                    addr_setters=pc.get("addr_setters", []),
+                    warp_seconds=warp_seconds,
+                )
+                test_path = sandbox.get_test_path()
+                scaffold_dest = f"{test_path}/ExploitTest.t.sol"
+                sandbox.write_test_file(scaffold_dest, scaffold_code)
+                print(
+                    f"  [TestWriter] TWO-FILE MODE: scaffold written "
+                    f"({len(scaffold_code)} chars) → {target_deploy_path}"
+                )
 
-            while attempts < self.MAX_ATTEMPTS:
+            effective_max = self.MAX_ATTEMPTS
+            if not real_sources_full:
+                effective_max = min(2, self.MAX_ATTEMPTS)
+                print(f"  [TestWriter] MOCK mode — limited to {effective_max} attempts (no real source available)")
+
+            print(f"  [TestWriter] Starting attempt loop (max={effective_max}, LLM timeout={self.LLM_TIMEOUT}s)")
+
+            while attempts < effective_max:
                 attempts += 1
-                print(f"\n  [TestWriter] ── Attempt {attempts}/{self.MAX_ATTEMPTS} {'(BRIDGE)' if is_legacy else ''} ──")
+                print(f"\n  [TestWriter] ── Attempt {attempts}/{effective_max} {'(BRIDGE)' if is_legacy else ''} ──")
                 sources_for_attempt = real_sources_full if attempts >= 3 else real_sources_minimal
                 source_mode = "FULL" if attempts >= 3 else "MINIMAL"
                 print(f"  [TestWriter] Source mode: {source_mode} ({len(sources_for_attempt) if sources_for_attempt else 0} files)")
-                logger.info(f"[TestWriter] Attempt {attempts}/{self.MAX_ATTEMPTS} building prompt...")
+                logger.info(f"[TestWriter] Attempt {attempts}/{effective_max} building prompt...")
 
                 # Bridge-aware error escalation: if LLM broke rules, inject correction
                 if is_legacy and error_history:
@@ -1097,7 +1721,18 @@ class TestWriterWorker(WorkerAgent):
                             "Define any missing interfaces inline in your test file (pragma ^0.8.0).\n\n" + last_err
                         )
 
-                if is_legacy:
+                if use_two_file_mode:
+                    prompt = self._build_attack_only_prompt(
+                        finding,
+                        error_history,
+                        real_sources=sources_for_attempt,
+                        deploy_path=deploy_paths.get(finding.affected_contract, ""),
+                        is_legacy=is_legacy,
+                        target_pragma=target_pragma,
+                        skip_rag=(attempts == 1),
+                        warp_seconds=warp_seconds,
+                    )
+                elif is_legacy:
                     prompt = self._build_bridge_prompt(
                         finding,
                         relevant_code,
@@ -1128,7 +1763,7 @@ class TestWriterWorker(WorkerAgent):
                 try:
                     print(f"  [TestWriter] Calling LLM at {time.strftime('%H:%M:%S')} (timeout={self.LLM_TIMEOUT}s)...")
                     logger.info(
-                        f"[TestWriter] Attempt {attempts}/{self.MAX_ATTEMPTS} "
+                        f"[TestWriter] Attempt {attempts}/{effective_max} "
                         f"calling LLM for '{finding.affected_contract}::{finding.affected_function}' "
                         f"at {time.strftime('%H:%M:%S')} (timeout={self.LLM_TIMEOUT}s)..."
                     )
@@ -1156,27 +1791,56 @@ class TestWriterWorker(WorkerAgent):
                     funcs = re.findall(r'function\s+(\w+)\s*\(', test_code_generated)
                     print(f"  [TestWriter] Functions found: {funcs}")
 
-                    if not self._has_exact_test_exploit(test_code_generated):
-                        print(f"  [TestWriter] SKIP: Missing 'function test_exploit()' — retrying")
-                        logger.info(f"[TestWriter] Attempt {attempts}: Missing 'function test_exploit()' in generated code.")
-                        if funcs:
-                            logger.info(f"[TestWriter]   Found functions: {funcs}")
-                        error_history.append("Generated test must include function test_exploit() exactly.")
-                        continue
+                    original_len = len(test_code_generated)
+                    test_code_generated = self._deduplicate_interfaces(test_code_generated)
+                    test_code_generated = self._fix_exploit_succeeded_conflict(test_code_generated)
+                    if len(test_code_generated) != original_len:
+                        print(f"  [TestWriter] Deduplicated AttackContract: {original_len} → {len(test_code_generated)} chars")
 
-                    if not is_legacy:
-                        test_code_generated = self._auto_correct_imports(
-                            test_code_generated, sandbox, remappings,
-                            collected_paths=list(sources_for_attempt.keys()) if sources_for_attempt else None,
+                    if use_two_file_mode:
+                        # LLM wrote AttackContract.sol — validate it has the right structure
+                        if not re.search(r'\bcontract\s+AttackContract\b', test_code_generated):
+                            print(f"  [TestWriter] SKIP: Missing 'contract AttackContract' — retrying")
+                            error_history.append(
+                                "The file must define 'contract AttackContract'. Do not rename it."
+                            )
+                            continue
+                        if not re.search(r'\bfunction\s+execute\s*\(', test_code_generated):
+                            print(f"  [TestWriter] SKIP: Missing 'function execute()' — retrying")
+                            error_history.append(
+                                "AttackContract must include 'function execute() external payable'."
+                            )
+                            continue
+                        # Write only the attack contract — scaffold is already written
+                        test_path = sandbox.get_test_path()
+                        test_file = f"{test_path}/AttackContract.sol"
+                        sandbox.write_test_file(test_file, test_code_generated)
+                        print(
+                            f"  [TestWriter] Wrote AttackContract.sol "
+                            f"({len(test_code_generated)} chars)"
                         )
+                    else:
+                        if not self._has_exact_test_exploit(test_code_generated):
+                            print(f"  [TestWriter] SKIP: Missing 'function test_exploit()' — retrying")
+                            logger.info(f"[TestWriter] Attempt {attempts}: Missing 'function test_exploit()' in generated code.")
+                            if funcs:
+                                logger.info(f"[TestWriter]   Found functions: {funcs}")
+                            error_history.append("Generated test must include function test_exploit() exactly.")
+                            continue
 
-                    test_path = sandbox.get_test_path()
-                    test_file = f"{test_path}/ExploitTest.t.sol"
-                    sandbox.write_test_file(test_file, test_code_generated)
+                        if not is_legacy and not use_two_file_mode:
+                            test_code_generated = self._auto_correct_imports(
+                                test_code_generated, sandbox, remappings,
+                                collected_paths=list(sources_for_attempt.keys()) if sources_for_attempt else None,
+                            )
+
+                        test_path = sandbox.get_test_path()
+                        test_file = f"{test_path}/ExploitTest.t.sol"
+                        sandbox.write_test_file(test_file, test_code_generated)
 
                     # ── Compile & Test in one step ──────────────────
                     forge_cmd = (
-                        "forge test --match-test test_exploit -vvv"
+                        "forge test --match-test test_exploit -vvvv"
                         " --ignored-error-codes 8429 --ignored-error-codes 2424"
                     )
                     print(f"  [TestWriter] Running forge test...")
@@ -1250,14 +1914,22 @@ class TestWriterWorker(WorkerAgent):
                     exploit_success = test_res.success and passed_by_logs
 
                     print(f"  [TestWriter] COMPILED OK  |  forge_success={test_res.success}  |  [PASS] in logs={passed_by_logs}  |  exploit_success={exploit_success}")
+                    print(f"  [TestWriter] FORGE STDOUT:\n{test_res.stdout}")   
+
 
                     if exploit_success:
                         # ── Authenticity gate ─────────────────────────────────────────────
-                        authentic, auth_reason = self._check_test_authenticity(
-                            test_code_generated,
-                            finding.affected_contract,
-                            is_legacy,
-                        )
+                        if use_two_file_mode:
+                            # Authenticity guaranteed by architecture —
+                            # LLM only wrote AttackContract.sol, never touched deployCode()
+                            authentic = True
+                            auth_reason = "AUTHENTIC (two-file mode)"
+                        else:
+                            authentic, auth_reason = self._check_test_authenticity(
+                                test_code_generated,
+                                finding.affected_contract,
+                                is_legacy,
+                            )
                         if not authentic:
                             print(f"  [TestWriter] FABRICATED PROOF REJECTED: {auth_reason}")
                             logger.info(f"[TestWriter] Attempt {attempts}: Fabricated proof detected — {auth_reason}")
@@ -1284,6 +1956,44 @@ class TestWriterWorker(WorkerAgent):
                     fail_lines = [ln for ln in test_logs.splitlines() if "[FAIL]" in ln or "Error" in ln or "revert" in ln.lower()]
                     for line in fail_lines[:5]:
                         print(f"    {line.strip()}")
+
+                    # ── Time-lock silent no-op detection ─────────────────────────────────
+                    if _detect_timelock_failure(test_logs):
+                        print(f"  [TestWriter] TIME-LOCK SILENT NO-OP detected in trace")
+                        logger.info(f"[TestWriter] Attempt {attempts}: Time-lock silent no-op — warp needed")
+                        if not has_timelock:
+                            # Wasn't caught at source-scan time — escalate warp now
+                            has_timelock = True
+                            warp_seconds = 3601
+                            # Rewrite scaffold with warp injected
+                            if use_two_file_mode:
+                                target_deploy_path = deploy_paths.get(finding.affected_contract, "")
+                                pc = precompiled_data.get(finding.affected_contract, {})
+                                scaffold_code = self._generate_test_scaffold(
+                                    finding, target_deploy_path, is_legacy, target_pragma,
+                                    bytecode_hex=pc.get("bytecode"),
+                                    dep_bytecodes=pc.get("dep_bytecodes", {}),
+                                    ctor_inputs=pc.get("ctor_inputs", []),
+                                    hardcoded_addrs=pc.get("hardcoded_addrs", []),
+                                    addr_setters=pc.get("addr_setters", []),
+                                    warp_seconds=warp_seconds,
+                                )
+                                scaffold_dest = f"{sandbox.get_test_path()}/ExploitTest.t.sol"
+                                sandbox.write_test_file(scaffold_dest, scaffold_code)
+                                print(f"  [TestWriter] Rewrote scaffold with vm.warp(+{warp_seconds}s)")
+                        error_history.append(
+                            f"TIME-LOCK GUARD: The contract has a time-lock (unlockTime / lockTime). "
+                            f"The withdraw/collect call returned immediately with no state change — "
+                            f"this is because `now > unlockTime` was FALSE.\n"
+                            f"The scaffold now calls vm.warp(block.timestamp + {warp_seconds}) before execute().\n"
+                            f"Your AttackContract.execute() MUST:\n"
+                            f"  1. Call the DEPOSIT function (Put/deposit) to register the attacker's account\n"
+                            f"  2. NOT call vm.warp — time is already advanced by the scaffold\n"
+                            f"  3. Call the WITHDRAW function (Collect/CashOut) — time is now past the lock\n"
+                            f"  4. Re-enter inside receive() to drain more ETH\n"
+                            f"Logs:\n{test_logs[:300]}"
+                        )
+                        continue
 
                     # ── Guard hit detection ───────────────────────────────────────────────
                     if _detect_guard_hit(test_logs):
@@ -1336,7 +2046,7 @@ class TestWriterWorker(WorkerAgent):
         final_confidence = max(0, min(100, original_conf + adjustment))
 
         print(f"  [TestWriter] === RESULT === {finding.affected_contract}::{finding.affected_function}")
-        print(f"  [TestWriter]   Mode: {'BRIDGE' if is_legacy else 'STANDARD'}  |  Attempts: {attempts}/{self.MAX_ATTEMPTS}")
+        print(f"  [TestWriter]   Mode: {'BRIDGE' if is_legacy else 'STANDARD'}  |  Attempts: {attempts}/{effective_max}")
         print(f"  [TestWriter]   Compiled: {compiled}  |  Exploit proven: {exploit_success}")
         print(f"  [TestWriter]   Confidence: {original_conf} -> {final_confidence} (adjustment={adjustment:+d})")
         print(f"  [TestWriter]   Used real source: {bool(real_sources_full)}")

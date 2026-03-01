@@ -22,12 +22,10 @@ class RepoManager:
         func(path)
 
     def _normalize_repo_url(self, url: str) -> str:
-        """Convert GitHub HTTPS URLs to SSH format if possible."""
+        """Convert GitHub HTTPS URLs to standard .git format if needed."""
         if url.startswith("https://github.com/"):
-            repo_path = url.replace("https://github.com/", "")
-            if not repo_path.endswith(".git"):
-                repo_path += ".git"
-                return f"git@github.com:{repo_path}"
+            if not url.endswith(".git"):
+                return f"{url}.git"
         return url
 
     def clone_repo(self, url: str) -> str:
@@ -68,24 +66,30 @@ class RepoManager:
             print("Copy successful.")
             _init_submodules(target_path)
         else:
+            _clone_timeout = int(os.environ.get("CLONE_TIMEOUT", "300"))
             try:
-                # Clone with --depth 1 to avoid pulling full history
-                # Use --recurse-submodules so lib/ dependencies (solmate, forge-std, etc.) are populated
                 subprocess.run(
                     ["git", "clone", "--depth", "1", "--recurse-submodules", "--shallow-submodules", url, target_path],
                     check=True,
                     capture_output=True,
-                    timeout=120,
+                    timeout=_clone_timeout,
                 )
                 print("Clone successful (with submodules).")
             except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
                 if isinstance(e, subprocess.CalledProcessError):
-                    print("Warning: Clone with submodules failed. Retrying without submodules...")
+                    print(f"Warning: Clone with submodules failed. Error: {e.stderr.decode('utf-8') if e.stderr else 'Unknown'}. Retrying without submodules...")
                 else:
                     print("Warning: Clone timed out. Retrying without submodules...")
-                subprocess.run(["git", "clone", "--depth", "1", url, target_path], check=True, capture_output=True)
+                
+                if os.path.exists(target_path):
+                    shutil.rmtree(target_path, ignore_errors=True)
+                
+                subprocess.run(
+                    ["git", "clone", "--depth", "1", url, target_path],
+                    check=True, capture_output=True,
+                    timeout=_clone_timeout,
+                )
                 _init_submodules(target_path)
-            # Ensure submodules are populated even if clone claimed success (some hosts skip them)
             _init_submodules(target_path)
 
         # Force forge install so lib/forge-std is populated before sandbox copies
@@ -130,13 +134,14 @@ def _init_submodules(repo_path: str) -> None:
     gitmodules = os.path.join(repo_path, ".gitmodules")
     if not os.path.exists(gitmodules):
         return
+    _timeout = int(os.environ.get("SUBMODULE_TIMEOUT", "600"))
     try:
         subprocess.run(
             ["git", "submodule", "update", "--init", "--recursive"],
             cwd=repo_path,
             check=True,
             capture_output=True,
-            timeout=180,
+            timeout=_timeout,
         )
         logger.info("[RepoManager] Git submodules initialized.")
     except Exception as e:

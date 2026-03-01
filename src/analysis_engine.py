@@ -12,6 +12,7 @@ Public API:
 
 import os
 import logging
+import subprocess
 import traceback
 from typing import Optional
 
@@ -32,6 +33,35 @@ from src.ingestion.framework_detector import FrameworkDetector
 from src.ingestion.fallback import FallbackCompiler, merge_slither_objects
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_framework_deps(fw_dir: str) -> None:
+    """Ensure git submodules and forge libs are populated for a framework directory."""
+    gitmodules = os.path.join(fw_dir, ".gitmodules")
+    if os.path.exists(gitmodules):
+        try:
+            subprocess.run(
+                ["git", "submodule", "update", "--init", "--recursive"],
+                cwd=fw_dir, check=True, capture_output=True, timeout=300,
+            )
+            logger.info(f"  [deps] submodules initialized in {fw_dir}")
+        except Exception as e:
+            logger.warning(f"  [deps] submodule init failed in {fw_dir}: {e}")
+
+    foundry_toml = os.path.join(fw_dir, "foundry.toml")
+    if os.path.exists(foundry_toml):
+        try:
+            subprocess.run(
+                ["forge", "install", "--shallow", "--no-commit"],
+                cwd=fw_dir, capture_output=True, text=True, timeout=300,
+            )
+            logger.info(f"  [deps] forge install done in {fw_dir}")
+        except FileNotFoundError:
+            pass
+        except subprocess.TimeoutExpired:
+            logger.warning(f"  [deps] forge install timed out in {fw_dir}")
+        except Exception as e:
+            logger.warning(f"  [deps] forge install error in {fw_dir}: {e}")
 
 
 def _deduplicate_contracts(slither_obj: Slither) -> Slither:
@@ -263,7 +293,28 @@ class AnalysisEngine:
                     fw_dir = fi.path
                     fw_name = fi.framework
                     rel = os.path.relpath(fw_dir, repo_path)
+
+                    # Skip frameworks nested inside lib/ or node_modules/ of
+                    # an already-compiled parent — they were already compiled
+                    # as part of the parent and always fail on transitive deps.
+                    fw_abs = os.path.abspath(fw_dir)
+                    _is_nested_lib = any(
+                        fw_abs.startswith(parent + os.sep)
+                        and (
+                            f"{os.sep}lib{os.sep}" in fw_abs[len(parent):]
+                            or f"{os.sep}node_modules{os.sep}" in fw_abs[len(parent):]
+                        )
+                        for parent in framework_covered_dirs
+                    )
+                    if _is_nested_lib:
+                        logger.info(
+                            f"\n─── Skipping nested lib framework: {fw_name} @ {rel} "
+                            f"(already compiled by parent) ───"
+                        )
+                        continue
                     logger.info(f"\n─── Framework: {fw_name} @ {rel} ───")
+
+                    _ensure_framework_deps(fw_dir)
 
                     # Create a single cluster for this framework directory
                     fw_cluster = CompilationCluster(

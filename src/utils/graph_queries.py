@@ -1,4 +1,5 @@
 import networkx as nx
+from collections import defaultdict
 from typing import List, Dict, Any
 
 from src.utils.node_ids import normalize_node_id
@@ -8,7 +9,9 @@ from src.utils.node_ids import normalize_node_id
 #  Test Contract Filter
 # ════════════════════════════════════════════════════════════
 
-# Contract name suffixes/prefixes that identify test/mock/fuzzing artifacts.
+# Substrings in contract names that identify test/mock/fuzzing artifacts.
+# Matched via substring (not just prefix/suffix) to catch names like
+# BaseRelayMockUpgradeable and ReturnsTooMuchToken.
 _TEST_NAME_PATTERNS = (
     # Standard test framework patterns
     "Test",
@@ -21,23 +24,29 @@ _TEST_NAME_PATTERNS = (
     "Script",
     "Invariant",
     "Handler",
-    "Exploit",       # Our own generated tests
-    # Common test helper contract patterns (e.g. solmate's BalanceSum, RiskyContract)
-    "Sum",           # Fuzz/balance accumulators (e.g. BalanceSum)
-    "Risky",         # Intentionally-risky test helpers (e.g. RiskyContract)
-    "Vulnerable",    # Deliberately vulnerable contracts in test suites
-    "Attacker",      # Attack simulation contracts
-    "Victim",        # Test victim contracts
-    "Malicious",     # Malicious actor simulations
-    "Dummy",         # Placeholder implementations
-    "Fake",          # Fake implementations
-    "Wrong",         # Wrong return data testers (e.g. WrongReturnDataERC721Recipient)
-    "Reverting",     # Reverting implementations for negative testing
-    "NonCompliant",  # Non-compliant implementations for edge-case testing
-    "Recipient",     # Test callback receivers (e.g. ERC721Recipient)
+    "Exploit",
+    # OZ edge-case / compliance test tokens
+    "ReturnsTooMuch",
+    "ReturnsGarbage",
+    "MissingReturn",
+    "ForTest",
+    "WithInit",
+    # Common test helper contract patterns
+    "Sum",
+    "Risky",
+    "Vulnerable",
+    "Attacker",
+    "Victim",
+    "Malicious",
+    "Dummy",
+    "Fake",
+    "Wrong",
+    "Reverting",
+    "NonCompliant",
+    "Recipient",
 )
 
-# Source path fragments that identify test/script directories.
+# Source path fragments that identify test/script/library directories.
 _TEST_PATH_FRAGMENTS = (
     "/test/",
     "/tests/",
@@ -52,6 +61,8 @@ _TEST_PATH_FRAGMENTS = (
     "/e2e/",
     "/crytic/",
     "/audits/",
+    "/lib/",
+    "/node_modules/",
 )
 
 
@@ -63,7 +74,7 @@ def _is_test_contract(contract_name: str, source_file: str = "") -> bool:
     Checks contract name suffix/prefix and source file path.
     """
     for pattern in _TEST_NAME_PATTERNS:
-        if contract_name.endswith(pattern) or contract_name.startswith(pattern):
+        if pattern in contract_name:
             return True
     norm_path = source_file.replace("\\", "/")
     for fragment in _TEST_PATH_FRAGMENTS:
@@ -72,9 +83,31 @@ def _is_test_contract(contract_name: str, source_file: str = "") -> bool:
     return False
 
 
+_graph_queries_cache: dict[int, "GraphQueries"] = {}
+
+
+def get_graph_queries(graph: nx.DiGraph) -> "GraphQueries":
+    """Return a cached GraphQueries instance for the given graph."""
+    gid = id(graph)
+    cached = _graph_queries_cache.get(gid)
+    if cached is not None and cached.graph is graph:
+        return cached
+    instance = GraphQueries(graph)
+    _graph_queries_cache[gid] = instance
+    return instance
+
+
 class GraphQueries:
     def __init__(self, graph: nx.DiGraph):
         self.graph = graph
+        self._by_type: dict[str, list[str]] = defaultdict(list)
+        for nid, data in graph.nodes(data=True):
+            self._by_type[data.get("type", "")].append(nid)
+
+    def _iter_type(self, type_name: str):
+        """Yield (node_id, data) for all nodes of the given type using the index."""
+        for nid in self._by_type.get(type_name, []):
+            yield nid, self.graph.nodes[nid]
 
     def get_function_context(self, node_id: str) -> Dict[str, Any]:
         normalized = normalize_node_id(node_id)
@@ -932,10 +965,7 @@ class GraphQueries:
         skipped_test = 0
         skipped_gate = 0
 
-        for node_id, data in self.graph.nodes(data=True):
-            if data.get("type") != "function":
-                continue
-
+        for node_id, data in self._iter_type("function"):
             final = data.get("final_score", data.get("risk_score", 0))
             structural = data.get("structural_score", 0)
             exploit = data.get("exploitability_score", 0)
@@ -975,6 +1005,18 @@ class GraphQueries:
                 skipped_gate += 1
                 continue
 
+            # Penalize contracts from library/dependency directories so they
+            # rarely surface as hotspots even if their names pass the test filter.
+            _src = source_file or contract_data.get("source_file", "")
+            _norm_src = _src.replace("\\", "/")
+            if "/lib/" in _norm_src or "/node_modules/" in _norm_src:
+                final = int(final * 0.5)
+                structural = int(structural * 0.5)
+                exploit = int(exploit * 0.5)
+                if final < min_score:
+                    skipped_gate += 1
+                    continue
+
             priority = "MEDIUM"
             if final >= 90:
                 priority = "CRITICAL"
@@ -1010,105 +1052,105 @@ class GraphQueries:
 # ════════════════════════════════════════════════════════════
 
 def get_external_entry_points(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_external_entry_points(contract_name)
+    return get_graph_queries(graph).get_external_entry_points(contract_name)
 
 def get_privileged_roles(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_privileged_roles(contract_name)
+    return get_graph_queries(graph).get_privileged_roles(contract_name)
 
 def get_reentrancy_risks(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_reentrancy_risks(contract_name)
+    return get_graph_queries(graph).get_reentrancy_risks(contract_name)
 
 def get_state_mutators(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_state_mutators(contract_name)
+    return get_graph_queries(graph).get_state_mutators(contract_name)
 
 def get_unprotected_mutators(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_unprotected_mutators(contract_name)
+    return get_graph_queries(graph).get_unprotected_mutators(contract_name)
 
 def get_high_risk_hotspots(graph: nx.DiGraph, min_score: int = 70) -> List[Any]:
-    return GraphQueries(graph).get_high_risk_hotspots(min_score)
+    return get_graph_queries(graph).get_high_risk_hotspots(min_score)
 
 def get_function_context(graph: nx.DiGraph, node_id: str) -> Dict[str, Any]:
-    return GraphQueries(graph).get_function_context(node_id)
+    return get_graph_queries(graph).get_function_context(node_id)
 
 def get_internal_calls(graph: nx.DiGraph, function_id: str) -> List[str]:
-    return GraphQueries(graph).get_internal_calls(function_id)
+    return get_graph_queries(graph).get_internal_calls(function_id)
 
 def get_callers(graph: nx.DiGraph, function_id: str) -> List[str]:
-    return GraphQueries(graph).get_callers(function_id)
+    return get_graph_queries(graph).get_callers(function_id)
 
 def get_external_call_functions(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_external_call_functions(contract_name)
+    return get_graph_queries(graph).get_external_call_functions(contract_name)
 
 def get_external_call_edges(graph: nx.DiGraph, function_id: str) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_external_call_edges(function_id)
+    return get_graph_queries(graph).get_external_call_edges(function_id)
 
 def get_cei_violations(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_cei_violations(contract_name)
+    return get_graph_queries(graph).get_cei_violations(contract_name)
 
 def get_privilege_escalation_risks(graph: nx.DiGraph, contract_name: str | None = None) -> Dict[str, Any]:
-    return GraphQueries(graph).get_privilege_escalation_risks(contract_name)
+    return get_graph_queries(graph).get_privilege_escalation_risks(contract_name)
 
 def get_contract_signatures(graph: nx.DiGraph, contract_name: str) -> Dict[str, str]:
-    return GraphQueries(graph).get_contract_signatures(contract_name)
+    return get_graph_queries(graph).get_contract_signatures(contract_name)
 
 def get_state_transitions(graph: nx.DiGraph, **kwargs) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_state_transitions(**kwargs)
+    return get_graph_queries(graph).get_state_transitions(**kwargs)
 
 def get_array_length_mutations(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_array_length_mutations(contract_name)
+    return get_graph_queries(graph).get_array_length_mutations(contract_name)
 
 def get_delegatecall_storage_risks(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_delegatecall_storage_risks(contract_name)
+    return get_graph_queries(graph).get_delegatecall_storage_risks(contract_name)
 
 def get_contract_tiers(graph: nx.DiGraph, tier: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_contract_tiers(tier)
+    return get_graph_queries(graph).get_contract_tiers(tier)
 
 def get_guarded_initializers(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_guarded_initializers(contract_name)
+    return get_graph_queries(graph).get_guarded_initializers(contract_name)
 
 def get_access_control_types(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_access_control_types(contract_name)
+    return get_graph_queries(graph).get_access_control_types(contract_name)
 
 def get_modifier_equivalences(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_modifier_equivalences(contract_name)
+    return get_graph_queries(graph).get_modifier_equivalences(contract_name)
 
 def get_safe_functions(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_safe_functions(contract_name)
+    return get_graph_queries(graph).get_safe_functions(contract_name)
 
 def get_taint_critical_paths(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_taint_critical_paths(contract_name)
+    return get_graph_queries(graph).get_taint_critical_paths(contract_name)
 
 def get_storage_sensitivity_tags(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_storage_sensitivity_tags(contract_name)
+    return get_graph_queries(graph).get_storage_sensitivity_tags(contract_name)
 
 def get_tainted_variables(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_tainted_variables(contract_name)
+    return get_graph_queries(graph).get_tainted_variables(contract_name)
 
 def get_taint_risks(graph: nx.DiGraph, risk_type: str | None = None, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_taint_risks(risk_type, contract_name)
+    return get_graph_queries(graph).get_taint_risks(risk_type, contract_name)
 
 def get_state_dependencies(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_state_dependencies(contract_name)
+    return get_graph_queries(graph).get_state_dependencies(contract_name)
 
 def get_dangerous_sequences(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_dangerous_sequences(contract_name)
+    return get_graph_queries(graph).get_dangerous_sequences(contract_name)
 
 def get_exploit_chains(graph: nx.DiGraph, contract_name: str | None = None, min_length: int = 2) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_exploit_chains(contract_name, min_length)
+    return get_graph_queries(graph).get_exploit_chains(contract_name, min_length)
 
 def get_accounting_invariant_risks(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_accounting_invariant_risks(contract_name)
+    return get_graph_queries(graph).get_accounting_invariant_risks(contract_name)
 
 def get_external_call_risks(
     graph: nx.DiGraph,
     risk_tag: str | None = None,
     contract_name: str | None = None,
 ) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_external_call_risks(risk_tag, contract_name)
+    return get_graph_queries(graph).get_external_call_risks(risk_tag, contract_name)
 
 def get_exploit_targets(
     graph: nx.DiGraph,
     min_exploit_score: int = 75,
     contract_name: str | None = None,
 ) -> List[Dict[str, Any]]:
-    return GraphQueries(graph).get_exploit_targets(min_exploit_score, contract_name)
+    return get_graph_queries(graph).get_exploit_targets(min_exploit_score, contract_name)

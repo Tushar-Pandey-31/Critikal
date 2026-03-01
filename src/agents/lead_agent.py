@@ -383,12 +383,16 @@ async def coordinator_node(state: AgentState):
         for t in tasks:
             print(f"  - {t.task_id}")
 
+        _attack_concurrency = int(os.getenv("ATTACK_WORKER_CONCURRENCY", "15"))
+        _attack_sem = asyncio.Semaphore(_attack_concurrency)
+
         async def _run_with_timeout(task, timeout=300):
-            try:
-                return await asyncio.wait_for(attack_worker.run(task), timeout=timeout)
-            except asyncio.TimeoutError:
-                print(f"  TIMEOUT: {task.task_id} (>{timeout}s)")
-                return None
+            async with _attack_sem:
+                try:
+                    return await asyncio.wait_for(attack_worker.run(task), timeout=timeout)
+                except asyncio.TimeoutError:
+                    print(f"  TIMEOUT: {task.task_id} (>{timeout}s)")
+                    return None
 
         worker_outputs_parallel = await asyncio.gather(
             *[_run_with_timeout(task) for task in tasks],
@@ -487,9 +491,15 @@ async def coordinator_node(state: AgentState):
         response = None
 
     # With tools disabled, the LLM should never make tool_calls.
-    # If it somehow does, return early so LangGraph routes to ToolNode.
+    # If it does, strip them to prevent LangGraph routing to ToolNode
+    # which would re-run the entire pipeline (BUG-012).
     if response and hasattr(response, "tool_calls") and response.tool_calls:
-        return {"messages": [response], "worker_outputs": worker_outputs}
+        logger.warning(
+            "Coordinator LLM returned tool_calls despite bind_tools=False — stripping"
+        )
+        response.tool_calls = []
+        if hasattr(response, "additional_kwargs"):
+            response.additional_kwargs.pop("tool_calls", None)
 
     # ── Parse final response ───────────────────────────────
     leads = []
@@ -579,6 +589,13 @@ async def coordinator_node(state: AgentState):
             print(f"  Skipping test/mock helper: {finding.affected_contract}")
             continue
 
+        # Skip findings whose source lives in lib/ or node_modules/
+        _node_data = state["graph"].nodes.get(finding.affected_contract, {}) if state.get("graph") else {}
+        _src_file = (_node_data.get("source_file", "") or "").replace("\\", "/")
+        if "/lib/" in _src_file or "/node_modules/" in _src_file:
+            print(f"  Skipping library contract: {finding.affected_contract} ({_src_file})")
+            continue
+
         # === FIXED: Robust relevant_code lookup (fixes BUG-001, 002, 003) ===
         relevant_code = {}
 
@@ -632,19 +649,31 @@ async def coordinator_node(state: AgentState):
         target_findings.append(finding)
 
     if test_tasks:
-        print(f"[Step 6] Spawning TestWriter for {len(test_tasks)} finding(s) (sequential, highest confidence first)...")
+        _tw_concurrency = int(os.getenv("TEST_WRITER_CONCURRENCY", "3"))
+        _tw_sem = asyncio.Semaphore(_tw_concurrency)
+        print(
+            f"[Step 6] Spawning TestWriter for {len(test_tasks)} finding(s) "
+            f"(parallel, concurrency={_tw_concurrency}, highest confidence first)..."
+        )
         test_writer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"))
         test_writer_llm = get_worker_llm(model_name=test_writer_model)
         test_writer = TestWriterWorker(llm_client=test_writer_llm, graph=state["graph"])
-        test_outputs = []
-        for i, (task, finding) in enumerate(zip(test_tasks, target_findings)):
-            print(f"[Step 6] TestWriter {i+1}/{len(test_tasks)}: {finding.hotspot_node_id} (confidence={finding.confidence})")
-            try:
-                output = await test_writer.run(task)
-                test_outputs.append(output)
-            except Exception as e:
-                print(f"[Step 6] TestWriter error on {finding.hotspot_node_id}: {e}")
-                test_outputs.append(e)
+
+        async def _run_test_writer(idx, task, finding):
+            async with _tw_sem:
+                print(f"[Step 6] TestWriter {idx+1}/{len(test_tasks)}: {finding.hotspot_node_id} (confidence={finding.confidence})")
+                try:
+                    return await test_writer.run(task)
+                except Exception as e:
+                    print(f"[Step 6] TestWriter error on {finding.hotspot_node_id}: {e}")
+                    return e
+
+        test_outputs = await asyncio.gather(
+            *[
+                _run_test_writer(i, task, finding)
+                for i, (task, finding) in enumerate(zip(test_tasks, target_findings))
+            ]
+        )
 
         print(f"[Step 6] TestWriter execution complete. Processing {len(test_outputs)} result(s)...")
         for output, finding in zip(test_outputs, target_findings):

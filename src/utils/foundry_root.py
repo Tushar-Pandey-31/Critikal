@@ -19,6 +19,11 @@ def resolve_foundry_root(base: Path) -> Path:
         foundry.toml  = /tmp/.../ethernaut/contracts/foundry.toml
         returns       = /tmp/.../ethernaut/contracts  <- Foundry project root
 
+    For monorepos like movement:
+        base          = /tmp/.../movement
+        foundry.toml  = /tmp/.../movement/protocol-units/settlement/mcr/contracts/foundry.toml
+        returns       = /tmp/.../movement/protocol-units/settlement/mcr/contracts
+
     Falls back to `base` if no foundry.toml found anywhere under it.
     """
     if (base / "foundry.toml").exists():
@@ -35,6 +40,33 @@ def resolve_foundry_root(base: Path) -> Path:
                 return child
     except PermissionError:
         pass
+
+    # Deep search: walk up to 6 levels for monorepos with nested Solidity projects.
+    # Prefer the foundry.toml closest to a `src/` directory containing .sol files.
+    _skip = {"lib", "node_modules", "out", "cache", ".git", "broadcast"}
+    best: Path | None = None
+    best_depth = 999
+    try:
+        for toml in base.rglob("foundry.toml"):
+            if any(part in _skip for part in toml.parts):
+                continue
+            depth = len(toml.relative_to(base).parts)
+            if depth > 7:
+                continue
+            candidate_dir = toml.parent
+            has_src = (candidate_dir / "src").is_dir() and any(
+                (candidate_dir / "src").rglob("*.sol")
+            )
+            effective_depth = depth - (1 if has_src else 0)
+            if effective_depth < best_depth:
+                best_depth = effective_depth
+                best = candidate_dir
+    except (PermissionError, OSError):
+        pass
+
+    if best:
+        logger.info(f"Deep-resolved foundry root: {best} (depth={best_depth})")
+        return best
 
     logger.debug(f"Could not find foundry.toml under {base}. Using base as-is.")
     return base
