@@ -464,13 +464,31 @@ class SandboxManager:
         """
         import json as _json
 
-        (self.tmp_dir / "src").mkdir(parents=True, exist_ok=True)
+        # Bridge mode: legacy sources live in src/ but cannot be compiled by
+        # modern Forge.  Move them aside so Forge never scans them, then
+        # create an empty bridge_src/ for the foundry.toml `src` directive.
+        src_dir = self.tmp_dir / "src"
+        legacy_dir = self.tmp_dir / "legacy_src"
+        if src_dir.exists() and any(src_dir.rglob("*.sol")):
+            src_dir.rename(legacy_dir)
+            print(f"  [Sandbox] Moved src/ → legacy_src/ to hide legacy files from Forge")
+        elif not legacy_dir.exists():
+            legacy_dir.mkdir(parents=True, exist_ok=True)
+
+        bridge_src = self.tmp_dir / "bridge_src"
+        bridge_src.mkdir(parents=True, exist_ok=True)
 
         updated_paths = dict(deploy_paths or {})
         precompiled_data: dict[str, dict] = {}
 
         if target_contract:
             if target_source_path:
+                # Rewrite relative path to point at legacy_src/ if the file
+                # was moved there (e.g. "src/Foo.sol" → "legacy_src/Foo.sol").
+                if target_source_path.startswith("src/") or target_source_path.startswith("src\\"):
+                    moved_path = "legacy_src/" + target_source_path[4:]
+                    if (self.tmp_dir / moved_path).exists():
+                        target_source_path = moved_path
                 artifact_path = f"{target_source_path}:{target_contract}"
             elif deploy_paths:
                 artifact_path = deploy_paths.get(target_contract)
@@ -485,7 +503,7 @@ class SandboxManager:
 
         toml_content = """\
 [profile.default]
-src = "src"
+src = "bridge_src"
 test = "test"
 out = "out"
 libs = ["lib"]
@@ -496,7 +514,7 @@ runs = 10
 """
         toml_path = self.tmp_dir / "foundry.toml"
         toml_path.write_text(toml_content)
-        print(f"  [Sandbox] Wrote bridge-mode foundry.toml (src=src, pre-compile mode)")
+        print(f"  [Sandbox] Wrote bridge-mode foundry.toml (src=bridge_src, pre-compile mode)")
         return updated_paths, precompiled_data
 
     # ── Legacy pre-compilation helpers ──────────────────────────────

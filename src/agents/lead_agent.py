@@ -207,32 +207,79 @@ def get_llm(
     return llm
 
 
+def _detect_provider(model_name: str) -> str:
+    """Detect LLM provider from model name string."""
+    m = model_name.lower()
+    if m.startswith("gemini") or m.startswith("models/gemini"):
+        return "gemini"
+    if m.startswith("gpt") or m.startswith("o1") or m.startswith("o3"):
+        return "openai"
+    if m.startswith("claude"):
+        return "anthropic"
+    return "gemini"  # default
+
+
 def get_worker_llm(
     model_name: str = os.getenv("WORKER_MODEL_NAME", os.getenv("MODEL_NAME", "gemini-2.5-flash")),
     temperature: float = 0.0,
 ):
     """
-    Returns a CLEAN LLM with NO tools bound.
+    Returns a rate-limited LLM with NO tools bound.
     Workers MUST use this. Never pass coordinator_llm to workers.
 
-    Uses transport="rest" so sync invoke() respects timeout (gRPC often ignores it).
-    TestWriter should use invoke() via asyncio.to_thread, not ainvoke().
+    The returned object is a RateLimitedLLM wrapper that transparently
+    handles RPM throttling and API key rotation.
     """
     if not ChatGoogleGenerativeAI:
         raise ImportError("langchain-google-genai is not installed.")
+
+    from src.utils.rate_limiter import get_rate_limiter, RateLimitedLLM
+    from src.utils.key_pool import get_key_pool
+
     timeout = float(os.getenv("WORKER_LLM_TIMEOUT", "180"))
     max_retries = int(os.getenv("WORKER_LLM_MAX_RETRIES", "0"))
     transport = os.getenv("WORKER_LLM_TRANSPORT", "rest")
-    llm = ChatGoogleGenerativeAI(
-        model=model_name,
-        temperature=temperature,
-        timeout=timeout,
-        request_timeout=timeout,
-        max_retries=max_retries,
-        transport=transport,
+    provider = _detect_provider(model_name)
+    key_pool = get_key_pool()
+
+    # Get the next available API key from the pool
+    try:
+        api_key = key_pool.get_key(provider)
+    except ValueError:
+        # No keys in pool — fall back to default env var behavior
+        api_key = None
+
+    kwargs: dict[str, Any] = {
+        "model": model_name,
+        "temperature": temperature,
+        "timeout": timeout,
+        "request_timeout": timeout,
+        "max_retries": max_retries,
+        "transport": transport,
+    }
+    if api_key:
+        kwargs["google_api_key"] = api_key
+
+    llm = ChatGoogleGenerativeAI(**kwargs)
+
+    # Wrap with rate limiter
+    limiter = get_rate_limiter()
+    wrapped = RateLimitedLLM(
+        llm=llm,
+        limiter=limiter,
+        key_pool=key_pool,
+        provider=provider,
+        model_name=model_name,
     )
-    logger.info(f"[get_worker_llm] Created worker LLM: {llm.model} (no tools, timeout={timeout}s, transport={transport})")
-    return llm
+    if api_key:
+        wrapped.set_key(api_key)
+
+    logger.info(
+        f"[get_worker_llm] Created rate-limited worker LLM: {model_name} "
+        f"(provider={provider}, timeout={timeout}s, transport={transport}, "
+        f"key=...{api_key[-4:] if api_key else 'default'})"
+    )
+    return wrapped
 
 
 # ════════════════════════════════════════════════════════════
@@ -695,6 +742,7 @@ async def coordinator_node(state: AgentState):
         test_tasks.append(task)
         target_findings.append(finding)
 
+    test_outputs = []  # Initialize before conditional — avoids UnboundLocalError
     if test_tasks:
         _tw_concurrency = int(os.getenv("TEST_WRITER_CONCURRENCY", "3"))
         _tw_sem = asyncio.Semaphore(_tw_concurrency)
@@ -771,6 +819,54 @@ async def coordinator_node(state: AgentState):
 
     if not test_tasks:
         print(f"[Step 6] No findings qualified for TestWriter.")
+
+    # ── Step 6.5: Fuzz Generator (Medusa Layer) ───────────────
+    fuzz_targets = []
+    fuzz_tasks = []
+    for finding, output in zip(sorted_findings, test_outputs):
+        if finding.status == FindingStatus.PROVEN and finding.severity_estimate == "CRITICAL" and not isinstance(output, Exception):
+            fuzz_targets.append(finding)
+            fuzz_tasks.append(
+                WorkerTask(
+                    task_id=f"fuzz_{finding.id}",
+                    task_type="fuzz_generator",
+                    context={
+                        "finding": finding,
+                        "poc_code": getattr(output, "test_code", ""),
+                        "repo_path": linux_repo_path,
+                    }
+                )
+            )
+            
+    if fuzz_tasks:
+        print(f"[Step 6.5] Spawning FuzzGenerator for {len(fuzz_tasks)} CRITICAL finding(s)...")
+        from src.agents.workers.fuzz_generator import FuzzGeneratorWorker
+        fuzzer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"))
+        fuzzer_llm = get_worker_llm(model_name=fuzzer_model)
+        fuzzer = FuzzGeneratorWorker(llm_client=fuzzer_llm, graph=state["graph"])
+        
+        fuzz_outputs = await asyncio.gather(
+            *[fuzzer.run(task) for task in fuzz_tasks],
+            return_exceptions=True
+        )
+        
+        for finding, output in zip(fuzz_targets, fuzz_outputs):
+            if isinstance(output, Exception):
+                print(f"  Fuzzer error on {finding.hotspot_node_id}: {output}")
+                continue
+                
+            raw = getattr(output, "raw_output", {}) or {}
+            if raw.get("violation_found"):
+                print(f"  [!] {finding.hotspot_node_id} — INVARIANT BROKEN (Fuzzing successful)")
+                finding.confidence = getattr(output, "confidence", finding.confidence)
+                for lead in leads:
+                    lead_id = normalize_node_id(lead.get("affected_function_node_id", ""))
+                    if lead_id == normalize_node_id(finding.hotspot_node_id):
+                        lead["fuzz_code"] = raw.get("fuzz_code")
+                        lead["fuzz_logs"] = raw.get("logs")
+                        if not lead.get("title", "").endswith("[FUZZED]"):
+                            lead["title"] = f"{lead.get('title', '')} [FUZZED]"
+                        break
 
     # Cleanup shared Linux-fs repo copy
     if tmp_base and os.path.exists(tmp_base):

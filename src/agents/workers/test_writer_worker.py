@@ -759,7 +759,8 @@ The loop continues through receive() callbacks:
   }}
 
   receive() external payable {{
-      if (reentryCount < MAX_REENTRY && address(target).balance >= 1 ether) {{
+      // Always limit reentrancy and check your own balance if forwarding ETH
+      if (reentryCount < MAX_REENTRY) {{
           reentryCount++;
           target.withdrawFunction(1 ether);
       }} else {{
@@ -777,6 +778,18 @@ The loop continues through receive() callbacks:
 
 IMPORTANT: Replace depositFunction/withdrawFunction with the REAL function names
 from the target contract. Do NOT use Deposit/Collect unless those are the actual names.
+
+══════════════════════════════════════════════════
+AVOIDING COMPILER ERRORS & OUT OFF FUNDS
+══════════════════════════════════════════════════
+1. Data Location Errors: If a function receives dynamic types (string, bytes, arrays, structs),
+you MUST specify `memory` or `calldata` for parameters (Solidity >0.5.x).
+  WRONG: function execute(uint[] params)
+  RIGHT: function execute(uint[] memory params)
+
+2. Out Of Funds Errors: Do NOT blindly forward ETH in a fallback without checking your balance.
+If `target.withdrawFunction(1 ether)` is called recursively, ensure `address(this).balance >= 1 ether`
+before trying to send value back to the target, otherwise you will crash with EvmError: OutOfFunds.
 
 ══════════════════════════════════════════════════
 FUNDING — HOW THE CONTRACT GETS ETH

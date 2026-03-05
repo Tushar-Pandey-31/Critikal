@@ -17,7 +17,7 @@ def dummy_finding():
     return Finding(
         id="f1",
         hotspot_node_id="Contract::vuln",
-        vulnerability_class="reentrancy",
+        vulnerability_class="custom_vuln",
         title="Test Finding",
         hypothesis="Hypothesis text",
         evidence_nodes=[],

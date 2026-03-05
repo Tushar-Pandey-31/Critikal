@@ -15,8 +15,16 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 
+def _clean_import_path(contract_path: str) -> str:
+    """Strip Foundry artifact identifiers (e.g. 'src/Foo.sol:Foo' → 'src/Foo.sol')."""
+    if ":" in contract_path:
+        contract_path = contract_path.split(":")[0]
+    return contract_path
+
+
 def _sol_header(pragma: str = "^0.8.20") -> str:
     return f'// SPDX-License-Identifier: MIT\npragma solidity {pragma};\n\nimport "forge-std/Test.sol";\n'
+
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -83,7 +91,7 @@ def reentrancy_poc(
     func = getattr(finding, "affected_function", "withdraw")
     return (
         _sol_header(pragma)
-        + f'import "{contract_path}";\n\n'
+        + f'import "{_clean_import_path(contract_path)}";\n\n'
         + f"""contract Attacker {{
     {contract_name} public target;
     uint256 public count;
@@ -134,7 +142,7 @@ def access_control_poc(
     func = getattr(finding, "affected_function", "setOwner")
     return (
         _sol_header(pragma)
-        + f'import "{contract_path}";\n\n'
+        + f'import "{_clean_import_path(contract_path)}";\n\n'
         + f"""contract AccessControlTest is Test {{
     {contract_name} target;
     address attacker = address(0xdead);
@@ -162,7 +170,7 @@ def tx_origin_poc(
     func = getattr(finding, "affected_function", "transfer")
     return (
         _sol_header(pragma)
-        + f'import "{contract_path}";\n\n'
+        + f'import "{_clean_import_path(contract_path)}";\n\n'
         + f"""contract TxOriginAttacker {{
     {contract_name} public target;
 
@@ -201,7 +209,7 @@ def oracle_manipulation_poc(
 ) -> str:
     return (
         _sol_header(pragma)
-        + f'import "{contract_path}";\n\n'
+        + f'import "{_clean_import_path(contract_path)}";\n\n'
         + f"""contract OracleManipulationTest is Test {{
     {contract_name} target;
 
@@ -235,7 +243,7 @@ def integer_overflow_poc(
     func = getattr(finding, "affected_function", "add")
     return (
         _sol_header(pragma)
-        + f'import "{contract_path}";\n\n'
+        + f'import "{_clean_import_path(contract_path)}";\n\n'
         + f"""contract IntegerOverflowTest is Test {{
     {contract_name} target;
 
@@ -266,7 +274,7 @@ def vault_inflation_poc(
 ) -> str:
     return (
         _sol_header(pragma)
-        + f'import "{contract_path}";\n\n'
+        + f'import "{_clean_import_path(contract_path)}";\n\n'
         + f"""contract VaultInflationTest is Test {{
     {contract_name} vault;
     address attacker = address(0xdead);
@@ -308,7 +316,7 @@ def delegatecall_poc(
 ) -> str:
     return (
         _sol_header(pragma)
-        + f'import "{contract_path}";\n\n'
+        + f'import "{_clean_import_path(contract_path)}";\n\n'
         + f"""contract MaliciousImpl {{
     address public owner;
     function init() external {{
@@ -341,7 +349,7 @@ def signature_replay_poc(
 ) -> str:
     return (
         _sol_header(pragma)
-        + f'import "{contract_path}";\n\n'
+        + f'import "{_clean_import_path(contract_path)}";\n\n'
         + f"""contract SignatureReplayTest is Test {{
     {contract_name} target;
     uint256 signerPk = 0xA11CE;
@@ -374,7 +382,7 @@ def selfdestruct_poc(
 ) -> str:
     return (
         _sol_header(pragma)
-        + f'import "{contract_path}";\n\n'
+        + f'import "{_clean_import_path(contract_path)}";\n\n'
         + f"""contract ForceEther {{
     constructor(address payable target) payable {{
         selfdestruct(target);
@@ -405,7 +413,7 @@ def stale_oracle_poc(
 ) -> str:
     return (
         _sol_header(pragma)
-        + f'import "{contract_path}";\n\n'
+        + f'import "{_clean_import_path(contract_path)}";\n\n'
         + f"""contract MockChainlinkFeed {{
     function latestRoundData()
         external pure returns (uint80, int256, uint256, uint256, uint80)
@@ -440,7 +448,7 @@ def fee_on_transfer_poc(
 ) -> str:
     return (
         _sol_header(pragma)
-        + f'import "{contract_path}";\n\n'
+        + f'import "{_clean_import_path(contract_path)}";\n\n'
         + f"""contract MockFeeToken {{
     mapping(address => uint256) public balanceOf;
     uint256 public constant FEE_BPS = 100; // 1% fee
@@ -486,7 +494,7 @@ def dos_loop_poc(
     func = getattr(finding, "affected_function", "processAll")
     return (
         _sol_header(pragma)
-        + f'import "{contract_path}";\n\n'
+        + f'import "{_clean_import_path(contract_path)}";\n\n'
         + f"""contract DosLoopTest is Test {{
     {contract_name} target;
 

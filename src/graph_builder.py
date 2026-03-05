@@ -188,6 +188,8 @@ class GraphBuilder:
         
         source_code = ""
         source_file = ""
+        start_line = 0
+        end_line = 0
         if function.source_mapping:
             try:
                 src_mapping = function.source_mapping
@@ -195,6 +197,9 @@ class GraphBuilder:
                 source_file = abs_path
                 content = self._read_file_cached(abs_path)
                 source_code = content[src_mapping.start:src_mapping.start + src_mapping.length]
+                # Calculate line numbers manually
+                start_line = content[:src_mapping.start].count('\n') + 1
+                end_line = start_line + source_code.count('\n')
             except Exception:
                 pass
 
@@ -234,6 +239,8 @@ class GraphBuilder:
             "is_view_or_pure": is_view_or_pure,
             "source_code": source_code,
             "source_file": source_file,
+            "source_start_line": start_line,
+            "source_end_line": end_line,
             "modifiers": modifiers,
             "signature": signature or "",
             "access_control_confidence": 0.0,

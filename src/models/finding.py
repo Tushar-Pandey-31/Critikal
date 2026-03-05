@@ -13,6 +13,7 @@ class FindingStatus(str, Enum):
     UNCONFIRMED = "UNCONFIRMED"
     PROVEN = "PROVEN"
     DISPROVEN = "DISPROVEN"
+    REJECTED = "REJECTED"
 
 
 @dataclass
