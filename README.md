@@ -42,103 +42,143 @@ Penteam v3 is organized into seven major phases with two new engines:
 ## End-to-End Pipeline
 
 ```mermaid
+%%{init: {'theme': 'dark', 'themeVariables': { 'primaryBorderColor': '#533483', 'edgeLabelBackground':'#1a1a2e', 'tertiaryColor': '#0f3460'}}}%%
 flowchart TB
-    %% ─── PHASE 1: INGESTION ────────────────────────────────
-    subgraph INGESTION["Phase 1 — Repository Ingestion"]
-        direction TB
-        A1["🔗 Git Clone + Submodules"]
-        A2["📦 Dependency Install\n(npm / yarn / forge install)"]
-        A3["🔍 Framework Detection\n(Foundry / Hardhat / Brownie)\nRecursive subdirectory scan"]
-        A4["📐 Repo Size Classification\n(small / medium / large / xlarge)"]
-        A5["🧩 Cluster Builder\nGroup by pragma + import graph"]
-        A6["⚙️ Multi-Pragma Compilation\nFramework-first → cluster fallback\nsolc auto-switching per pragma"]
-        A7["🔬 Slither Static Analysis\nIR parsing per cluster"]
-        A8["🧹 Contract Deduplication\nMerge overlapping Slither objects"]
-        A9["📊 Ingestion Report\nclusters / contracts / warnings"]
+    %% ───────────────────────────────────────────────────────────────
+    %% STYLES
+    %% ───────────────────────────────────────────────────────────────
+    classDef core fill:#1a1a2e,stroke:#16213e,stroke-width:2px,color:#e4e4e4
+    classDef ingest fill:#0f3460,stroke:#16213e,stroke-width:2px,color:#e4e4e4
+    classDef graphStyle fill:#1a1a2e,stroke:#533483,stroke-width:2px,color:#e4e4e4
+    classDef agent fill:#533483,stroke:#e94560,stroke-width:2px,color:#fff
+    classDef newV3 fill:#e94560,stroke:#fff,stroke-width:2px,color:#fff,font-weight:bold
+    classDef storage fill:#16213e,stroke:#e4e4e4,stroke-width:1px,stroke-dasharray: 5 5,color:#a0a0a0
 
-        A1 --> A2 --> A3 --> A4 --> A5 --> A6 --> A7 --> A8 --> A9
+    %% ───────────────────────────────────────────────────────────────
+    %% PHASE 1: INGESTION & COMPILE
+    %% ───────────────────────────────────────────────────────────────
+    subgraph P1 [PHASE 1: Hybrid Ingestion]
+        direction TB
+        Start((CLI Args)):::core --> RM[RepoManager<br/>Clone/Fetch Deps]:::ingest
+        RM --> FD[FrameworkDetector<br/>Recursive Scan]:::ingest
+        FD --> CB[Cluster Builder<br/>Multi-Pragma Grouping]:::ingest
+        CB --> AE[AnalysisEngine V2<br/>Slither IR Compilation]:::ingest
+        AE -->|Deduplicated IR| Ready[Ingestion Complete]:::core
     end
 
-    %% ─── PHASE 2: KNOWLEDGE GRAPH ──────────────────────────
-    subgraph GRAPH["Phase 2 — Knowledge Graph Construction"]
+    %% ───────────────────────────────────────────────────────────────
+    %% PHASE 2: INTELLIGENCE LAYER (Graph + Titan)
+    %% ───────────────────────────────────────────────────────────────
+    subgraph P2 [PHASE 2: Structural Intelligence Layer]
         direction TB
-        B1["🏗️ GraphBuilder\nNetworkX DiGraph"]
-        B2["📍 Node Creation\nContracts • Functions • State Variables\nModifiers • StateTransitions • ExternalTargets"]
-        B3["🔗 Edge Creation\nCALLS • READS • WRITES • PERFORMS • AFFECTS\nHAS_MODIFIER • INHERITS • EXTERNAL_CALL"]
-        B4["🛡️ Security Metadata Enrichment\nReentrancy • Privilege Escalation • Taint Analysis\nStateTransitions • Array Length Mutation\nExternal Call Reasoner • Economics"]
-        B5["🔎 Titan Pattern Engine\n100+ regex detectors → PatternHits\nGraph-validated before scoring"]
-        B6["📈 Chain & Risk Scoring\nExploit Feasibility Validator\nEconomic Amplification Engine (1.0-1.5x)\nPattern severity boost"]
-
-        B1 --> B2 --> B3 --> B4 --> B5 --> B6
-    end
-
-    %% ─── PHASE 3: COORDINATOR ──────────────────────────────
-    subgraph COORD["Phase 3 — Coordinator Orchestration"]
-        direction TB
-
-        C1["🕵️ Step 1: Recon Worker\nProtocol classification\nRAG knowledge retrieval\nEtherscan on-chain history\n→ Security Dossier"]
-
-        C2["🎯 Step 2: Hotspot Detection\nget_high_risk_hotspots()\nScore pre-filtered (min_score=70)"]
-
-        subgraph ATTACK["Step 3: Attack Hypothesis Workers"]
+        Ready --> GB[GraphBuilder<br/>NetworkX Construction]:::graphStyle
+        
+        %% The new V3 Titan Engine runs alongside/sourced from files
+        subgraph TITAN [TITAN PATTERN ENGINE v3]
             direction LR
-            D1["Worker 1\nreentrancy"]
-            D2["Worker 2\naccess control"]
-            D3["Worker N\n..."]
+            PS[Regex Scanner<br/>100+ Detectors]:::newV3 -->|PatternHits| PH[Graph Validator<br/>& Severity Boost]:::newV3
         end
-
-        C3["📋 Step 4: Build Findings\nFilter confidence > 0\nSort by confidence desc\nAttach evidence nodes"]
-
-        C4["🧠 Step 5: LLM Synthesis\nCoordinator LLM\nJSON vulnerability report\nSeverity • Root cause\nImpact assessment"]
-
-        subgraph TESTWRITER["Step 6: Phoenix TestWriter"]
-            direction TB
-            E0["🎯 Template Selection\nMatch vulnerability class\n→ 12 deterministic PoC templates"]
-            E1["🏗️ Sandbox Setup\nCopy repo (Foundry root)\nSymlink lib/ • Wipe test/\nClean isolated environment"]
-            E2["📝 Attempt 1: Template PoC\nDeterministic Foundry test\nNo LLM call needed\n(reentrancy, oracle, vault...)"]
-            E3["🤖 Attempts 2-6: LLM Refine\nTemplate errors seed context\n(Bridge & Modern modes)"]
-            E4["✏️ Auto-Correct Imports\nFix paths from remappings.txt"]
-            E5["🔨 forge test\nCompile + run in one step"]
-            E6{"✅ Exploit\nproven?"}
-            E7["📤 Return Result\nPROVEN test_code + logs"]
-            E8["🔄 Error Loop & Guards\nCompiler Taxonomy Rules\nEarly exit on Guard hit\nMax 6 attempts"]
-
-            E0 --> E1 --> E2 --> E5
-            E5 --> E6
-            E6 -->|Yes| E7
-            E6 -->|No| E3 --> E4 --> E5
-            E3 --> E8 --> E3
+        
+        Ready -.->|Source Files| TITAN
+        
+        GB -->|Base Graph| ENRICH[Security Enrichment Stack]:::graphStyle
+        PH -->|Validated Signals| ENRICH
+        
+        subgraph LAYERS [32-Pass Enrichment Chain]
+            direction LR
+            L1[Taint & Dataflow]:::graphStyle
+            L2[State Transitions]:::graphStyle
+            L3[Economic Amp]:::graphStyle
+            L4[External Call Reasoner]:::graphStyle
+            
+            L1 --> L2 --> L3 --> L4
         end
-
-        C1 --> C2 --> ATTACK --> C3 --> C4 --> TESTWRITER
+        
+        ENRICH --> LAYERS
+        LAYERS --> KG[(Knowledge Graph<br/>+ Risk Scores)]:::storage
     end
 
-    %% ─── PHASE 4: OUTPUT ───────────────────────────────────
-    subgraph OUTPUT["Phase 4 — Final Output & Reporting"]
+    %% ───────────────────────────────────────────────────────────────
+    %% PHASE 3: ORCHESTRATION (The Brain)
+    %% ───────────────────────────────────────────────────────────────
+    subgraph P3 [PHASE 3: Multi-Agent Orchestration]
         direction TB
-        F1["📊 Vulnerability Report\n• PROVEN exploits (test code)\n• HIGH-confidence leads\n• Pattern hit summary\n• Risk landscape"]
-        F2["🚨 Human Escalation\nIf findings.confidence ambiguous\nShould_escalate_to_human"]
-        F3["🗂️ Report Generation (Phase 7)\nInteractive HTML / Markdown\nVisual Graph Export\nWorking Exploit code extraction"]
-
-        F1 --> F2
-        F1 --> F3
+        KG --> CORD[Coordinator Node<br/>Lead Agent]:::agent
+        
+        CORD -->|Step 1| RECON[Recon Worker<br/>Protocol Classification]:::agent
+        RECON -->|Security Dossier| CORD
+        
+        CORD -->|Step 2| HOTSPOT[Deterministic Gate<br/>get_high_risk_hotspots]:::core
+        
+        subgraph ATTACK [Parallel Hypothesis Generation]
+            direction LR
+            AH1[AttackHypothesisWorker 1]:::agent
+            AH2[AttackHypothesisWorker 2]:::agent
+            AHn[AttackHypothesisWorker N]:::agent
+        end
+        
+        HOTSPOT --> ATTACK
+        AH1 --> FINDINGS[Findings Aggregator]:::agent
+        AH2 --> FINDINGS
+        AHn --> FINDINGS
+        
+        FINDINGS -->|Structured Leads| CORD
+        CORD -->|Synthesized JSON| TW_TRIGGER[TestWriter Trigger]:::agent
     end
 
-    %% ─── CONNECTIONS ───────────────────────────────────────
-    INGESTION --> GRAPH
-    GRAPH --> COORD
-    COORD --> OUTPUT
+    %% ───────────────────────────────────────────────────────────────
+    %% PHASE 4: PHOENIX EXPLOIT LAYER (The Proof)
+    %% ───────────────────────────────────────────────────────────────
+    subgraph P4 [PHASE 4: Phoenix Exploit Proof Layer]
+        direction TB
+        TW_TRIGGER --> SANDBOX[SandboxManager<br/>Isolated Foundry Env]:::newV3
+        
+        subgraph PHOENIX [Phoenix Template-First Loop v3]
+            direction TB
+            SANDBOX --> SEL{Template<br/>Match?}:::newV3
+            
+            %% Template Path
+            SEL -->|Yes| TPL[Deteministic PoC<br/>Template Injection]:::newV3
+            TPL --> COMPILE1
+            
+            %% LLM Fallback Path
+            SEL -->|No/Fail| LLM[LLM Code Gen<br/>Refinement Loop]:::agent
+            LLM --> FIX[Auto-Import Repair<br/>& Error Taxonomy]:::agent
+            FIX --> COMPILE1
+            
+            COMPILE1[Forge Build & Test]:::core --> PASS{Exploit<br/>Proven?}:::core
+            PASS -->|s57| LLM
+            PASS -->|s58| RESULT[Artifact: Working Exploit]:::newV3
+        end
+    end
 
-    %% ─── STYLING ───────────────────────────────────────────
-    classDef phase1 fill:#1a1a2e,stroke:#16213e,color:#e4e4e4
-    classDef phase2 fill:#0f3460,stroke:#16213e,color:#e4e4e4
-    classDef phase3 fill:#533483,stroke:#16213e,color:#e4e4e4
-    classDef phase4 fill:#e94560,stroke:#16213e,color:#e4e4e4
+    %% ───────────────────────────────────────────────────────────────
+    %% PHASE 5: REPORTING
+    %% ───────────────────────────────────────────────────────────────
+    subgraph P5 [PHASE 5: Reporting & Output]
+        direction LR
+        RESULT --> REP[ReportGenerator]:::core
+        REP --> OUT_HTML[Interactive HTML]:::core
+        REP --> OUT_MD[Markdown Dossier]:::core
+        REP --> OUT_GRAPH[Graph Visualizer]:::core
+    end
 
-    class INGESTION phase1
-    class GRAPH phase2
-    class COORD phase3
-    class OUTPUT phase4
+    %% ───────────────────────────────────────────────────────────────
+    %% CONNECT SUBGRAPHS
+    %% ───────────────────────────────────────────────────────────────
+    P1 --> P2
+    P2 --> P3
+    P3 --> P4
+    P4 --> P5
+
+    %% Styling the subgraph borders
+    style P1 fill:#0f346020,stroke:#0f3460,stroke-width:2px
+    style P2 fill:#53348320,stroke:#533483,stroke-width:2px
+    style P3 fill:#e9456020,stroke:#e94560,stroke-width:2px
+    style P4 fill:#e9456020,stroke:#e94560,stroke-width:2px,color:#fff
+    style P5 fill:#16213e20,stroke:#16213e,stroke-width:2px
+    style TITAN fill:#e9456030,stroke:#e94560,stroke-width:1px,stroke-dasharray: 5 5
+    style PHOENIX fill:#e9456030,stroke:#e94560,stroke-width:1px,stroke-dasharray: 5 5
 ```
 
 ### Pipeline Step Details
