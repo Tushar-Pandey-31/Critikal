@@ -1,9 +1,9 @@
-# Penteam v2.0
+# Penteam v3.0
 
 **AI-Powered Smart Contract Security System**  
-*Human-in-the-loop • Multi-Agent • Graph-Powered • Hallucination-Resistant*
+*Human-in-the-loop • Multi-Agent • Graph-Powered • Pattern-Validated • Hallucination-Resistant*
 
-**Last Updated**: February 28, 2026
+**Last Updated**: March 5, 2026
 
 ## Overview & Vision
 
@@ -11,10 +11,13 @@ Penteam is a **human-in-the-loop multi-agent system** designed for high-signal W
 
 Instead of a single generalist LLM, Penteam uses a **Mixture of Experts (MoE)** architecture where specialized agents work together under a central **Coordinator**. The system is built on a rich **Knowledge Graph** to ground every claim in deterministic facts, eliminating hallucinations.
 
+**v3 "Hybrid-Agnostic" Architecture** combines broad pattern coverage (100+ regex detectors) with deep graph reasoning (taint, reachability, exploit chains) — patterns seed the search space, the graph proves the results.
+
 **Core Philosophy**:
 - Signal-to-noise ratio > Autonomy
 - Graph memory + deterministic rules first
-- Adversarial Jury layer (different model families)
+- Pattern-first scanning → Graph-validated signals
+- Template-first exploit proofs → LLM refinement
 - Compiler (Foundry) as the ultimate truth oracle
 - Human always in the loop for final validation
 
@@ -22,13 +25,17 @@ Instead of a single generalist LLM, Penteam uses a **Mixture of Experts (MoE)** 
 
 ## Architecture
 
-Penteam is divided into clear phases:
+Penteam v3 is organized into seven major phases with two new engines:
 
-- **Phase 1–3**: Structural Intelligence Layer (Knowledge Graph + deterministic security signals + Exploit Feasibility)
-- **Phase 4**: Multi-Agent Orchestration (Lead Coordinator + specialized Workers)
-- **Phase 5**: Jury System (adversarial validation — in progress)
-- **Phase 6**: Exploit Proof Layer (Test Writer Worker — **live**)
-- **Phase 7**: Reporting & Visualization (HTML Reports, Graph Exports — **live**)
+| Phase | Name | Status |
+|:------|:-----|:-------|
+| 1–3 | Structural Intelligence Layer (Knowledge Graph + Security Signals + Exploit Feasibility) | ✅ Complete |
+| 4 | Multi-Agent Orchestration (Lead Coordinator + Workers) | ✅ Complete |
+| 5 | Jury System (adversarial validation) | 🔄 In Progress |
+| 6 | Exploit Proof Layer (Phoenix Test Writer) | ✅ Complete |
+| 7 | Reporting & Visualization (HTML Reports, Graph Exports) | ✅ Complete |
+| **New** | **Titan Pattern Engine** (100+ vulnerability detectors) | ✅ **Complete** |
+| **New** | **Phoenix Template-First Loop** (12 deterministic PoC templates) | ✅ **Complete** |
 
 ---
 
@@ -59,9 +66,10 @@ flowchart TB
         B2["📍 Node Creation\nContracts • Functions • State Variables\nModifiers • StateTransitions • ExternalTargets"]
         B3["🔗 Edge Creation\nCALLS • READS • WRITES • PERFORMS • AFFECTS\nHAS_MODIFIER • INHERITS • EXTERNAL_CALL"]
         B4["🛡️ Security Metadata Enrichment\nReentrancy • Privilege Escalation • Taint Analysis\nStateTransitions • Array Length Mutation\nExternal Call Reasoner • Economics"]
-        B5["📈 Chain & Risk Scoring\nExploit Feasibility Validator\nEconomic Amplification Engine (1.0-1.5x)"]
+        B5["🔎 Titan Pattern Engine\n100+ regex detectors → PatternHits\nGraph-validated before scoring"]
+        B6["📈 Chain & Risk Scoring\nExploit Feasibility Validator\nEconomic Amplification Engine (1.0-1.5x)\nPattern severity boost"]
 
-        B1 --> B2 --> B3 --> B4 --> B5
+        B1 --> B2 --> B3 --> B4 --> B5 --> B6
     end
 
     %% ─── PHASE 3: COORDINATOR ──────────────────────────────
@@ -83,20 +91,23 @@ flowchart TB
 
         C4["🧠 Step 5: LLM Synthesis\nCoordinator LLM\nJSON vulnerability report\nSeverity • Root cause\nImpact assessment"]
 
-        subgraph TESTWRITER["Step 6: TestWriter — Exploit Proof"]
+        subgraph TESTWRITER["Step 6: Phoenix TestWriter"]
             direction TB
+            E0["🎯 Template Selection\nMatch vulnerability class\n→ 12 deterministic PoC templates"]
             E1["🏗️ Sandbox Setup\nCopy repo (Foundry root)\nSymlink lib/ • Wipe test/\nClean isolated environment"]
-            E2["📝 Collect Source + Deps\nResolve target contract\nFollow import graph\nRemappings from foundry.toml"]
-            E3["🤖 LLM: Generate Test\nFoundry PoC with\nfunction test_exploit()\n(Bridge & Modern modes)"]
-            E4["✏️ Auto-Correct Imports\nFix paths from\nremappings.txt"]
+            E2["📝 Attempt 1: Template PoC\nDeterministic Foundry test\nNo LLM call needed\n(reentrancy, oracle, vault...)"]
+            E3["🤖 Attempts 2-6: LLM Refine\nTemplate errors seed context\n(Bridge & Modern modes)"]
+            E4["✏️ Auto-Correct Imports\nFix paths from remappings.txt"]
             E5["🔨 forge test\nCompile + run in one step"]
             E6{"✅ Exploit\nproven?"}
             E7["📤 Return Result\nPROVEN test_code + logs"]
             E8["🔄 Error Loop & Guards\nCompiler Taxonomy Rules\nEarly exit on Guard hit\nMax 6 attempts"]
 
-            E1 --> E2 --> E3 --> E4 --> E5 --> E6
+            E0 --> E1 --> E2 --> E5
+            E5 --> E6
             E6 -->|Yes| E7
-            E6 -->|No| E8 --> E3
+            E6 -->|No| E3 --> E4 --> E5
+            E3 --> E8 --> E3
         end
 
         C1 --> C2 --> ATTACK --> C3 --> C4 --> TESTWRITER
@@ -105,7 +116,7 @@ flowchart TB
     %% ─── PHASE 4: OUTPUT ───────────────────────────────────
     subgraph OUTPUT["Phase 4 — Final Output & Reporting"]
         direction TB
-        F1["📊 Vulnerability Report\n• PROVEN exploits (test code)\n• HIGH-confidence leads\n• Risk landscape summary"]
+        F1["📊 Vulnerability Report\n• PROVEN exploits (test code)\n• HIGH-confidence leads\n• Pattern hit summary\n• Risk landscape"]
         F2["🚨 Human Escalation\nIf findings.confidence ambiguous\nShould_escalate_to_human"]
         F3["🗂️ Report Generation (Phase 7)\nInteractive HTML / Markdown\nVisual Graph Export\nWorking Exploit code extraction"]
 
@@ -139,10 +150,12 @@ flowchart TB
 | 1.3 | `ClusterBuilder` | .sol files + pragmas | Compilation clusters | Sequential |
 | 1.4 | `AnalysisEngine.run_analysis_v2()` | Clusters | Merged Slither object | Per-cluster |
 | 2.1 | `GraphBuilder` | Slither IR | NetworkX DiGraph (2000+ nodes) | Sequential |
+| **2.2** | **`pattern_scanner.scan_all_sources()`** | **File cache** | **`PatternHit[]` (raw signals)** | **Sequential** |
+| **2.3** | **`GraphBuilder._integrate_pattern_hits()`** | **PatternHits + Graph** | **Validated hits → node metadata** | **Sequential** |
 | 3.1 | `ReconWorker` | Contract names + addresses | Security Dossier | Sequential |
 | 3.2 | `get_high_risk_hotspots()` | Graph | Scored hotspots (min 70) | Deterministic |
 | 3.3 | `AttackHypothesisWorker` | Hotspot + recon context | Attack path + confidence | **Parallel** (all hotspots) |
-| 3.4 | `TestWriterWorker` | Finding + repo | Proven exploit or failure | Sequential (per finding) |
+| **3.4** | **`TestWriterWorker` (Phoenix)** | **Finding + repo** | **Proven exploit or failure** | **Sequential (template → LLM)** |
 | 4.1 | Coordinator LLM | All results | JSON vulnerability report | Sequential (with fallback) |
 | 7.1 | `ReportGenerator` | Findings + Graph | Structured HTML/MD reports | Sequential |
 
@@ -161,12 +174,31 @@ flowchart TB
   - Accounting & Invariant Heuristics Engine.
   - External Call Reasoner: Risk assessment across `TOKEN_TRANSFER`, `ORACLE`, `UNTRUSTED_CONTRACT`, etc.
   - Contract tier classification (`CORE`, `FACTORY`, `LIBRARY`, `INFRA`) with tier-weighted impact scoring.
+  - Read-only reentrancy risk detection across cross-contract view calls.
+  - **Pattern-validated signals** from the Titan Engine (30+ categories).
 - Incorporates the **Economic Amplification Engine** capping dynamic economic distortions directly into scoring calculations.
-- Query API used by all agents (`get_high_risk_hotspots`, `get_function_context`, etc.)
+- Query API used by all agents (`get_high_risk_hotspots`, `get_function_context`, `get_pattern_hits`, etc.)
 
 See **[Knowledge Graph Structure](#knowledge-graph-structure)** below for the complete schema.
 
-### 2. Lead Coordinator
+### 2. Titan Pattern Engine (NEW in v3)
+- **`src/pattern_scanner.py`** — 30+ regex-based vulnerability detectors covering:
+  - **Reentrancy** (ETH-001/002): CEI violations, cross-function reentrancy
+  - **Access Control** (ETH-005/006/007): Missing modifiers, tx.origin, selfdestruct
+  - **Arithmetic** (ETH-013/014): Unchecked blocks, unsafe downcasts
+  - **Oracle Manipulation** (ETH-024/028): Spot price reliance, stale Chainlink data
+  - **Storage Risks** (ETH-019/029): delegatecall, uninitialized storage
+  - **Logic Flaws** (ETH-035/040): Timestamp dependence, signature replay
+  - **Token Issues** (ETH-050/052): Fee-on-transfer, rebasing token assumptions
+  - **DeFi** (ETH-057/060): Vault share inflation, flash loan amplification
+  - **Transient Storage** (ETH-070): TSTORE/TLOAD cross-call collision
+  - **EIP-7702** (ETH-080/086): Broken EOA checks, delegated account risks
+  - **ERC-4337** (ETH-090/091): Account abstraction validation-execution confusion
+  - **Uniswap V4** (ETH-094): Hook callback reentrancy
+- Produces `PatternHit` dataclasses — raw signals validated by the graph before scoring
+- **Key differentiator**: Unlike tools that report raw regex matches, Penteam validates every hit against the graph's taint analysis, reachability, and access control context to eliminate false positives
+
+### 3. Lead Coordinator
 - Pure orchestrator (never analyzes code directly)
 - Maintains global state using LangGraph
 - Spawns workers in parallel
@@ -174,7 +206,7 @@ See **[Knowledge Graph Structure](#knowledge-graph-structure)** below for the co
 - Analyzes disagreement to compute `should_escalate_to_human()`
 - Triggers **Phase 7** reporting execution via `ReportGenerator`.
 
-### 3. Workers (Mixture of Experts)
+### 4. Workers (Mixture of Experts)
 
 **Recon Worker**
 - Gathers protocol intelligence (RAG + Etherscan history)
@@ -188,8 +220,12 @@ See **[Knowledge Graph Structure](#knowledge-graph-structure)** below for the co
 - Produces `attack_path` and confidence score
 - Safely handles API downtime and transient timeouts natively.
 
-**Test Writer Worker** (Live)
-- Receives a finding
+**Test Writer Worker — Phoenix Loop** (v3 Upgrade)
+- **Attempt 1 (Template-First)**: Selects from **12 deterministic PoC templates** (`poc_templates.py`) based on vulnerability class — no LLM call needed:
+  - Reentrancy, Access Control, tx.origin, Oracle Manipulation
+  - Integer Overflow, Vault Inflation, Delegatecall, Signature Replay
+  - Selfdestruct, Stale Oracle, Fee-on-Transfer, DoS Loop
+- **Attempts 2-6 (LLM Refinement)**: Template errors + code seed the LLM context, giving it a concrete starting point instead of a blank slate
 - Generates Foundry test code using either **Modern (`^0.8.0`)** or **Bridge Mode (`deployCode()`)** for legacy projects (`0.5.x`-`0.7.x`).
 - Validates compiler output iteratively: maps exact errors (Cast fix, Interface omission) using strict Error Rules.
 - Safely detects falsification signals (e.g. hitting `already initialized` guards) to prevent retry loops.
@@ -197,12 +233,12 @@ See **[Knowledge Graph Structure](#knowledge-graph-structure)** below for the co
 - Automated import repair resolving missing `forge-std` contexts.
 - Uses `tempfile` isolated environments via `SandboxManager`.
 
-### 4. Economic Amplification Engine
+### 5. Economic Amplification Engine
 - Analyzes tainted logic within nodes leveraging the Graph.
 - Detects denominator manipulations, rounding/precision drifts, and unbounded mint configurations.
 - Imposes an `economic_impact_score` multiplier onto baseline scores mapping mathematically vulnerable constructs prior to Hypothesis generation.
 
-### 5. Ingestion Engine (v2)
+### 6. Ingestion Engine (v2)
 - **Framework Detection**: Recursive scan for Foundry/Hardhat/Brownie inside complex repos
 - **Cluster Compilation**: Groups files by pragma version + import graph
 - **Memory Guard**: Classifies repos by size preventing runaway states
@@ -218,7 +254,7 @@ The Knowledge Graph is a **NetworkX DiGraph** built from Slither IR. Every node 
 
 #### Contract
 - **ID format**: `ContractName`
-- **Properties**: `name`, `is_upgradeable`, `is_library`, `is_interface`, `tier` (`CORE`\|`FACTORY`\|`LIBRARY`\|`INFRA`), `privileged_roles`
+- **Properties**: `name`, `is_upgradeable`, `is_library`, `is_interface`, `tier` (`CORE`|`FACTORY`|`LIBRARY`|`INFRA`), `privileged_roles`
 
 #### Function
 - **ID format**: `ContractName::FunctionName`
@@ -227,7 +263,8 @@ The Knowledge Graph is a **NetworkX DiGraph** built from Slither IR. Every node 
 - **Epic 8 Oracle**: `uses_spot_price_oracle`, `uses_safe_oracle`, `uses_twap_oracle`, `oracle_manipulation_risk`, `twap_window_short`
 - **Epic 8 Arithmetic & Signature**: `division_before_multiplication`, `unsafe_type_cast`, `signature_replay_risk`
 - **Taint Analysis**: `taint_sources`, `tainted_state_writes`, `taint_critical_paths`, `unchecked_external_return`
-- **Economic**: `unbounded_inflation_risk`
+- **Economic**: `unbounded_inflation_risk`, `economic_impact_score`
+- **Pattern Hits** (v3): `pattern_hits` (count), `pattern_hit_details` (list of validated PatternHit metadata), `pattern_categories` (set of matched categories)
 - **Risk scores**: `structural_score`, `exploitability_score`, `impact_score`, `economic_impact_score`, `final_score`
 
 *(StateVariable, Modifier, StateTransition, and ExternalTarget follow analogous deep IR categorization methodologies, referencing inter-contract dependencies and bounds.)*
@@ -250,9 +287,10 @@ Function ──STATE_DEPENDENCY──► Function (cross-function dependency)
 
 ### Risk Score Formula (complete)
 
-Risk scoring has two phases: **pre-scoring** (added directly to `risk_score` per-detector) and **global scoring** (`_compute_global_risk_scores`), multiplied dynamically.
-
-The Final Score applies Exploit Feasibility, Economic Distortions, Structural Risks, and Impact severity rules prior to gatekeeping in Hotspots Selection. 
+Risk scoring has three phases:
+1. **Pre-scoring**: Deterministic structural signals added directly to `risk_score` per-detector
+2. **Pattern boost** (v3): Validated pattern hits boost `structural_score` by severity (CRITICAL: +15, HIGH: +10, MEDIUM: +5)
+3. **Global scoring** (`_compute_global_risk_scores`): Multiplied by Exploit Feasibility, Economic Amplification (1.0-1.5x), and Impact severity
 
 ### Hotspot Selection Gate
 
@@ -263,8 +301,51 @@ A function becomes a hotspot only if ALL conditions pass:
 4. NOT `is_view_or_pure`
 5. NOT `is_constructor`
 6. NOT matching test/mock/fuzzing contract name patterns
-7. NOT heavily guarded by initializer macros securely preventing reuse. 
+7. NOT heavily guarded by initializer macros securely preventing reuse.
 8. NOT in a `LIBRARY`-tier contract
+
+---
+
+## Project Structure
+
+```
+penteam/
+├── src/
+│   ├── main.py                         # CLI entry point
+│   ├── graph_builder.py                # Knowledge Graph construction (5400+ lines)
+│   ├── pattern_scanner.py              # Titan Pattern Engine (30+ detectors)  ← NEW v3
+│   ├── economic_analyzer.py            # Economic Amplification Engine
+│   ├── analysis_engine.py              # Slither compilation orchestrator
+│   ├── repo_manager.py                 # Git clone + dependency management
+│   ├── hotspot_engine.py               # Hotspot selection logic
+│   ├── agents/
+│   │   ├── lead_agent.py               # LangGraph Coordinator
+│   │   └── workers/
+│   │       ├── attack_hypothesis_worker.py
+│   │       ├── recon_worker.py
+│   │       ├── test_writer_worker.py   # Phoenix Test Writer
+│   │       ├── poc_templates.py        # 12 deterministic PoC templates  ← NEW v3
+│   │       ├── test_writer_sandbox.py  # Foundry sandbox isolation
+│   │       ├── test_writer_prompts.py  # LLM prompt engineering
+│   │       └── bridge_interface_generator.py  # Legacy Solidity bridge
+│   ├── ingestion/                      # Framework detection, clustering
+│   ├── knowledge/                      # RAG system (ChromaDB)
+│   ├── models/                         # Pydantic schemas
+│   ├── reporting/                      # HTML/MD report generation
+│   └── utils/
+│       ├── graph_queries.py            # Deterministic query API
+│       └── token_counter.py            # LLM token tracking
+├── tests/                              # 554 tests (40 test files)
+│   ├── test_pattern_scanner.py         # Titan Engine tests (16 cases)  ← NEW v3
+│   ├── test_taint_engine.py            # Inter-procedural taint tests
+│   ├── test_accounting_invariant_engine.py
+│   ├── test_feasibility.py             # Exploit chain feasibility
+│   ├── test_economic_analyzer.py       # Economic amplification tests
+│   ├── test_access_control.py          # Modifier extraction + guards
+│   ├── test_external_call_reasoner.py  # Call classification tests
+│   └── ... (33 more test files)
+└── pyproject.toml
+```
 
 ---
 
@@ -274,6 +355,7 @@ A function becomes a hotspot only if ALL conditions pass:
 - **Orchestration**: LangGraph + LangChain
 - **Graph**: NetworkX
 - **Static Analysis**: Slither
+- **Pattern Scanning**: Custom regex engine (Titan, 670 lines)
 - **Testing**: Foundry (Forge)
 - **Vector DB**: ChromaDB
 - **Embeddings**: all-MiniLM-L6-v2
@@ -281,7 +363,7 @@ A function becomes a hotspot only if ALL conditions pass:
   - Lead & most workers: Gemini 2.5 / 3.0 Flash/Pro
   - Reasoning: GPT-5 / o3, Claude 4.6 Sonnet
 - **Models**: Pydantic for strict schemas
-- **Testing**: pytest (225+ graph/structural tests, 100% pass)
+- **Testing**: pytest (554 collected tests across 40 files)
 
 ---
 
@@ -302,15 +384,17 @@ XAI_API_KEY=...        # for Grok
 python -m src.main --repo https://github.com/theredguild/damn-vulnerable-defi
 ```
 
-## Current Status (February 28, 2026)
+## Current Status (March 5, 2026)
 
-- **Phase 1–3**: Complete (Rich Knowledge Graph, advanced security signals, Exploit Feasibility Validations, and the Economic Amplification Engine)
+- **Phase 1–3**: Complete (Rich Knowledge Graph, advanced security signals, Exploit Feasibility Validations, Economic Amplification Engine, **Titan Pattern Engine**)
 - **Phase 4**: Complete (MoE + Coordinator + Recon + Attack Hypothesis with resilient worker timeouts/crash safety)
 - **Phase 5**: Partially Complete (Jury models validation architecture in progress)
-- **Phase 6**: Complete! Test Writer Worker is robust, incorporates bridge-mode testing, guard hit aborts, error taxonomy inference, and full sandbox automations preventing fake test proofs.
+- **Phase 6**: Complete! **Phoenix Test Writer** with template-first loop, bridge-mode testing, guard hit aborts, error taxonomy inference, and full sandbox automations preventing fake test proofs.
 - **Phase 7**: Complete (Structured HTML output, detailed graphing representations via `ReportGenerator`)
 - **Ingestion Engine v2**: Complete
-- **Total Tests**: 225+ graph/structural tests passing (100% pass rate)
+- **Titan Pattern Engine**: Complete (30+ detectors, graph-validated, integrated into scoring)
+- **Phoenix Template Library**: Complete (12 deterministic PoC templates for instant exploit generation)
+- **Total Tests**: 554 collected across 40 test files
 
 ## Roadmap
 
@@ -322,6 +406,11 @@ python -m src.main --repo https://github.com/theredguild/damn-vulnerable-defi
 - [x] Advanced Graph Engine — Precision Taints, Exploit Chains, External Reasoner
 - [x] Story 6.4 — Confidence Adjustment, Test Writer Hardening, Mock Fabrications Prevention
 - [x] Phase 7 — Interactive HTML / Graphical Reporting Pipeline
+- [x] **v3: Titan Pattern Engine** — 30+ regex detectors, graph-validated signals
+- [x] **v3: Phoenix Template-First Loop** — 12 deterministic PoC templates, template → LLM fallback
+- [ ] v3: Hydra Multi-Tool Orchestration (Slither + Aderyn + Mythril)
+- [ ] v3: Medusa Dynamic Fuzzing Layer (invariant test generation)
+- [ ] v3: Oracle Economic Simulation (price-impact modeling)
 - [ ] Phase 5 — Full Adversarial Jury System Implementation
 - [ ] SaaS / Hosted API Version
 

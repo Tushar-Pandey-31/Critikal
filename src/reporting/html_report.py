@@ -11,6 +11,7 @@ def render_html_report(
     findings: list,
     leads: list[dict],
     poc_files: list[dict],
+    token_usage: dict | None = None,
 ) -> str:
     """Returns a complete self-contained HTML string."""
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
@@ -33,6 +34,8 @@ def render_html_report(
     sidebar_items = _build_sidebar_items(findings)
     finding_panels = _build_finding_panels(findings, leads, poc_files)
     summary_html = _build_summary_table(severity_counts, total_findings, total_proven)
+    token_usage_sidebar = _build_token_sidebar(token_usage) if token_usage else ""
+    token_usage_panel = _build_token_panel(token_usage) if token_usage else ""
 
     e = html.escape
     return f"""<!DOCTYPE html>
@@ -66,6 +69,7 @@ def render_html_report(
       <h2>Summary</h2>
       {summary_html}
     </div>
+    {token_usage_sidebar}
     <div class="sidebar-section">
       <div class="meta-block">
         <span class="meta-label">Repository</span>
@@ -75,6 +79,7 @@ def render_html_report(
   </aside>
   <main id="main">
     {finding_panels if findings else _NO_FINDINGS_HTML}
+    {token_usage_panel}
   </main>
 </div>
 <script>
@@ -248,6 +253,86 @@ def _build_finding_panels(findings: list, leads: list[dict], poc_files: list[dic
     return "\n".join(panels)
 
 
+def _build_token_sidebar(token_usage: dict) -> str:
+    total = token_usage.get("total", {})
+    return f"""
+    <div class="sidebar-section">
+      <h2>Token Usage</h2>
+      <div class="summary-totals">
+        <span>{total.get('call_count', 0)} LLM calls</span>
+        <span class="proven-count">${total.get('estimated_cost_usd', 0):.4f}</span>
+      </div>
+      <table class="summary-table">
+        <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>Input tokens</td><td>{total.get('input_tokens', 0):,}</td></tr>
+          <tr><td>Output tokens</td><td>{total.get('output_tokens', 0):,}</td></tr>
+          <tr><td>Total tokens</td><td>{total.get('total_tokens', 0):,}</td></tr>
+          <tr><td>Duration</td><td>{token_usage.get('elapsed_seconds', 0):.0f}s</td></tr>
+        </tbody>
+      </table>
+    </div>"""
+
+
+def _build_token_panel(token_usage: dict) -> str:
+    agents = token_usage.get("agents", [])
+    total = token_usage.get("total", {})
+    elapsed = token_usage.get("elapsed_seconds", 0)
+
+    if not agents:
+        return ""
+
+    rows = ""
+    for a in agents:
+        rows += f"""<tr>
+          <td>{html.escape(a['agent_name'])}</td>
+          <td>{html.escape(a.get('model', ''))}</td>
+          <td>{a['call_count']}</td>
+          <td>{a['input_tokens']:,}</td>
+          <td>{a['output_tokens']:,}</td>
+          <td>{a['input_chars']:,}</td>
+          <td>{a['output_chars']:,}</td>
+          <td>${a['estimated_cost_usd']:.4f}</td>
+        </tr>"""
+
+    return f"""
+    <article class="finding-panel" id="token-usage">
+      <div class="finding-header">
+        <div class="badges">{_badge('METRICS', '#58a6ff', 'sev-badge')}</div>
+        <h2>LLM Token Usage & Cost</h2>
+        <p class="finding-title">Per-agent breakdown of LLM API usage across the pipeline</p>
+      </div>
+      <div class="section">
+        <table class="token-table">
+          <thead>
+            <tr>
+              <th>Agent</th><th>Model</th><th>Calls</th>
+              <th>Input Tokens</th><th>Output Tokens</th>
+              <th>Input Chars</th><th>Output Chars</th>
+              <th>Est. Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows}
+            <tr class="total-row">
+              <td><strong>TOTAL</strong></td>
+              <td>—</td>
+              <td><strong>{total.get('call_count', 0)}</strong></td>
+              <td><strong>{total.get('input_tokens', 0):,}</strong></td>
+              <td><strong>{total.get('output_tokens', 0):,}</strong></td>
+              <td><strong>{total.get('input_chars', 0):,}</strong></td>
+              <td><strong>{total.get('output_chars', 0):,}</strong></td>
+              <td><strong>${total.get('estimated_cost_usd', 0):.4f}</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="section">
+        <p style="color:#8b949e;font-size:12px;">Pipeline duration: {elapsed:.0f}s &nbsp;|&nbsp; Total tokens: {total.get('total_tokens', 0):,} &nbsp;|&nbsp; Estimated cost: ${total.get('estimated_cost_usd', 0):.4f}</p>
+      </div>
+    </article>"""
+
+
 _NO_FINDINGS_HTML = """
 <div class="no-findings">
   <h2>No Findings</h2>
@@ -329,6 +414,12 @@ body { background:var(--bg); color:var(--text); font-family:system-ui,-apple-sys
 .confidence-bar-wrap { height:6px; background:#21262d; border-radius:3px; overflow:hidden; margin-bottom:4px; }
 .confidence-bar { height:100%; border-radius:3px; transition:width .3s; }
 .confidence-val { font-size:13px; font-weight:700; }
+
+/* Token Usage table */
+.token-table { width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; }
+.token-table th { text-align:left; color:#8b949e; font-weight:500; border-bottom:1px solid var(--border); padding:6px 8px; font-size:11px; text-transform:uppercase; letter-spacing:.3px; }
+.token-table td { padding:6px 8px; border-bottom:1px solid rgba(48,54,61,.5); }
+.token-table .total-row td { border-top:2px solid var(--border); color:var(--text-bright); }
 
 /* Code blocks */
 .code-wrap { position:relative; }

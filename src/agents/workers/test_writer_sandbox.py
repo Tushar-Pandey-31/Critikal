@@ -97,12 +97,20 @@ class SandboxManager:
         else:
             print(f"  [Sandbox] Using existing remappings.txt from repo")
 
-        # Clean test/ dir (we only want our ExploitTest.t.sol)
+        # Selectively clean test/ dir: remove only *.t.sol test files,
+        # preserve mocks/helpers/fixtures that script/ or src/ may import.
+        # Many repos store mock contracts in test/mock/ or test/helpers/ that
+        # are referenced by non-test code (e.g. script/HelperConfig.s.sol).
         test_dir = self.tmp_dir / "test"
         if test_dir.exists():
-            shutil.rmtree(test_dir, ignore_errors=True)
-        test_dir.mkdir(parents=True, exist_ok=True)
-        print(f"  [Sandbox] Cleaned test/ directory")
+            removed = 0
+            for t_sol in list(test_dir.rglob("*.t.sol")):
+                t_sol.unlink(missing_ok=True)
+                removed += 1
+            print(f"  [Sandbox] Cleaned {removed} existing test file(s), preserved mocks/helpers")
+        else:
+            test_dir.mkdir(parents=True, exist_ok=True)
+            print(f"  [Sandbox] Created test/ directory")
 
         # Verify critical dependency
         forge_std_ok = (self.tmp_dir / "lib" / "forge-std" / "src" / "Test.sol").exists()

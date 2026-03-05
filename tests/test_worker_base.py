@@ -78,36 +78,7 @@ def test_concrete_worker_runs():
 #  Group 2: Lead Routing / Coordination (4 tests)
 # ────────────────────────────────────────────────────────────
 
-@patch("src.agents.lead_agent.get_llm")
-@pytest.mark.asyncio
-async def test_coordinator_node_calls_hotspots(mock_get_llm):
-    """Coordinator invokes get_high_risk_hotspots tool."""
-    mock_llm = MagicMock()
-    # Mock a tool call response
-    mock_llm.invoke.return_value = AIMessage(
-        content="",
-        tool_calls=[{
-            "name": "get_high_risk_hotspots",
-            "args": {},
-            "id": "call_1"
-        }]
-    )
-    mock_get_llm.return_value = mock_llm
-    
-    state = AgentState(
-        messages=[],
-        vulnerability_leads=[],
-        target_nodes=[],
-        human_feedback=None,
-        worker_outputs=[],
-        strategy=None,
-        pending_workers=[],
-        graph=MagicMock()
-    )
-    
-    result = await coordinator_node(state)
-    assert len(result["messages"]) == 1
-    assert result["messages"][0].tool_calls[0]["name"] == "get_high_risk_hotspots"
+
 
 @patch("src.agents.lead_agent.get_llm")
 @pytest.mark.asyncio

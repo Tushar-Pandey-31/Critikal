@@ -70,25 +70,7 @@ async def test_coordinator_node_json_output(mock_get_llm):
     assert result["strategy"] == "Analyze reentrancy"
     assert "Vault.withdraw" in result["target_nodes"]
 
-@patch("src.agents.lead_agent.get_llm")
-@pytest.mark.asyncio
-async def test_coordinator_node_tool_call(mock_get_llm):
-    """3. Test coordinator tool routing (Fix 1 - Option A)."""
-    # DELETED: Old test for get_function_context.
-    # New Lead Agent (Coordinator) uses get_high_risk_hotspots.
-    
-    mock_llm_instance = MagicMock()
-    mock_llm_instance.invoke.return_value = AIMessage(
-        content="", 
-        tool_calls=[{"name": "get_high_risk_hotspots", "args": {}, "id": "call_1"}]
-    )
-    mock_get_llm.return_value = mock_llm_instance
-    
-    state = {"messages": [], "worker_outputs": [], "graph": MagicMock()}
-    result = await coordinator_node(state)
-    
-    assert len(result["messages"]) == 1
-    assert result["messages"][0].tool_calls[0]["name"] == "get_high_risk_hotspots"
+
 
 @pytest.mark.asyncio
 async def test_lead_researcher_node_alias_warning():

@@ -50,6 +50,24 @@ def _finding_priority(f: Finding) -> tuple:
 from src.utils.foundry_root import resolve_foundry_root as _get_foundry_project_root
 
 
+def _exploit_target_eligible(finding: Finding, graph) -> bool:
+    """Check if the finding's target is eligible for an exploit test."""
+    if not graph:
+        return True # fail open
+    target = finding.hotspot_node_id
+    if not target or not graph.has_node(target):
+         return True # fail open
+    
+    data = graph.nodes[target]
+    # Drop external view functions, interface placeholders, and internal functions
+    if data.get("is_view") or data.get("is_pure"):
+         return False
+    if data.get("node_type") == "interface_function":
+         return False
+    vis = data.get("visibility", "")
+    if vis in ("internal", "private"):
+         return False
+    return True
 
 # ════════════════════════════════════════════════════════════
 #  COORDINATOR SYSTEM PROMPT
@@ -163,7 +181,7 @@ def _repo_name_from_url(repo_url: str) -> str:
         return ""
     repo_name = repo_url.rstrip("/").split("/")[-1]
     if repo_name.endswith(".git"):
-        repo_name = repo_name[:-4]
+        repo_name = repo_name[:-4] # Pyre doesn't like str slicing here for some reason, ignore
     return repo_name
 
 
@@ -183,7 +201,7 @@ def get_llm(
     if "GOOGLE_API_KEY" not in os.environ:
         logger.info("WARNING: GOOGLE_API_KEY not found in environment.")
     llm = ChatGoogleGenerativeAI(model=model_name, temperature=temperature)
-    logger.info(f"[get_llm] Created LLM: {llm.model} (bind_tools={bind_tools})", flush=True)
+    logger.info(f"[get_llm] Created LLM: {llm.model} (bind_tools={bind_tools})")
     if bind_tools and _TOOLS:
         return llm.bind_tools(_TOOLS)
     return llm
@@ -406,19 +424,24 @@ async def coordinator_node(state: AgentState):
             elif o is None:
                 print(f"  [{i}] TIMEOUT (no result)")
             else:
-                print(f"  [{i}] confidence={o.confidence} hypothesis={str(o.hypothesis)[:80] if o.hypothesis else None}")
+                o_conf = getattr(o, "confidence", 0)
+                o_hyp = str(getattr(o, "hypothesis", "")) or None
+                print(f"  [{i}] confidence={o_conf} hypothesis={o_hyp}")
 
         # ── Step 4: Build Findings ─────────────────────────
         for output, hotspot in zip(worker_outputs_parallel, hotspots):
             if output is None or isinstance(output, Exception):
                 print(f"  Skipping {hotspot.node_id} — no output")
                 continue
-            if output.confidence > 0:
+            
+            out_conf = getattr(output, "confidence", 0)
+            if out_conf > 0:
                 finding = Finding.from_worker_output(output, hotspot)
                 findings.append(finding)
 
             if not isinstance(output, Exception):
-                wo_dict = output.model_dump() if hasattr(output, "model_dump") else output
+                model_dump_func = getattr(output, "model_dump", None)
+                wo_dict = model_dump_func() if callable(model_dump_func) else output
                 worker_outputs.append(wo_dict)
 
         print(f"[Step 4] Findings that passed filter: {len(findings)}")
@@ -483,6 +506,25 @@ async def coordinator_node(state: AgentState):
             asyncio.to_thread(coordinator_llm.invoke, prompt),
             timeout=SYNTHESIS_TIMEOUT,
         )
+
+        # ── Token tracking for Coordinator synthesis ──
+        try:
+            from src.utils.token_counter import get_token_counter
+            _model = os.getenv("MODEL_NAME", "gemini-2.5-flash")
+            _input_text = "\n".join(
+                m.content if hasattr(m, "content") else str(m) for m in prompt
+            )
+            _resp_content = response.content if hasattr(response, "content") else str(response)
+            if isinstance(_resp_content, list):
+                _resp_content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in _resp_content])
+            get_token_counter().record(
+                "CoordinatorSynthesis", _model,
+                _input_text, str(_resp_content),
+                getattr(response, "response_metadata", None),
+            )
+        except Exception:
+            pass  # Never let tracking break the pipeline
+
     except asyncio.TimeoutError:
         print(f"[Step 5] WARNING: Coordinator LLM timed out after {SYNTHESIS_TIMEOUT}s — using worker outputs directly")
         response = None
@@ -493,13 +535,13 @@ async def coordinator_node(state: AgentState):
     # With tools disabled, the LLM should never make tool_calls.
     # If it does, strip them to prevent LangGraph routing to ToolNode
     # which would re-run the entire pipeline (BUG-012).
-    if response and hasattr(response, "tool_calls") and response.tool_calls:
+    if response and getattr(response, "tool_calls", None):
         logger.warning(
             "Coordinator LLM returned tool_calls despite bind_tools=False — stripping"
         )
-        response.tool_calls = []
+        setattr(response, "tool_calls", [])
         if hasattr(response, "additional_kwargs"):
-            response.additional_kwargs.pop("tool_calls", None)
+            getattr(response, "additional_kwargs", {}).pop("tool_calls", None)
 
     # ── Parse final response ───────────────────────────────
     leads = []
@@ -578,7 +620,7 @@ async def coordinator_node(state: AgentState):
 
     # Sort findings by confidence descending; tie-break by severity (highest first)
     sorted_findings = sorted(
-        [f for f in findings if f.confidence >= 65 and f.severity_estimate in ("CRITICAL", "HIGH", "MEDIUM")],
+        [f for f in findings if f.confidence >= 65 and f.severity_estimate in ("CRITICAL", "HIGH", "MEDIUM") and _exploit_target_eligible(f, state.get("graph"))],
         key=_finding_priority,
     )
 
@@ -634,6 +676,10 @@ async def coordinator_node(state: AgentState):
 
         contract_signatures = get_contract_signatures(state["graph"], finding.affected_contract)
 
+        # Improvement 4: Pass exploit sequence to TestWriter
+        _node_data = state["graph"].nodes.get(finding.hotspot_node_id, {}) if finding.hotspot_node_id and state.get("graph") else {}
+        exploit_seq = _node_data.get("exploit_sequence", [])
+
         task = WorkerTask(
             task_id=f"test_{finding.id}",
             task_type="test_writer",
@@ -643,6 +689,7 @@ async def coordinator_node(state: AgentState):
                 "recon_context": state.get("recon_context", {}),
                 "repo_path": linux_repo_path,  # shared Linux-fs copy
                 "contract_signatures": contract_signatures,
+                "exploit_sequence": exploit_seq,
             }
         )
         test_tasks.append(task)
@@ -675,36 +722,50 @@ async def coordinator_node(state: AgentState):
             ]
         )
 
-        print(f"[Step 6] TestWriter execution complete. Processing {len(test_outputs)} result(s)...")
-        for output, finding in zip(test_outputs, target_findings):
+        print(f"[Step 6] Validation sweep complete: {len(test_tasks)} attempted")
+        proven = []
+        for finding, output in zip(sorted_findings, test_outputs):
             if isinstance(output, Exception):
                 print(f"  TestWriter error on {finding.hotspot_node_id}: {output}")
                 continue
 
-            finding.confidence = output.confidence
-            raw = output.raw_output or {}
-
-            if raw.get("exploit_success"):
-                finding.status = FindingStatus.PROVEN
-                print(f"  EXPLOIT PROVEN: {finding.hotspot_node_id}")
+            if not getattr(output, "validation_passed", False):
+                print(f"  [x] {finding.hotspot_node_id} — Validation FAILED")
+                finding.status = FindingStatus.REJECTED
+                setattr(finding, "confidence", getattr(output, "confidence", getattr(finding, "confidence", 0)))
+                
+                # Keep the false-positive in the list, just update status
+                # finding is passed by reference inside `findings`
             else:
-                print(f"  TestWriter result for {finding.hotspot_node_id}: "
-                      f"compiled={raw.get('compiled')}, success=False, attempts={raw.get('attempts')}")
-
+                score = getattr(output, "confidence", 100)
+                print(f"  [v] {finding.hotspot_node_id} — PROVEN (confidence {score})")
+                finding.status = FindingStatus.PROVEN
+                setattr(finding, "confidence", score)
+                
+                if output and hasattr(output, "model_dump"):
+                    proven.append({
+                        "finding_id": finding.id,
+                        "hotspot": finding.hotspot_node_id,
+                        "confidence": finding.confidence,
+                        "test_code": getattr(output, "test_code", None),
+                        "test_output": getattr(output, "compiler_output", None)
+                    })
+            
+            # Update leads with TestWriter results
             for lead in leads:
                 lead_id = normalize_node_id(lead.get("affected_function_node_id", ""))
                 finding_id = normalize_node_id(finding.hotspot_node_id)
 
                 if lead_id == finding_id:
-                    raw = output.raw_output or {}
+                    raw = getattr(output, "raw_output", {}) or {} # Use getattr for raw_output
                     lead.update({
                         "confidence": finding.confidence,
-                        "test_code": raw.get("test_code"),
-                        "exploit_success": raw.get("exploit_success"),
+                        "test_code": getattr(output, "test_code", None), # Use getattr
+                        "exploit_success": getattr(output, "exploit_success", False), # Use getattr
                         "compiled": raw.get("compiled"),
                         "attempts": raw.get("attempts"),
                     })
-                    if raw.get("exploit_success") and not lead.get("title", "").startswith("[PROVEN]"):
+                    if getattr(output, "exploit_success", False) and not lead.get("title", "").startswith("[PROVEN]"): # Use getattr
                         lead["title"] = f"[PROVEN] {lead.get('title', '')}"
                     break
 
@@ -727,6 +788,18 @@ async def coordinator_node(state: AgentState):
     state["escalate"] = escalation
 
     # ── Phase 7: Generate Report & Visualization ───────────────
+    # Collect token usage for the report
+    token_usage = None
+    try:
+        from src.utils.token_counter import get_token_counter
+        token_usage = get_token_counter().get_summary()
+        total = token_usage.get("total", {})
+        print(f"[TokenCounter] Total: {total.get('call_count', 0)} calls, "
+              f"{total.get('total_tokens', 0)} tokens, "
+              f"${total.get('estimated_cost_usd', 0):.4f} est. cost")
+    except Exception:
+        pass
+
     try:
         from src.reporting.report_generator import ReportGenerator
         reporter = ReportGenerator(
@@ -735,6 +808,7 @@ async def coordinator_node(state: AgentState):
             findings=findings,
             leads=leads,
             graph=state["graph"],
+            token_usage=token_usage,
         )
         report_paths = reporter.generate()
         print(f"\n{'='*60}")

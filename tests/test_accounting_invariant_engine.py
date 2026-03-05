@@ -411,3 +411,126 @@ class TestQueries:
         assert isinstance(get_accounting_invariant_risks(g), list)
         assert isinstance(get_exploit_targets(g), list)
 
+
+class TestReadOnlyReentrancy:
+    """Improvement 2A: read_only_reentrancy_risk flag tests."""
+
+    def _run_with_read_only_detection(self, g: nx.DiGraph) -> GraphBuilder:
+        gb = GraphBuilder()
+        gb.graph = g
+        gb._detect_read_only_reentrancy_risk()
+        gb._compute_negative_safety_signals()
+        gb._compute_global_risk_scores()
+        return gb
+
+    def test_staticcall_with_accounting_write_flagged(self):
+        """Function with staticcall edge + writes_total_supply → flagged."""
+        g = nx.DiGraph()
+        _add_contract(g, "Vault")
+        f = _add_func(
+            g, "Vault", "deposit",
+            writes_total_supply=True,
+            makes_external_call=True,
+        )
+        # Add a staticcall external call edge
+        target = "ExternalOracle::getPrice"
+        g.add_node(target, type="function", name="getPrice", contract="ExternalOracle",
+                   is_view_or_pure=True)
+        g.add_edge(f, target, relationship="EXTERNAL_CALL", call_type="staticcall",
+                   forwards_gas="full", target_expression="oracle.getPrice()")
+
+        self._run_with_read_only_detection(g)
+        assert g.nodes[f]["read_only_reentrancy_risk"] is True
+
+    def test_no_staticcall_not_flagged(self):
+        """Function with only call edge (not staticcall) → NOT flagged."""
+        g = nx.DiGraph()
+        _add_contract(g, "Vault")
+        f = _add_func(
+            g, "Vault", "withdraw",
+            writes_total_supply=True,
+            makes_external_call=True,
+        )
+        # Add a regular call edge (not staticcall)
+        target = "ExternalToken::transfer"
+        g.add_node(target, type="function", name="transfer", contract="ExternalToken")
+        g.add_edge(f, target, relationship="EXTERNAL_CALL", call_type="call",
+                   forwards_gas="full", target_expression="token.transfer()")
+
+        self._run_with_read_only_detection(g)
+        assert g.nodes[f]["read_only_reentrancy_risk"] is False
+
+    def test_staticcall_without_sensitive_write_not_flagged(self):
+        """Function with staticcall but no accounting-sensitive state → NOT flagged."""
+        g = nx.DiGraph()
+        _add_contract(g, "Vault")
+        f = _add_func(
+            g, "Vault", "checkBalance",
+            makes_external_call=True,
+            # No writes_total_supply, writes_total_assets, etc.
+        )
+        target = "ExternalOracle::getPrice"
+        g.add_node(target, type="function", name="getPrice", contract="ExternalOracle",
+                   is_view_or_pure=True)
+        g.add_edge(f, target, relationship="EXTERNAL_CALL", call_type="staticcall",
+                   forwards_gas="full", target_expression="oracle.getPrice()")
+
+        self._run_with_read_only_detection(g)
+        assert g.nodes[f]["read_only_reentrancy_risk"] is False
+
+    def test_read_only_reentrancy_in_risk_scoring(self):
+        """Verify structural score includes the 35-point boost for read_only_reentrancy_risk."""
+        g = nx.DiGraph()
+        _add_contract(g, "Vault")
+        f = _add_func(
+            g, "Vault", "deposit",
+            writes_total_supply=True,
+            makes_external_call=True,
+        )
+        target = "ExternalOracle::getPrice"
+        g.add_node(target, type="function", name="getPrice", contract="ExternalOracle",
+                   is_view_or_pure=True)
+        g.add_edge(f, target, relationship="EXTERNAL_CALL", call_type="staticcall",
+                   forwards_gas="full", target_expression="oracle.getPrice()")
+
+        self._run_with_read_only_detection(g)
+        assert g.nodes[f]["read_only_reentrancy_risk"] is True
+        assert "read_only_reentrancy" in g.nodes[f]["risk_categories"]
+        assert g.nodes[f]["structural_score"] >= 35
+
+    def test_writes_total_assets_flagged(self):
+        """Function with staticcall + writes_total_assets → flagged."""
+        g = nx.DiGraph()
+        _add_contract(g, "Lending")
+        f = _add_func(
+            g, "Lending", "accrue",
+            writes_total_assets=True,
+            makes_external_call=True,
+        )
+        target = "ExternalOracle::getRate"
+        g.add_node(target, type="function", name="getRate", contract="ExternalOracle",
+                   is_view_or_pure=True)
+        g.add_edge(f, target, relationship="EXTERNAL_CALL", call_type="staticcall",
+                   forwards_gas="full", target_expression="oracle.getRate()")
+
+        self._run_with_read_only_detection(g)
+        assert g.nodes[f]["read_only_reentrancy_risk"] is True
+
+    def test_sensitive_variable_write_flagged(self):
+        """Function with staticcall + WRITES edge to ACCOUNTING_CRITICAL var → flagged."""
+        g = nx.DiGraph()
+        _add_contract(g, "Pool")
+        v = _add_var(g, "Pool", "totalLiquidity", ["ACCOUNTING_CRITICAL"])
+        f = _add_func(
+            g, "Pool", "addLiquidity",
+            makes_external_call=True,
+        )
+        _writes(g, f, v)
+        target = "ExternalOracle::getReserves"
+        g.add_node(target, type="function", name="getReserves", contract="ExternalOracle",
+                   is_view_or_pure=True)
+        g.add_edge(f, target, relationship="EXTERNAL_CALL", call_type="staticcall",
+                   forwards_gas="full", target_expression="oracle.getReserves()")
+
+        self._run_with_read_only_detection(g)
+        assert g.nodes[f]["read_only_reentrancy_risk"] is True

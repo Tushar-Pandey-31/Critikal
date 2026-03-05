@@ -639,6 +639,7 @@ contract ExploitTest is Test {{
         target_pragma: str | None,
         skip_rag: bool = False,
         warp_seconds: int = 0,
+        exploit_sequence: list | None = None,
     ) -> list[dict[str, str]]:
         """
         Prompt that asks LLM to write ONLY AttackContract.sol.
@@ -969,6 +970,7 @@ Hypothesis: {finding.hypothesis}
         contract_signatures: dict[str, str] | None = None,
         real_sources: dict[str, str] | None = None,
         skip_rag: bool = False,
+        exploit_sequence: list | None = None,
     ) -> list[dict[str, str]]:
         """Build the LLM prompt for bridge mode (legacy Solidity repos)."""
         error_context = self._format_error_history(error_history)
@@ -1020,6 +1022,14 @@ Hypothesis: {finding.hypothesis}
         rag_context = "" if skip_rag else self._fetch_rag_context(finding)
         error_rag = "" if skip_rag else (self._fetch_error_rag_context(error_history) if error_history else "")
 
+        exploit_seq_str = ""
+        if exploit_sequence:
+            steps_text = "\n".join(
+                f"  Step {s.get('step', i+1)}: [{s.get('role', '?')}] {s.get('node', '?')}" 
+                for i, s in enumerate(exploit_sequence)
+            )
+            exploit_seq_str = f"## Pre-Computed Exploit Chain (from graph)\n{steps_text}\n\nUse this chain to guide your test.\n\n"
+
         user_content = (
             f"Vulnerability Class: {finding.vulnerability_class}\n"
             f"Affected Contract: {finding.affected_contract}\n"
@@ -1027,6 +1037,7 @@ Hypothesis: {finding.hypothesis}
             f"Hypothesis: {finding.hypothesis}\n"
             f"Attack Path: {' -> '.join(finding.attack_path)}\n"
             f"Impact: {finding.impact}\n"
+            f"{exploit_seq_str}"
             f"{source_section}"
             f"{rag_context}\n"
             f"{error_rag}\n"
@@ -1399,6 +1410,7 @@ Hypothesis: {finding.hypothesis}
         import_cheatsheet: str | None = None,
         repo_conflicts: dict | None = None,
         target_pragma: str | None = None,
+        exploit_sequence: list | None = None,
     ) -> list[dict[str, str]]:
 
         has_real_source = bool(real_sources)
@@ -1694,11 +1706,77 @@ Hypothesis: {finding.hypothesis}
             while attempts < effective_max:
                 attempts += 1
                 print(f"\n  [TestWriter] ── Attempt {attempts}/{effective_max} {'(BRIDGE)' if is_legacy else ''} ──")
-                sources_for_attempt = real_sources_full if attempts >= 3 else real_sources_minimal
-                source_mode = "FULL" if attempts >= 3 else "MINIMAL"
-                print(f"  [TestWriter] Source mode: {source_mode} ({len(sources_for_attempt) if sources_for_attempt else 0} files)")
-                logger.info(f"[TestWriter] Attempt {attempts}/{effective_max} building prompt...")
 
+                # ┌─────────────────────────────────────────────────────────────┐
+                # │  Phoenix Template-First: attempt 1 uses deterministic PoC  │
+                # └─────────────────────────────────────────────────────────────┘
+                _used_template = False
+                if attempts == 1 and not is_legacy:
+                    from src.agents.workers.poc_templates import get_template_for_vuln
+                    vuln_class = finding.vulnerability_class or ""
+                    _template_fn = get_template_for_vuln(vuln_class)
+                    if _template_fn:
+                        deploy_path_for_template = deploy_paths.get(
+                            finding.affected_contract,
+                            f"src/{finding.affected_contract}.sol",
+                        )
+                        template_pragma = target_pragma or "^0.8.20"
+                        test_code_generated = _template_fn(
+                            finding, deploy_path_for_template,
+                            finding.affected_contract, template_pragma,
+                        )
+                        print(
+                            f"  [TestWriter] Using deterministic template for "
+                            f"'{vuln_class}' ({len(test_code_generated)} chars)"
+                        )
+                        _used_template = True
+                    else:
+                        print(
+                            f"  [TestWriter] No template for '{vuln_class}' — "
+                            f"using LLM on attempt 1"
+                        )
+
+                if not _used_template:
+                    # ── Original LLM path ──
+                    sources_for_attempt = real_sources_full if attempts >= 3 else real_sources_minimal
+                    source_mode = "FULL" if attempts >= 3 else "MINIMAL"
+                    print(f"  [TestWriter] Source mode: {source_mode} ({len(sources_for_attempt) if sources_for_attempt else 0} files)")
+                    logger.info(f"[TestWriter] Attempt {attempts}/{effective_max} building prompt...")
+
+                if _used_template:
+                    # ── Template-first path: write + compile + test directly ──
+                    if use_two_file_mode:
+                        test_path = sandbox.get_test_path()
+                        attack_path = test_path.parent / "AttackContract.sol"
+                        attack_path.write_text(test_code_generated, encoding='utf-8')
+                    else:
+                        test_path = sandbox.get_test_path()
+                        sandbox.write_test_file(test_code_generated)
+                    print(f"  [TestWriter] Template written to {test_path}")
+
+                    build_res = sandbox.run_forge_build()
+                    if build_res.success:
+                        print(f"  [TestWriter] Template compiled successfully!")
+                        test_res = sandbox.run_forge_test()
+                        test_logs = test_res.logs if hasattr(test_res, 'logs') else ""
+                        if test_res.success:
+                            print(f"  [TestWriter] Template test PASSED — exploit proven!")
+                            compiled = True
+                            exploit_success = True
+                            break
+                        else:
+                            print(f"  [TestWriter] Template compiled but test failed — falling through to LLM")
+                            error_history.append(f"Template compiled but test failed.\nLogs:\n{test_logs[:400]}")
+                    else:
+                        build_err = build_res.logs if hasattr(build_res, 'logs') else str(build_res)
+                        print(f"  [TestWriter] Template failed to compile — errors will seed LLM attempt")
+                        error_history.append(
+                            f"[Phoenix template attempt] Compilation failed:\n{build_err[:600]}\n\n"
+                            f"Template code:\n{test_code_generated[:1500]}"
+                        )
+                    continue
+
+                # ── Original LLM path (unchanged indentation) ──
                 # Bridge-aware error escalation: if LLM broke rules, inject correction
                 if is_legacy and error_history:
                     last_err = error_history[-1]
@@ -1731,6 +1809,7 @@ Hypothesis: {finding.hypothesis}
                         target_pragma=target_pragma,
                         skip_rag=(attempts == 1),
                         warp_seconds=warp_seconds,
+                        exploit_sequence=task.context.get("exploit_sequence"),
                     )
                 elif is_legacy:
                     prompt = self._build_bridge_prompt(
@@ -1742,6 +1821,7 @@ Hypothesis: {finding.hypothesis}
                         contract_signatures=contract_signatures,
                         real_sources=sources_for_attempt,
                         skip_rag=(attempts == 1),
+                        exploit_sequence=task.context.get("exploit_sequence"),
                     )
                 else:
                     prompt = self._build_prompt(
@@ -1756,6 +1836,7 @@ Hypothesis: {finding.hypothesis}
                         import_cheatsheet=import_cheatsheet,
                         repo_conflicts=repo_conflicts,
                         target_pragma=target_pragma,
+                        exploit_sequence=task.context.get("exploit_sequence"),
                     )
                 prompt_chars = sum(len(m.get("content", "")) for m in prompt)
                 print(f"  [TestWriter] Prompt built: {len(prompt)} messages, {prompt_chars} total chars (RAG={'skip' if attempts==1 else 'on'})")
@@ -1777,6 +1858,18 @@ Hypothesis: {finding.hypothesis}
                     if isinstance(content, list):
                         content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
                     print(f"  [TestWriter] LLM responded in {llm_elapsed:.1f}s ({len(content)} chars)")
+
+                    # ── Token tracking ──
+                    try:
+                        from src.utils.token_counter import get_token_counter
+                        input_text = "\n".join(m.get("content", "") for m in prompt)
+                        get_token_counter().record(
+                            "TestWriterWorker", "gemini-2.5-flash",
+                            input_text, content,
+                            getattr(response, "response_metadata", None),
+                        )
+                    except Exception:
+                        pass  # Never let tracking break the pipeline
 
                     test_code_generated = self._extract_test_code(content)
                     if not test_code_generated:

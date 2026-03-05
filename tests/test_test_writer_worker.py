@@ -114,6 +114,7 @@ async def test_max_attempts_exceeded(mock_llm, dummy_finding, monkeypatch, tmp_p
     monkeypatch.setattr("src.agents.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
     
     worker = TestWriterWorker(llm_client=mock_llm)
+    monkeypatch.setattr(worker, "_collect_repo_sources", lambda *a, **kw: {"Mock.sol": "contract Mock {}"})
     
     task = WorkerTask(task_id="t1", task_type="test", context={"finding": dummy_finding})
     output = await worker.run(task)
@@ -147,6 +148,7 @@ async def test_extract_code_fallback(mock_llm, dummy_finding, monkeypatch, tmp_p
     monkeypatch.setattr("src.agents.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
 
     worker = TestWriterWorker(llm_client=mock_llm)
+    monkeypatch.setattr(worker, "_collect_repo_sources", lambda *a, **kw: {"Mock.sol": "contract Mock {}"})
 
     task = WorkerTask(task_id="t1", task_type="test", context={"finding": dummy_finding})
     output = await worker.run(task)
@@ -168,6 +170,7 @@ async def test_exploit_fails_but_compiles(mock_llm, dummy_finding, monkeypatch, 
     monkeypatch.setattr("src.agents.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
     
     worker = TestWriterWorker(llm_client=mock_llm)
+    monkeypatch.setattr(worker, "_collect_repo_sources", lambda *a, **kw: {"Mock.sol": "contract Mock {}"})
     
     task = WorkerTask(task_id="t1", task_type="test", context={"finding": dummy_finding})
     output = await worker.run(task)
@@ -188,6 +191,8 @@ async def test_missing_test_code_key(mock_llm, dummy_finding, monkeypatch, tmp_p
     monkeypatch.setattr("src.agents.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
 
     worker = TestWriterWorker(llm_client=mock_llm)
+    monkeypatch.setattr(worker, "_collect_repo_sources", lambda *a, **kw: {"Mock.sol": "contract Mock {}"})
+    
     task = WorkerTask(task_id="t1", task_type="test", context={"finding": dummy_finding})
     output = await worker.run(task)
     

@@ -9,6 +9,7 @@ def render_markdown_report(
     repo_name: str,
     findings: list,
     leads: list[dict],
+    token_usage: dict | None = None,
 ) -> str:
     """Returns a Markdown report suitable for HackerOne / Immunefi submission."""
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
@@ -113,7 +114,56 @@ def render_markdown_report(
 
         lines += ["---", ""]
 
+    # ── Token Usage & Cost Section ──
+    if token_usage:
+        lines += _render_token_usage_md(token_usage)
+
     return "\n".join(lines)
+
+
+def _render_token_usage_md(token_usage: dict) -> list[str]:
+    """Render the token usage section for the markdown report."""
+    lines = [
+        "## LLM Token Usage & Cost",
+        "",
+    ]
+
+    agents = token_usage.get("agents", [])
+    total = token_usage.get("total", {})
+    elapsed = token_usage.get("elapsed_seconds", 0)
+
+    if agents:
+        lines += [
+            "| Agent | Model | Calls | Input Tokens | Output Tokens | Input Chars | Output Chars | Est. Cost |",
+            "|-------|-------|------:|-------------:|--------------:|------------:|-------------:|----------:|",
+        ]
+        for a in agents:
+            lines.append(
+                f"| {a['agent_name']} | {a['model']} | {a['call_count']} "
+                f"| {a['input_tokens']:,} | {a['output_tokens']:,} "
+                f"| {a['input_chars']:,} | {a['output_chars']:,} "
+                f"| ${a['estimated_cost_usd']:.4f} |"
+            )
+        lines.append(
+            f"| **TOTAL** | — | **{total.get('call_count', 0)}** "
+            f"| **{total.get('input_tokens', 0):,}** | **{total.get('output_tokens', 0):,}** "
+            f"| **{total.get('input_chars', 0):,}** | **{total.get('output_chars', 0):,}** "
+            f"| **${total.get('estimated_cost_usd', 0):.4f}** |"
+        )
+    else:
+        lines.append("No LLM calls were recorded.")
+
+    lines += [
+        "",
+        f"**Pipeline Duration:** {elapsed:.0f}s  ",
+        f"**Total Tokens:** {total.get('total_tokens', 0):,}  ",
+        f"**Estimated Cost:** ${total.get('estimated_cost_usd', 0):.4f}",
+        "",
+        "---",
+        "",
+    ]
+
+    return lines
 
 
 def _find_test_code(finding, leads: list[dict]) -> str | None:

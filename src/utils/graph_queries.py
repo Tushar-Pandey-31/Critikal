@@ -357,6 +357,7 @@ class GraphQueries:
                 "propagated_state_variables": node_data.get("propagated_state_variables", []),
                 "visibility": node_data.get("visibility"),
                 "is_payable": node_data.get("is_payable", False),
+                "read_only_reentrancy_risk": node_data.get("read_only_reentrancy_risk", False),
             })
         return results
 
@@ -938,6 +939,45 @@ class GraphQueries:
                 result[name] = sig
         return result
 
+    # ════════════════════════════════════════════════════════════
+    #  Titan Pattern Engine — Pattern Hit Queries
+    # ════════════════════════════════════════════════════════════
+
+    def get_pattern_hits(
+        self,
+        contract_name: str | None = None,
+        category: str | None = None,
+        severity: str | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Returns functions with Titan pattern hits (graph-validated)."""
+        results = []
+        for node_id, node_data in self._iter_type("function"):
+            hits = node_data.get("pattern_hit_details", [])
+            if not hits:
+                continue
+            if contract_name and node_data.get("contract") != contract_name:
+                continue
+
+            filtered = hits
+            if category:
+                filtered = [h for h in filtered if h.get("category") == category]
+            if severity:
+                filtered = [h for h in filtered if h.get("severity") == severity]
+            if not filtered:
+                continue
+
+            results.append({
+                "function_id": node_id,
+                "name": node_data.get("name"),
+                "contract": node_data.get("contract"),
+                "pattern_hits": node_data.get("pattern_hits", []),
+                "pattern_categories": node_data.get("pattern_categories", []),
+                "hit_details": filtered,
+                "hit_count": len(filtered),
+            })
+        results.sort(key=lambda x: x["hit_count"], reverse=True)
+        return results
+
     def get_high_risk_hotspots(
         self,
         min_score: int = 70,
@@ -1044,6 +1084,20 @@ class GraphQueries:
             print(f"[GraphQueries] Skipped {skipped_gate} function(s) below multi-dimensional gate.")
 
         hotspots.sort(key=lambda x: x.risk_score, reverse=True)
+        # Part 9 — Hotspot Budget Enforcement
+        MAX_HOTSPOTS = 15
+        if len(hotspots) > MAX_HOTSPOTS:
+            threshold_score = hotspots[MAX_HOTSPOTS - 1].risk_score
+            dropped = len(hotspots) - MAX_HOTSPOTS
+            print(f"[GraphQueries] Hotspot budget: capped from {len(hotspots)} to {MAX_HOTSPOTS} "
+                  f"(dynamic threshold: {threshold_score}, dropped {dropped}).")
+            # Expose budget metadata on graph for report consumption
+            self.graph.graph.setdefault("report_metadata", {})
+            self.graph.graph["report_metadata"]["hotspot_budget_applied"] = True
+            self.graph.graph["report_metadata"]["hotspot_budget_max"] = MAX_HOTSPOTS
+            self.graph.graph["report_metadata"]["hotspot_budget_threshold"] = threshold_score
+            self.graph.graph["report_metadata"]["hotspot_budget_dropped"] = dropped
+            hotspots = hotspots[:MAX_HOTSPOTS]
         return hotspots
 
 
@@ -1154,3 +1208,11 @@ def get_exploit_targets(
     contract_name: str | None = None,
 ) -> List[Dict[str, Any]]:
     return get_graph_queries(graph).get_exploit_targets(min_exploit_score, contract_name)
+
+def get_pattern_hits(
+    graph: nx.DiGraph,
+    contract_name: str | None = None,
+    category: str | None = None,
+    severity: str | None = None,
+) -> List[Dict[str, Any]]:
+    return get_graph_queries(graph).get_pattern_hits(contract_name, category, severity)

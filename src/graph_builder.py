@@ -5,12 +5,16 @@ from collections import deque
 from slither.slither import Slither
 from slither.core.cfg.node import NodeType
 from typing import Dict, Any, List
-from .economic_analyzer import EconomicAnalyzer
+from src.economic_analyzer import EconomicAnalyzer
+from src.pattern_scanner import scan_all_sources, get_pattern_summary, PatternHit
+
+ENABLE_CROSS_CONTRACT_EDGES = True
 
 class GraphBuilder:
     def __init__(self):
         self.graph = nx.DiGraph()
         self._file_cache: dict[str, str] = {}
+        self._inheritance_modifier_cache: dict[str, dict[str, Any]] = {}
 
     def _read_file_cached(self, path: str) -> str:
         """Read a file with caching to avoid re-reading the same .sol file for every function."""
@@ -56,6 +60,7 @@ class GraphBuilder:
                 self._add_edge_defines(contract, function)
                 self._add_call_edges(contract, function)
                 self._add_state_access_edges(contract, function)
+                self._add_cross_contract_call_edges(contract, function)
 
         if lib_count:
             print(f"  [GraphBuilder] Skipped {lib_count} library contracts from enrichment (kept as reference nodes).")
@@ -88,8 +93,12 @@ class GraphBuilder:
         
         # Story 3.4: Combine everything for Deterministic Reentrancy Rule
         self._detect_reentrancy_risks()
+        # Improvement 2A: Read-only reentrancy risk detection
+        self._detect_read_only_reentrancy_risk()
         
         self._detect_privileged_roles()
+        # NOTE: _detect_unprotected_mutators runs early for initial flag setting.
+        # _recompute_unprotected_mutator_status runs later after all AC enrichments.
         self._detect_unprotected_mutators()
         
         # Story 3.5: Privilege Propagation
@@ -113,6 +122,20 @@ class GraphBuilder:
         self._detect_initializer_guards(slither_obj)
         self._detect_require_access_control(slither_obj)
 
+        # AC Refactor — Parts 3, 4: Additional AC enrichment
+        self._detect_internal_guard_calls(slither_obj)
+        self._detect_external_role_registry_guards()
+
+        # AC Refactor — Part 7: SSA-aware confidence dampening
+        self._apply_ssa_confidence_dampening(slither_obj)
+
+        # AC Refactor — Part 8: Governance classification
+        self._classify_governance_contracts()
+
+        # AC Refactor — Part 1: Recompute unprotected mutator status
+        # AFTER all AC enrichments (Parts 2-5, 7-8).
+        self._recompute_unprotected_mutator_status()
+
         # Dev Story 2: Inter-Procedural Taint & Dataflow Engine
         self._tag_storage_sensitivity()
         self._compute_taint_propagation(slither_obj)
@@ -130,6 +153,9 @@ class GraphBuilder:
 
         # Dev Story 1: Precision upgrade — negative safety evidence
         self._compute_negative_safety_signals()
+
+        # Titan Pattern Engine: broad-spectrum regex hits validated by graph
+        self._integrate_pattern_hits()
 
         # Story 4.2: Compute final risk scores
         self._compute_global_risk_scores()
@@ -210,6 +236,10 @@ class GraphBuilder:
             "source_file": source_file,
             "modifiers": modifiers,
             "signature": signature or "",
+            "access_control_confidence": 0.0,
+            "has_internal_guard_call": False,
+            "has_external_role_guard": False,
+            "governance_design_choice": False,
         }
         self.graph.add_node(node_id, **metadata)
 
@@ -294,6 +324,26 @@ class GraphBuilder:
                 added_calls.add(target_node_id)
         
         # Note: External calls are intentionally excluded for Story 2.3
+
+    def _add_cross_contract_call_edges(self, contract, function):
+        if not ENABLE_CROSS_CONTRACT_EDGES:
+            return
+            
+        caller_id = f"{contract.name}::{function.name}"
+        if not self.graph.has_node(caller_id):
+            return
+            
+        for call in function.high_level_calls:
+            if getattr(call, "__class__", None) is tuple or isinstance(call, tuple):
+                if len(call) == 2:
+                    target_contract, target_func = call
+                    if hasattr(target_contract, "name"):
+                        t_cname = target_contract.name
+                        if self.graph.has_node(t_cname) and hasattr(target_func, "name"):
+                            target_id = f"{t_cname}::{target_func.name}"
+                            if self.graph.has_node(target_id):
+                                self.graph.add_edge(caller_id, target_id, type="CROSS_CONTRACT_CALL")
+                                self.graph.nodes[target_id]["reachable_from_cross_contract"] = True
 
     def _add_state_access_edges(self, contract, function):
         """
@@ -604,11 +654,36 @@ class GraphBuilder:
                 )
         
         # --- Phase 2: Build FunctionAccessProfile on each function node ---
-        # Build a lookup of modifier name -> pattern for this pass
-        modifier_patterns = {}  # modifier_name -> access_control_pattern
+        # Build inheritance-aware modifier resolution cache (Part 2)
+        self._inheritance_modifier_cache = {}  # contract_name -> {mod_name: pattern}
+
+        # Phase 2a: Populate cache from ALL Slither contracts (including lib/).
+        # Bug 1 fix: graph modifier nodes only exist for project contracts —
+        # lib contracts (OwnableUpgradeable, ReentrancyGuard, etc.) are skipped
+        # by _is_library_contract() in build_graph.  Without this loop,
+        # _resolve_modifiers_with_inheritance returns ("none", False) for
+        # inherited OZ modifiers, causing false-positive unprotected mutators.
+        for contract in slither_obj.contracts:
+            for modifier in contract.modifiers:
+                if contract.name not in self._inheritance_modifier_cache:
+                    self._inheritance_modifier_cache[contract.name] = {}
+                if modifier.name not in self._inheritance_modifier_cache[contract.name]:
+                    conditions = self._extract_modifier_conditions(modifier)
+                    accessed_vars = [
+                        f"{sv.contract.name}::{sv.name}"
+                        for sv in modifier.state_variables_read
+                    ]
+                    pattern = self._classify_modifier_pattern(conditions, accessed_vars)
+                    self._inheritance_modifier_cache[contract.name][modifier.name] = pattern
+
+        # Phase 2b: Override with graph-derived data (richer for project contracts
+        # since graph nodes have full segment analysis).
         for node_id, node_data in self.graph.nodes(data=True):
             if node_data.get("type") == "modifier":
-                modifier_patterns[node_data["name"]] = node_data.get("access_control_pattern", "none")
+                mod_contract = node_data.get("contract", "")
+                mod_name = node_data.get("name", "")
+                pattern = node_data.get("access_control_pattern", "none")
+                self._inheritance_modifier_cache.setdefault(mod_contract, {})[mod_name] = pattern
         
         # Build a lookup of node_id -> Slither function object for IR-based analysis
         slither_func_lookup = {}
@@ -622,13 +697,18 @@ class GraphBuilder:
                 continue
             
             applied_modifiers = node_data.get("modifiers", [])
+            contract_name = node_data.get("contract", "")
             
-            # Which of the applied modifiers are access-control?
-            ac_modifiers = [
-                m for m in applied_modifiers
-                if modifier_patterns.get(m, "none") != "none"
-            ]
+            # Resolve modifiers through inheritance chain (Part 2)
+            resolved = self._resolve_modifiers_with_inheritance(contract_name, applied_modifiers)
+            ac_modifiers = [m for m, (pat, _) in resolved.items() if pat != "none"]
             has_access_control = len(ac_modifiers) > 0
+            
+            # Compute confidence: 1.0 for local, 0.9 for inherited
+            mod_confidence = 0.0
+            if has_access_control:
+                has_local = any(resolved[m][1] for m in ac_modifiers)
+                mod_confidence = 1.0 if has_local else 0.9
             
             # Detect inline require(msg.sender == X) via Slither IR
             slither_func = slither_func_lookup.get(node_id)
@@ -636,11 +716,23 @@ class GraphBuilder:
             
             is_protected = has_access_control or has_inline_check
             
+            # Compute confidence from best source
+            if has_inline_check and not has_access_control:
+                ac_confidence = 0.95
+            elif has_access_control and has_inline_check:
+                ac_confidence = max(mod_confidence, 0.95)
+            elif has_access_control:
+                ac_confidence = mod_confidence
+            else:
+                ac_confidence = 0.0
+            
             # Attach FunctionAccessProfile
-            self.graph.nodes[node_id]["has_access_control"] = has_access_control
-            self.graph.nodes[node_id]["access_control_modifiers"] = ac_modifiers
-            self.graph.nodes[node_id]["has_inline_access_check"] = has_inline_check
-            self.graph.nodes[node_id]["is_protected"] = is_protected
+            self._update_access_control(node_id, 
+                has_access_control=has_access_control,
+                ac_modifiers=ac_modifiers,
+                has_inline_check=has_inline_check,
+                is_protected=is_protected,
+                confidence=ac_confidence)
 
     def _extract_modifier_conditions(self, modifier) -> List[Dict[str, Any]]:
         """
@@ -714,6 +806,450 @@ class GraphBuilder:
         
         return ""
     
+    # ================================================================
+    # Centralized Access Control Update Helper (Part 6)
+    # ================================================================
+
+    def _update_access_control(self, node_id: str, *,
+                                has_access_control: bool = None,
+                                ac_modifiers: list = None,
+                                has_inline_check: bool = None,
+                                is_protected: bool = None,
+                                confidence: float = None,
+                                ac_type: str = None):
+        """
+        Centralized helper — all access control updates flow through here.
+        Only overwrites fields that are explicitly provided (not None).
+        Confidence uses max() semantics: new confidence only applies if higher.
+        """
+        nd = self.graph.nodes[node_id]
+        if has_access_control is not None:
+            nd["has_access_control"] = has_access_control
+        if ac_modifiers is not None:
+            nd["access_control_modifiers"] = ac_modifiers
+        if has_inline_check is not None:
+            nd["has_inline_access_check"] = has_inline_check
+        if is_protected is not None:
+            nd["is_protected"] = nd.get("is_protected", False) or is_protected
+        if confidence is not None:
+            nd["access_control_confidence"] = max(
+                nd.get("access_control_confidence", 0.0), confidence
+            )
+        if ac_type is not None:
+            existing = nd.get("access_control_type", "none")
+            if existing == "none":
+                nd["access_control_type"] = ac_type
+            elif existing != ac_type and ac_type != "none":
+                nd["access_control_type"] = "both"
+
+    # ================================================================
+    # Part 2 — Inheritance-Aware Modifier Resolution
+    # ================================================================
+
+    def _resolve_modifiers_with_inheritance(self, contract_name: str,
+                                            applied_modifiers: List[str]) -> Dict[str, tuple]:
+        """
+        BFS over INHERITS edges to resolve modifier definitions from parent
+        contracts.  Returns {modifier_name: (pattern, is_local)} where
+        is_local=True when the modifier is defined directly on contract_name.
+        Uses self._inheritance_modifier_cache built during Phase 2 setup.
+        """
+        if not applied_modifiers:
+            return {}
+
+        result = {}
+        needed = set(applied_modifiers)
+
+        # Check local contract first
+        local_mods = self._inheritance_modifier_cache.get(contract_name, {})
+        for m in list(needed):
+            if m in local_mods:
+                result[m] = (local_mods[m], True)   # is_local = True
+                needed.discard(m)
+
+        if not needed:
+            return result
+
+        # BFS through INHERITS edges
+        visited = {contract_name}
+        queue = deque()
+        # Collect parents of contract_name
+        for _, parent, edata in self.graph.out_edges(contract_name, data=True):
+            if edata.get("relationship") == "INHERITS" and parent not in visited:
+                queue.append(parent)
+                visited.add(parent)
+
+        while queue and needed:
+            parent = queue.popleft()
+            parent_mods = self._inheritance_modifier_cache.get(parent, {})
+            for m in list(needed):
+                if m in parent_mods:
+                    result[m] = (parent_mods[m], False)  # is_local = False (inherited)
+                    needed.discard(m)
+
+            # Continue BFS to grandparents
+            for _, gp, edata in self.graph.out_edges(parent, data=True):
+                if edata.get("relationship") == "INHERITS" and gp not in visited:
+                    queue.append(gp)
+                    visited.add(gp)
+
+        # Any remaining unresolved → treat as none
+        for m in needed:
+            result[m] = ("none", False)
+
+        return result
+
+    # ================================================================
+    # Part 3 — Internal Guard Function Detection
+    # ================================================================
+
+    _GUARD_NAME_RE = re.compile(
+        r'^_?(require|check|only|assert|verify|ensure|validate)'
+        r'(Admin|Owner|Role|Auth|Caller|Sender|Gov|Operator|Manager|Guardian|Pauser)',
+        re.IGNORECASE
+    )
+
+    def _detect_internal_guard_calls(self, slither_obj: Slither):
+        """
+        Two-phase internal guard detection.
+        Phase 1: Identify guard functions (internal/private with AC logic).
+        Phase 2: Propagate guard status to callers via CALLS edges.
+        """
+        guard_functions: set = set()
+
+        # Phase 1 — identify guard functions
+        for node_id, data in self.graph.nodes(data=True):
+            if data.get("type") != "function":
+                continue
+            vis = data.get("visibility", "")
+            if vis not in ("internal", "private"):
+                continue
+
+            is_guard = False
+            func_name = data.get("name", "")
+            source = data.get("source_code", "")
+
+            # Name-based heuristic
+            if self._GUARD_NAME_RE.match(func_name):
+                is_guard = True
+
+            # Body analysis: contains require/assert/revert referencing msg.sender
+            if not is_guard and source:
+                has_sender = "msg.sender" in source
+                has_check = ("require(" in source or "revert" in source
+                             or "assert(" in source)
+                if has_sender and has_check:
+                    is_guard = True
+
+            if is_guard:
+                guard_functions.add(node_id)
+                data["is_guard_function"] = True
+
+        # Phase 2 — propagate to callers via CALLS edges
+        for node_id, data in self.graph.nodes(data=True):
+            if data.get("type") != "function":
+                continue
+            for _, callee, edata in self.graph.out_edges(node_id, data=True):
+                if edata.get("relationship") == "CALLS" and callee in guard_functions:
+                    data["has_internal_guard_call"] = True
+                    self._update_access_control(
+                        node_id,
+                        is_protected=True,
+                        confidence=0.85,
+                        ac_type="internal-guard",
+                    )
+                    break  # one guard callee is enough
+
+        # Phase 1b — Bug 3 fix: detect guard calls from Slither IR for
+        # functions calling guards in lib contracts that don't have graph
+        # nodes. Mirrors _add_call_edges pattern for consistency.
+        for contract in slither_obj.contracts:
+            for function in contract.functions:
+                func_node_id = f"{contract.name}::{function.name}"
+                if not self.graph.has_node(func_node_id):
+                    continue
+                if self.graph.nodes[func_node_id].get("has_internal_guard_call"):
+                    continue  # already detected in Phase 2
+
+                for internal_call in function.internal_calls:
+                    # Slither 0.10.x: internal_calls returns raw
+                    # Function/Modifier objects. Check contract_declarer
+                    # or contract to confirm it's a function-like object.
+                    target_func = None
+                    if hasattr(internal_call, "contract_declarer") or hasattr(internal_call, "contract"):
+                        target_func = internal_call
+                    else:
+                        target_func = getattr(internal_call, "function", None)
+
+                    if not target_func or not hasattr(target_func, "name"):
+                        continue
+
+                    callee_name = target_func.name
+                    if self._GUARD_NAME_RE.match(callee_name):
+                        self.graph.nodes[func_node_id]["has_internal_guard_call"] = True
+                        self._update_access_control(
+                            func_node_id,
+                            is_protected=True,
+                            confidence=0.85,
+                            ac_type="internal-guard",
+                        )
+                        break
+
+    # ================================================================
+    # Part 4 — External Role Registry Classification
+    # ================================================================
+
+    _ROLE_CALL_SIGS = re.compile(
+        r'(hasRole|getRoleMember|canCall|isOperator|checkRole|'
+        r'_checkRole|onlyRole|hasPermission)\s*\(',
+        re.IGNORECASE
+    )
+    _ROLE_TARGET_KEYWORDS = re.compile(
+        r'(role|auth|access|registry|acl|permission)',
+        re.IGNORECASE
+    )
+
+    def _detect_external_role_registry_guards(self):
+        """
+        Scans EXTERNAL_CALL edges for role-checking signatures.
+        Cross-checks that the call appears inside a require/assert/revert
+        context in the function source.
+        """
+        for node_id, data in self.graph.nodes(data=True):
+            if data.get("type") != "function":
+                continue
+
+            source = data.get("source_code", "")
+            has_require_context = bool(
+                source and ("require(" in source or "revert" in source
+                            or "assert(" in source)
+            )
+
+            for _, target, edata in self.graph.out_edges(node_id, data=True):
+                if edata.get("relationship") != "EXTERNAL_CALL":
+                    continue
+
+                call_desc = str(edata.get("call_expression", ""))
+                target_expr = str(edata.get("target_expression", ""))
+
+                sig_match = self._ROLE_CALL_SIGS.search(call_desc)
+                target_match = self._ROLE_TARGET_KEYWORDS.search(target_expr)
+
+                if (sig_match or target_match) and has_require_context:
+                    data["has_external_role_guard"] = True
+                    self._update_access_control(
+                        node_id,
+                        is_protected=True,
+                        confidence=0.80,
+                        ac_type="external-role",
+                    )
+                    break  # one role-registry call is enough
+
+    # ================================================================
+    # Part 7 — SSA-Aware Confidence Dampening
+    # ================================================================
+
+    def _apply_ssa_confidence_dampening(self, slither_obj: Slither):
+        """
+        Detect contracts where Slither SSA conversion failed.
+        For all functions in those contracts, dampen access_control_confidence
+        by a factor of 0.7.
+        """
+        ssa_failed_contracts: set = set()
+
+        for contract in slither_obj.contracts:
+            c_name = contract.name
+            c_node = self.graph.nodes.get(c_name, {})
+            if c_node.get("type") != "contract":
+                continue
+
+            # Detect SSA failure: check if contract has modifiers but none
+            # have parsed conditions (IR was empty).
+            # Bug 2 fix: use Slither objects (not graph nodes) to also check
+            # lib modifiers. If ANY modifier matches _MODIFIER_EQUIVALENCE_MAP,
+            # its empty conditions are expected (OZ 4.x delegation pattern),
+            # NOT an SSA failure.
+            has_modifier_nodes = False
+            all_empty_ir = True
+            has_known_semantic_mod = False
+            for node_id, data in self.graph.nodes(data=True):
+                if data.get("type") == "modifier" and data.get("contract") == c_name:
+                    has_modifier_nodes = True
+                    if data.get("conditions"):
+                        all_empty_ir = False
+                        break
+
+            # Check Slither objects for known semantic modifiers (including lib/)
+            for slither_contract in slither_obj.contracts:
+                if slither_contract.name != c_name:
+                    # Also check parent contracts in the inheritance chain
+                    if c_name not in [p.name for p in slither_contract.inheritance]:
+                        continue
+                for modifier in slither_contract.modifiers:
+                    mod_name = modifier.name
+                    for _cat, _pats in self._MODIFIER_EQUIVALENCE_MAP.items():
+                        for _pat in _pats:
+                            if _pat.search(mod_name):
+                                has_known_semantic_mod = True
+                                break
+                        if has_known_semantic_mod:
+                            break
+                    if has_known_semantic_mod:
+                        break
+                if has_known_semantic_mod:
+                    break
+
+            # If modifiers exist but all have empty IR AND none are
+            # known semantic modifiers → SSA likely failed
+            if has_modifier_nodes and all_empty_ir and not has_known_semantic_mod:
+                ssa_failed_contracts.add(c_name)
+                c_node["ssa_available"] = False
+            else:
+                c_node["ssa_available"] = True
+
+        if not ssa_failed_contracts:
+            return
+
+        # Dampen confidence for functions in SSA-failed contracts
+        for node_id, data in self.graph.nodes(data=True):
+            if data.get("type") != "function":
+                continue
+            if data.get("contract", "") in ssa_failed_contracts:
+                current_conf = data.get("access_control_confidence", 0.0)
+                data["access_control_confidence"] = current_conf * 0.7
+
+    # ================================================================
+    # Part 8 — Governance Classification
+    # ================================================================
+
+    _GOVERNANCE_PARENT_CONTRACTS = frozenset([
+        "Governor", "GovernorCompatibilityBravo", "TimelockController",
+        "GovernorTimelockControl", "GovernorCountingSimple",
+        "GovernorVotes", "GovernorVotesQuorumFraction",
+        "GovernorSettings", "GovernorTimelockCompound",
+    ])
+    _GOVERNANCE_KEYWORDS = re.compile(
+        r'(quorum|votingPeriod|proposalThreshold|castVote|castVoteBySig'
+        r'|proposalDeadline|proposalSnapshot|COUNTING_MODE'
+        r'|timelockDelay|queue|execute|cancel)',
+        re.IGNORECASE
+    )
+
+    def _classify_governance_contracts(self):
+        """
+        Detects governance contracts via inheritance patterns and keyword heuristics.
+        Tags functions that write ACCESS_CRITICAL variables under governance protection
+        as governance_design_choice.
+        """
+        governance_contracts: set = set()
+
+        for node_id, data in self.graph.nodes(data=True):
+            if data.get("type") != "contract":
+                continue
+
+            c_name = data.get("name", "")
+            is_gov = False
+
+            # Check inheritance
+            for _, parent, edata in self.graph.out_edges(node_id, data=True):
+                if edata.get("relationship") == "INHERITS":
+                    if parent in self._GOVERNANCE_PARENT_CONTRACTS:
+                        is_gov = True
+                        break
+
+            # Check keyword heuristic in contract name + function names
+            if not is_gov:
+                keyword_count = 0
+                if self._GOVERNANCE_KEYWORDS.search(c_name):
+                    keyword_count += 1
+                for fn_id, fn_data in self.graph.nodes(data=True):
+                    if fn_data.get("type") == "function" and fn_data.get("contract") == c_name:
+                        fn_source = fn_data.get("source_code", "")
+                        fn_name = fn_data.get("name", "")
+                        if self._GOVERNANCE_KEYWORDS.search(fn_name):
+                            keyword_count += 1
+                        if self._GOVERNANCE_KEYWORDS.search(fn_source):
+                            keyword_count += 1
+                        if keyword_count >= 3:
+                            is_gov = True
+                            break
+
+            if is_gov:
+                governance_contracts.add(c_name)
+                data["is_governance_contract"] = True
+
+        if not governance_contracts:
+            return
+
+        # Tag functions that write ACCESS_CRITICAL under governance AC
+        for node_id, data in self.graph.nodes(data=True):
+            if data.get("type") != "function":
+                continue
+
+            contract = data.get("contract", "")
+            ac_type = data.get("access_control_type", "none")
+            ac_conf = data.get("access_control_confidence", 0.0)
+
+            # Function is in or protected by a governance contract
+            func_under_gov = (
+                contract in governance_contracts
+                or ac_type in ("modifier", "require-based", "both")
+            )
+            if not func_under_gov:
+                continue
+
+            # Check if it writes ACCESS_CRITICAL variables
+            writes_access_critical = False
+            for tw in data.get("tainted_state_writes", []):
+                for tag in tw.get("sensitivity", []):
+                    if tag == "ACCESS_CRITICAL":
+                        writes_access_critical = True
+                        break
+                if writes_access_critical:
+                    break
+
+            # Also check sensitivity tags from storage tagging
+            for _, target, edata in self.graph.out_edges(node_id, data=True):
+                if edata.get("relationship") != "WRITES":
+                    continue
+                target_data = self.graph.nodes.get(target, {})
+                if target_data.get("sensitivity_tag") == "ACCESS_CRITICAL":
+                    writes_access_critical = True
+                    break
+
+            if writes_access_critical and ac_conf >= 0.8:
+                data["governance_design_choice"] = True
+
+    # ================================================================
+    # Part 1 — Recompute Unprotected Mutator Status
+    # ================================================================
+
+    def _recompute_unprotected_mutator_status(self):
+        """
+        Re-evaluate is_unprotected_mutator AFTER all AC enrichments.
+        Clears the flag if any form of access control was detected.
+        """
+        for node_id, data in self.graph.nodes(data=True):
+            if data.get("type") != "function":
+                continue
+            if not data.get("is_unprotected_mutator", False):
+                continue
+
+            ac_type = data.get("access_control_type", "none")
+            protected_types = ("modifier", "require-based", "both",
+                               "internal-guard", "external-role")
+
+            effectively_protected = (
+                ac_type in protected_types
+                or data.get("has_internal_guard_call", False)
+                or data.get("has_external_role_guard", False)
+                or data.get("access_control_confidence", 0.0) >= 0.8
+            )
+
+            if effectively_protected:
+                data["is_unprotected_mutator"] = False
+                data["unprotected_risk_level"] = "NONE"
+
     def _classify_modifier_pattern(self, conditions: List[Dict], state_vars: List[str]) -> str:
         """
         Classifies the access control pattern of a modifier based on its conditions.
@@ -746,10 +1282,19 @@ class GraphBuilder:
         
         return "none"
     
+    # Compiled regex patterns for custom error / revert access control detection (Part 5)
+    _REVERT_AC_PATTERNS = [
+        re.compile(r'if\s*\(\s*msg\.sender\s*!=', re.IGNORECASE),
+        re.compile(r'if\s*\(\s*\w+\s*!=\s*msg\.sender', re.IGNORECASE),
+        re.compile(r'if\s*\(\s*!\s*\w+\[msg\.sender\]', re.IGNORECASE),
+        re.compile(r'revert\s+(Unauthorized|NotOwner|NotAdmin|AccessDenied|Forbidden|OnlyOwner|OnlyAdmin|NotAuthorized)\s*\(', re.IGNORECASE),
+    ]
+
     def _detect_inline_access_check(self, node_id: str, node_data: Dict, slither_func=None) -> bool:
         """
         Detects inline require(msg.sender == X) patterns in function body.
         Uses Slither IR as primary detection, with source code regex fallback.
+        Also detects custom error / revert patterns (Part 5).
         Returns True if an inline access check is found.
         """
         # Primary: IR-based detection via Slither function nodes
@@ -765,13 +1310,17 @@ class GraphBuilder:
             except Exception:
                 pass
         
-        # Fallback: source code regex
+        # Fallback: source code regex (original patterns)
         source = node_data.get("source_code", "")
         if source:
             if re.search(r'require\s*\(\s*msg\.sender\s*==', source):
                 return True
             if re.search(r'require\s*\(\s*\w+\s*==\s*msg\.sender', source):
                 return True
+            # Part 5: Custom error / revert pattern detection
+            for pat in self._REVERT_AC_PATTERNS:
+                if pat.search(source):
+                    return True
         
         return False
 
@@ -1463,6 +2012,94 @@ class GraphBuilder:
             node_data["reentrancy_risk"] = is_risk
             node_data["reentrancy_risk_score"] = score
             node_data["cei_violation_only"] = is_cei_only
+
+    # ================================================================
+    # Improvement 2A — Read-Only Reentrancy Risk Detection
+    # ================================================================
+    def _detect_read_only_reentrancy_risk(self):
+        """
+        Detects read-only reentrancy risk: functions that make staticcall/view
+        external calls AND write accounting-sensitive state, creating a window
+        where external readers can observe stale prices.
+
+        Read-only reentrancy is distinct from classical reentrancy (which
+        requires call/delegatecall).  A staticcall cannot modify state, but
+        it CAN return stale values mid-transaction.  If the caller writes
+        accounting-critical state (totalSupply, totalAssets, share prices)
+        *after* the staticcall, an attacker can sandwich-read the stale
+        value via a re-entrant path.
+
+        Attaches:
+          - read_only_reentrancy_risk: bool
+        """
+        _ACCOUNTING_SENSITIVE_TAGS = frozenset([
+            "ACCOUNTING_CRITICAL", "CAP_CRITICAL",
+        ])
+
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+
+            # Condition 1: has a staticcall / view-interface external call
+            has_staticcall = False
+            for _, _, edge_data in self.graph.out_edges(node_id, data=True):
+                if edge_data.get("relationship") != "EXTERNAL_CALL":
+                    continue
+                ct = edge_data.get("call_type", "")
+                if ct == "staticcall":
+                    has_staticcall = True
+                    break
+                # Interface calls to view/pure targets also count
+                if ct == "interface":
+                    target_expr = str(edge_data.get("target_expression", ""))
+                    call_desc = str(edge_data.get("call_desc", ""))
+                    # Heuristic: if call name contains view-like patterns
+                    for view_kw in ("getPrice", "getReserve", "totalSupply",
+                                    "balanceOf", "getRate", "exchangeRate",
+                                    "convertToAssets", "convertToShares",
+                                    "previewDeposit", "previewMint",
+                                    "previewWithdraw", "previewRedeem"):
+                        if view_kw.lower() in call_desc.lower() or view_kw.lower() in target_expr.lower():
+                            has_staticcall = True
+                            break
+                    if has_staticcall:
+                        break
+
+            if not has_staticcall:
+                node_data["read_only_reentrancy_risk"] = False
+                continue
+
+            # Condition 2: writes accounting-sensitive state
+            writes_sensitive = False
+
+            # Check direct flags from _detect_arithmetic_patterns
+            if (node_data.get("writes_total_supply")
+                    or node_data.get("writes_total_assets")
+                    or node_data.get("mints_shares_proportionally")
+                    or node_data.get("updates_reward_index")):
+                writes_sensitive = True
+
+            # Check tainted state writes with sensitive tags
+            if not writes_sensitive:
+                for tw in node_data.get("tainted_state_writes", []):
+                    for tag in tw.get("sensitivity", []):
+                        if tag in _ACCOUNTING_SENSITIVE_TAGS:
+                            writes_sensitive = True
+                            break
+                    if writes_sensitive:
+                        break
+
+            # Check WRITES edges to variables tagged as accounting-sensitive
+            if not writes_sensitive:
+                for _, target, edata in self.graph.out_edges(node_id, data=True):
+                    if edata.get("relationship") != "WRITES":
+                        continue
+                    target_data = self.graph.nodes.get(target, {})
+                    if target_data.get("sensitivity_tag") in _ACCOUNTING_SENSITIVE_TAGS:
+                        writes_sensitive = True
+                        break
+
+            node_data["read_only_reentrancy_risk"] = has_staticcall and writes_sensitive
 
     # ================================================================
     # Story 3.5 — Privilege Propagation
@@ -2205,7 +2842,19 @@ class GraphBuilder:
             has_init_modifier = False
 
             for mod_name in applied_mods:
-                cat = modifier_categories.get(mod_name, "custom")
+                cat = modifier_categories.get(mod_name, None)
+                # Bug 4 fix: if modifier not in graph (lib contract),
+                # fall back to name-based matching against
+                # _MODIFIER_EQUIVALENCE_MAP
+                if cat is None:
+                    cat = "custom"
+                    for category, patterns in self._MODIFIER_EQUIVALENCE_MAP.items():
+                        for pat in patterns:
+                            if pat.search(mod_name):
+                                cat = category
+                                break
+                        if cat != "custom":
+                            break
                 equivalences[mod_name] = cat
                 if cat == "reentrancy_guard":
                     has_reentrancy_guard = True
@@ -3465,6 +4114,60 @@ class GraphBuilder:
                 if re.search(r"require\([^=]+==\s*(true|false|\d+)[^\)]*\)", src):
                     score -= 0.2
         
+        # Part 10 — Enhanced step callability: check if prior steps
+        # specifically modify the AC target variables of protected steps.
+        for i, step in enumerate(steps):
+            node_data = self.graph.nodes.get(step, {})
+            ac_conf = node_data.get("access_control_confidence", 0.0)
+            if ac_conf >= 0.8:
+                # Find the AC target variables this step checks
+                ac_mods = node_data.get("access_control_modifiers", [])
+                ac_targets = set()
+                for m in ac_mods:
+                    # Look up modifier node for compared_variable
+                    for nid, ndata in self.graph.nodes(data=True):
+                        if ndata.get("type") == "modifier" and ndata.get("name") == m:
+                            for cond in ndata.get("conditions", []):
+                                cv = cond.get("compared_variable", "")
+                                if cv:
+                                    ac_targets.add(cv)
+
+                if ac_targets:
+                    prior_modifies_target = False
+                    for j in range(i):
+                        prev_data = self.graph.nodes.get(steps[j], {})
+                        # Check if prev step writes the AC target variable
+                        for _, wt, edata in self.graph.out_edges(steps[j], data=True):
+                            if edata.get("relationship") == "WRITES":
+                                wt_data = self.graph.nodes.get(wt, {})
+                                wt_name = wt_data.get("name", "")
+                                if wt_name in ac_targets:
+                                    prior_modifies_target = True
+                                    break
+                            if prior_modifies_target:
+                                break
+                        if prior_modifies_target:
+                            break
+
+                    if not prior_modifies_target:
+                        score -= 0.3
+
+        # Part 10 — Temporal constraint detection
+        requires_multi_block = False
+        for step in steps:
+            src = self.graph.nodes.get(step, {}).get("source_code", "")
+            if src:
+                if re.search(r'block\.(timestamp|number)\s*>=', src):
+                    requires_multi_block = True
+                    break
+                if re.search(r'block\.(timestamp|number)\s*>', src):
+                    requires_multi_block = True
+                    break
+
+        if requires_multi_block:
+            chain_desc["requires_multi_block"] = True
+            score -= 0.15
+
         score = max(0.0, score)
         
         chain_desc["feasibility_score"] = score
@@ -4062,12 +4765,14 @@ class GraphBuilder:
                     structural += 50
                     risk_categories.append("privilege_escalation")
 
+            # Part 6: Confidence-weighted unprotected mutator scoring
             if node_data.get("is_unprotected_mutator"):
-                if ac_type in ("require-based", "both"):
+                ac_conf = node_data.get("access_control_confidence", 0.0)
+                if ac_type in ("require-based", "both") or ac_conf >= 0.8:
                     structural += 10
                     risk_categories.append("unprotected_mutator_guarded")
                 else:
-                    structural += 40
+                    structural += int(40 * (1.0 - ac_conf))
                     risk_categories.append("unprotected_mutator")
 
             if node_data.get("cei_violation_only"):
@@ -4133,6 +4838,11 @@ class GraphBuilder:
                 if low not in risk_categories:
                     risk_categories.append(low)
 
+            # Improvement 2A: Read-only reentrancy risk
+            if node_data.get("read_only_reentrancy_risk"):
+                structural += 35
+                risk_categories.append("read_only_reentrancy")
+
             # ── Exploitability Score ──────────────────────────
             if node_data.get("reachable_from_external_entry"):
                 exploitability += 30
@@ -4153,9 +4863,11 @@ class GraphBuilder:
             if node_data.get("is_external_entry"):
                 exploitability += 10
 
+            # Part 6: Confidence-weighted exploitability
+            ac_conf = node_data.get("access_control_confidence", 0.0)
             if not node_data.get("is_protected") and not node_data.get("is_view_or_pure"):
-                exploitability += 15
-            elif ac_type == "require-based":
+                exploitability += int(15 * (1.0 - ac_conf))
+            elif ac_type == "require-based" or ac_conf >= 0.8:
                 exploitability += 5
 
             # Dev Story 3: Exploit chain entry boost
@@ -4184,9 +4896,12 @@ class GraphBuilder:
             if node_data.get("can_escalate_privileges"):
                 impact += 30
 
+            # Part 6: Confidence-weighted impact for unprotected mutators
             if node_data.get("is_unprotected_mutator"):
+                ac_conf = node_data.get("access_control_confidence", 0.0)
                 level = node_data.get("unprotected_risk_level", "MEDIUM")
-                impact += 20 if level == "HIGH" else 10
+                base_impact = 20 if level == "HIGH" else 10
+                impact += int(base_impact * (1.0 - ac_conf))
 
             # Dev Story 3: Impact boost for dangerous sequences
             if node_data.get("has_dangerous_sequence"):
@@ -4219,6 +4934,14 @@ class GraphBuilder:
             elif contract_tier == "FACTORY":
                 impact -= 25
             impact = max(0, impact)
+
+            # Part 8: Governance design choice — reduce structural
+            if node_data.get("governance_design_choice", False):
+                structural = max(0, structural - 30)
+                risk_categories.append("governance_design_choice")
+
+            # Clamp structural to >= 0 after all reductions
+            structural = max(0, structural)
 
             # ── Final Score (weighted combination) ────────────
             final = (
@@ -4577,6 +5300,135 @@ class GraphBuilder:
                 cats = list(self.graph.nodes[node_id].get("risk_categories", []))
                 self.graph.nodes[node_id]["risk_score"] = current + 100
                 self.graph.nodes[node_id]["risk_categories"] = cats + ["signature_replay"]
+
+    # ════════════════════════════════════════════════════════════
+    #  Titan Pattern Engine — Graph-validated pattern integration
+    # ════════════════════════════════════════════════════════════
+
+    def _integrate_pattern_hits(self):
+        """
+        Run the Titan Pattern Engine over cached .sol sources and attach
+        validated hits to function nodes.
+
+        For each PatternHit:
+          1. Resolve the file + line to a function node in the graph.
+          2. Validate against graph context (modifiers, taint, protection).
+          3. Attach validated hits as node metadata and boost structural_score.
+        """
+        if not self._file_cache:
+            return
+
+        raw_hits = scan_all_sources(self._file_cache)
+        if not raw_hits:
+            return
+
+        summary = get_pattern_summary(raw_hits)
+        total = sum(summary.values())
+        print(f"  [Titan] Raw pattern scan: {total} hits "
+              f"(C={summary['CRITICAL']}, H={summary['HIGH']}, "
+              f"M={summary['MEDIUM']}, L={summary.get('LOW', 0)})")
+
+        # Build a reverse index: (normalized_file, line_range) -> node_id
+        # Each function node has source_start_line / source_end_line / source_file
+        func_index: list[tuple[str, int, int, str]] = []
+        for node_id, data in self.graph.nodes(data=True):
+            if data.get("type") != "function":
+                continue
+            src_file = data.get("source_file", "")
+            start_line = data.get("source_start_line", 0)
+            end_line = data.get("source_end_line", 0)
+            if src_file and start_line and end_line:
+                func_index.append((src_file, start_line, end_line, node_id))
+
+        validated = 0
+        discarded = 0
+
+        for hit in raw_hits:
+            # 1. Resolve to function node
+            matched_node = None
+            for src_file, start, end, node_id in func_index:
+                # Normalize paths for comparison
+                if hit.file.endswith(src_file) or src_file.endswith(hit.file) or \
+                   hit.file == src_file:
+                    if start <= hit.line <= end:
+                        matched_node = node_id
+                        break
+
+            if not matched_node:
+                # Can't resolve to a function — skip
+                discarded += 1
+                continue
+
+            node_data = self.graph.nodes[matched_node]
+
+            # 2. Graph-context validation — discard false positives
+            skip = False
+
+            # Reentrancy hit but function has nonReentrant guard
+            if hit.category == "reentrancy":
+                modifiers = node_data.get("ac_modifiers", [])
+                if any("reentr" in str(m).lower() for m in modifiers):
+                    skip = True
+                if node_data.get("has_reentrancy_guard"):
+                    skip = True
+
+            # Access control hit but function has protection
+            if hit.category == "access-control" and hit.pattern_id in ("ETH-006", "ETH-009"):
+                if node_data.get("is_protected") or node_data.get("has_access_control"):
+                    skip = True
+
+            if skip:
+                discarded += 1
+                continue
+
+            # 3. Attach validated hit to node
+            existing_hits = node_data.get("pattern_hits", [])
+            existing_hits.append(hit.pattern_id)
+            node_data["pattern_hits"] = existing_hits
+
+            existing_cats = node_data.get("pattern_categories", [])
+            if hit.category not in existing_cats:
+                existing_cats.append(hit.category)
+            node_data["pattern_categories"] = existing_cats
+
+            # Store full hit details for reporting
+            hit_details = node_data.get("pattern_hit_details", [])
+            hit_details.append({
+                "id": hit.pattern_id,
+                "title": hit.title,
+                "severity": hit.severity,
+                "confidence": hit.confidence,
+                "line": hit.line,
+                "description": hit.description,
+                "recommendation": hit.recommendation,
+                "category": hit.category,
+                "swc": hit.swc,
+            })
+            node_data["pattern_hit_details"] = hit_details
+
+            # 4. Boost structural_score for validated hits
+            sev_boost = {"CRITICAL": 15, "HIGH": 10, "MEDIUM": 5, "LOW": 2, "INFORMATIONAL": 0}
+            current_structural = node_data.get("structural_score", 0)
+            boost = sev_boost.get(hit.severity, 0)
+            node_data["structural_score"] = min(100, current_structural + boost)
+
+            # Add to risk_categories if not already present
+            risk_cats = node_data.get("risk_categories", [])
+            cat_tag = f"PATTERN_{hit.category.upper().replace('-', '_')}"
+            if cat_tag not in risk_cats:
+                risk_cats.append(cat_tag)
+                node_data["risk_categories"] = risk_cats
+
+            validated += 1
+
+        print(f"  [Titan] Graph-validated: {validated} hits attached, "
+              f"{discarded} discarded (no match or false positive)")
+
+        # Store summary on graph for reporting
+        self.graph.graph.setdefault("report_metadata", {})
+        self.graph.graph["report_metadata"]["titan_raw_hits"] = total
+        self.graph.graph["report_metadata"]["titan_validated_hits"] = validated
+        self.graph.graph["report_metadata"]["titan_discarded_hits"] = discarded
 
     def export_json(self, output_path: str):
         """

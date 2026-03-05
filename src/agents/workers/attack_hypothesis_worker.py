@@ -223,6 +223,45 @@ class AttackHypothesisWorker(WorkerAgent):
         except Exception:
             context["callers"] = []
 
+        # Improvement 3a: Caller protection status
+        # For each caller, include whether they are protected
+        # (admin-only callers reduce attack surface)
+        caller_protection = []
+        for caller_id in context.get("callers", []):
+            cid = caller_id if isinstance(caller_id, str) else caller_id.get("node_id", "") if isinstance(caller_id, dict) else str(caller_id)
+            if self.graph.has_node(cid):
+                cdata = self.graph.nodes[cid]
+                caller_protection.append({
+                    "caller": cid,
+                    "is_protected": cdata.get("is_protected", False),
+                    "access_control_type": cdata.get("access_control_type", "none"),
+                })
+        context["caller_protection"] = caller_protection
+
+        # Improvement 3b: Exploit chain context
+        # If exploit_chains or exploit_sequence exist on the hotspot node,
+        # include them for the LLM
+        node_data = self.graph.nodes.get(node_id, {})
+        exploit_seq = node_data.get("exploit_sequence", [])
+        if exploit_seq:
+            context["exploit_sequence"] = exploit_seq
+        exploit_chains = node_data.get("exploit_chains", [])
+        if exploit_chains:
+            context["exploit_chains"] = exploit_chains
+
+        # Improvement 3c: State variable sensitivity tags
+        # Include specific variable names and sensitivity for variables
+        # this function writes
+        sensitivity_tags = node_data.get("sensitivity_tags", {})
+        state_vars_written = node_data.get("state_variables_written", [])
+        context["state_variable_sensitivity"] = {
+            "variables_written": state_vars_written,
+            "sensitivity_tags": sensitivity_tags,
+        }
+
+        # Improvement 3d: Matched vulnerability templates
+        context["matched_templates"] = node_data.get("matched_vuln_templates", [])
+
         context["signals_summary"] = {
             "reentrancy_risk": hotspot.signals.get("reentrancy_risk", False),
             "is_unprotected_mutator": hotspot.signals.get("is_unprotected_mutator", False),
@@ -368,9 +407,48 @@ Classify as ARITHMETIC_PRECISION. Check if the precision loss or overflow can be
 ## Internal Calls Made by This Function
 {self._format_list(graph_context.get("internal_calls", []))}
 
-## Functions That Call This Function
-{self._format_list(graph_context.get("callers", []))}
+## Functions That Call This Function (with protection status)
+{self._format_caller_protection(graph_context.get("caller_protection", []), graph_context.get("callers", []))}
+"""
 
+        # Improvement 3b: Pre-computed exploit chain
+        exploit_seq = graph_context.get("exploit_sequence", [])
+        if exploit_seq:
+            steps_text = "\n".join(
+                f"  Step {s.get('step', i+1)}: [{s.get('role', '?')}] {s.get('node', '?')}" 
+                for i, s in enumerate(exploit_seq)
+            )
+            user_content += f"""
+## Pre-Computed Exploit Chain (from graph analysis)
+The static analyzer has identified the following multi-step exploit path:
+{steps_text}
+Use this chain to guide your hypothesis — each step is a verified reachable call.
+"""
+
+        # Improvement 3c: State variable sensitivity
+        sv_info = graph_context.get("state_variable_sensitivity", {})
+        sv_written = sv_info.get("variables_written", [])
+        sv_tags = sv_info.get("sensitivity_tags", {})
+        if sv_written:
+            sv_lines = []
+            for var in sv_written:
+                tag = sv_tags.get(var, "UNKNOWN")
+                sv_lines.append(f"  - {var} [{tag}]")
+            user_content += f"""
+## State Variables Written (with sensitivity)
+{chr(10).join(sv_lines)}
+"""
+
+        # Improvement 3d: Matched vulnerability templates
+        templates = graph_context.get("matched_templates", [])
+        if templates:
+            user_content += f"""
+## Matched Vulnerability Templates
+The following known vulnerability patterns were matched by structural analysis:
+{', '.join(str(t) for t in templates)}
+"""
+
+        user_content += f"""
 ## Protocol Context (from Recon)
 Protocol Type: {recon_context.get("protocol_type", "unknown")}
 Known Attack Patterns: {recon_context.get("known_attack_patterns", [])}
@@ -404,6 +482,22 @@ Known Attack Patterns: {recon_context.get("known_attack_patterns", [])}
                 content = response.content if hasattr(response, "content") else str(response)
                 if isinstance(content, list):
                     content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
+
+                # ── Token tracking ──
+                try:
+                    from src.utils.token_counter import get_token_counter
+                    input_text = "\n".join(
+                        m.get("content", "") if isinstance(m, dict) else str(m)
+                        for m in messages
+                    )
+                    get_token_counter().record(
+                        "AttackHypothesisWorker", self.model_name,
+                        input_text, str(content),
+                        getattr(response, "response_metadata", None),
+                    )
+                except Exception:
+                    pass  # Never let tracking break the pipeline
+
                 return str(content)
             except asyncio.TimeoutError:
                 wait = 2 ** (attempt - 1)   # 1s, 2s, 4s, 8s
@@ -470,3 +564,16 @@ Known Attack Patterns: {recon_context.get("known_attack_patterns", [])}
         if items and isinstance(items[0], dict):
             return json.dumps(items, indent=2)
         return "\n".join(f"  - {item}" for item in items)
+
+    def _format_caller_protection(self, caller_protection: list, callers: list) -> str:
+        """Format callers with their protection status."""
+        if not callers:
+            return "None"
+        if not caller_protection:
+            return self._format_list(callers)
+        lines = []
+        for cp in caller_protection:
+            prot = "PROTECTED" if cp.get("is_protected") else "UNPROTECTED"
+            ac_type = cp.get("access_control_type", "none")
+            lines.append(f"  - {cp['caller']} [{prot}, ac_type={ac_type}]")
+        return "\n".join(lines) if lines else "None"
