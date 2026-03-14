@@ -865,7 +865,14 @@ Hypothesis: {finding.hypothesis}
                         corrections.append((import_path, correct_path))
                     continue
             matches = list(sandbox.tmp_dir.rglob(filename))
-            valid = [f for f in matches if "lib" not in f.parts and "out" not in f.parts and "cache" not in f.parts]
+            valid = []
+            for f in matches:
+                try:
+                    rel_str = str(f.relative_to(sandbox.tmp_dir)).replace("\\", "/")
+                    if not rel_str.startswith("lib/") and not rel_str.startswith("out/") and not rel_str.startswith("cache/"):
+                        valid.append(f)
+                except ValueError:
+                    pass
             if not valid:
                 continue
             best = valid[0]
@@ -1760,11 +1767,12 @@ Hypothesis: {finding.hypothesis}
                     # ── Template-first path: write + compile + test directly ──
                     if use_two_file_mode:
                         test_path = sandbox.get_test_path()
-                        attack_path = test_path.parent / "AttackContract.sol"
+                        attack_path = Path(test_path).parent / "AttackContract.sol"
                         attack_path.write_text(test_code_generated, encoding='utf-8')
                     else:
                         test_path = sandbox.get_test_path()
-                        sandbox.write_test_file(test_code_generated)
+                        test_file = f"{test_path}/ExploitTest.t.sol"
+                        sandbox.write_test_file(test_file, test_code_generated)
                     print(f"  [TestWriter] Template written to {test_path}")
 
                     build_res = sandbox.run_forge_build()
@@ -1779,7 +1787,7 @@ Hypothesis: {finding.hypothesis}
                             break
                         else:
                             print(f"  [TestWriter] Template compiled but test failed — falling through to LLM")
-                            error_history.append(f"Template compiled but test failed.\nLogs:\n{test_logs[:400]}")
+                            error_history.append(f"Code you wrote:\n```solidity\n{test_code_generated}\n```\n\nTemplate compiled but test failed.\nLogs:\n{test_logs[:400]}")
                     else:
                         build_err = build_res.logs if hasattr(build_res, 'logs') else str(build_res)
                         print(f"  [TestWriter] Template failed to compile — errors will seed LLM attempt")
@@ -1931,7 +1939,7 @@ Hypothesis: {finding.hypothesis}
                             logger.info(f"[TestWriter] Attempt {attempts}: Missing 'function test_exploit()' in generated code.")
                             if funcs:
                                 logger.info(f"[TestWriter]   Found functions: {funcs}")
-                            error_history.append("Generated test must include function test_exploit() exactly.")
+                            error_history.append(f"Code you wrote:\n```solidity\n{test_code_generated}\n```\n\nGenerated test must include function test_exploit() exactly.")
                             continue
 
                         if not is_legacy and not use_two_file_mode:
@@ -1946,7 +1954,7 @@ Hypothesis: {finding.hypothesis}
 
                     # ── Compile & Test in one step ──────────────────
                     forge_cmd = (
-                        "forge test --match-test test_exploit -vvvv"
+                        "forge test --match-test test_exploit --no-cache -vvvv"
                         " --ignored-error-codes 8429 --ignored-error-codes 2424"
                     )
                     print(f"  [TestWriter] Running forge test...")
@@ -1964,16 +1972,22 @@ Hypothesis: {finding.hypothesis}
                     )
 
                     if not test_res.success and is_compile_error:
-                        err_lines = [
-                            ln for ln in test_logs.splitlines()
-                            if ("Error" in ln and "Warning" not in ln)
-                            or ln.strip().startswith("-->")
-                            or ln.strip().startswith("|")
-                        ]
-                        if not err_lines:
-                            err_lines = [ln for ln in test_logs[:2000].splitlines()
-                                         if ln.strip() and "Warning:" not in ln]
-                        short_err = "\n".join(err_lines[:20]) if err_lines else test_logs[:600]
+                        parsed_err_lines = []
+                        in_error_block = False
+                        for ln in test_logs.splitlines():
+                            stripped = ln.strip()
+                            if stripped.startswith("Warning") or ("Warning" in stripped and "Error" not in stripped):
+                                in_error_block = False
+                            elif stripped.startswith("Error") or stripped.startswith("ParserError") or "Error:" in stripped:
+                                in_error_block = True
+                            
+                            if in_error_block:
+                                parsed_err_lines.append(ln)
+
+                        if not parsed_err_lines:
+                            parsed_err_lines = [ln for ln in test_logs.splitlines()[-50:] if ln.strip() and "Warning" not in ln]
+
+                        short_err = "\n".join(parsed_err_lines[:50]) if parsed_err_lines else test_logs[-1000:]
 
                         print(f"  [TestWriter] COMPILE FAILED (attempt {attempts}):")
                         for line in short_err.splitlines()[:10]:
@@ -2008,11 +2022,11 @@ Hypothesis: {finding.hypothesis}
                             error_entry += loop_msg
                             print(f"  [TestWriter] Loop detected on error codes {looping_codes} — injecting strategy switch")
 
+                        if test_code_generated:
+                            error_entry = f"Code you wrote:\n```solidity\n{test_code_generated}\n```\n\n" + error_entry
                         error_history.append(error_entry)
                         compiled = False
-                        out_dir = Path(sandbox.tmp_dir) / "out"
-                        if out_dir.exists():
-                            shutil.rmtree(out_dir, ignore_errors=True)
+                        self._clear_forge_cache(sandbox)
                         continue
 
                     compiled = True
@@ -2111,7 +2125,11 @@ Hypothesis: {finding.hypothesis}
                         # Break so the loop exits and we return compiled=True, exploit_success=False
                         break
 
-                    error_history.append(f"Test compiled but exploit check failed.\nLogs:\n{test_logs[:400]}")
+                    err_msg = f"Test compiled but exploit check failed.\nLogs:\n{test_logs[:400]}"
+                    if test_code_generated:
+                        err_msg = f"Code you wrote:\n```solidity\n{test_code_generated}\n```\n\n" + err_msg
+                    error_history.append(err_msg)
+                    self._clear_forge_cache(sandbox)
                     logger.info(f"[TestWriter] Attempt {attempts}: Test compiled but exploit FAILED.")
                     logger.info(f"[TestWriter]   test_res.success={test_res.success}, passed_by_logs={passed_by_logs}")
                     if test_logs:
@@ -2175,3 +2193,12 @@ Hypothesis: {finding.hypothesis}
                 "bridge_mode": is_legacy,
             }
         )
+
+    def _clear_forge_cache(self, sandbox) -> None:
+        """Clear the out/ and cache/ directories in the sandbox to force recompilation."""
+        out_dir = Path(sandbox.tmp_dir) / "out"
+        cache_dir = Path(sandbox.tmp_dir) / "cache"
+        if out_dir.exists():
+            shutil.rmtree(out_dir, ignore_errors=True)
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir, ignore_errors=True)

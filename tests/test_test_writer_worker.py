@@ -472,3 +472,29 @@ def test_generate_import_cheatsheet_no_duplicates():
     sources = {"src/core/A.sol": "..."}
     sheet = worker._generate_import_cheatsheet(sources, None)
     assert sheet.count('forge-std/Test.sol') == 1
+
+
+# ── Cache Clearing ───────────────────────────────────────────────
+
+def test_clear_forge_cache(tmp_path):
+    """Verifies that _clear_forge_cache removes out/ and cache/ directories."""
+    worker = TestWriterWorker(llm_client=None)
+    sandbox = MagicMock()
+    sandbox.tmp_dir = tmp_path
+
+    out_dir = tmp_path / "out"
+    cache_dir = tmp_path / "cache"
+
+    out_dir.mkdir()
+    (out_dir / "test.json").write_text("{}")
+
+    cache_dir.mkdir()
+    (cache_dir / "test.json").write_text("{}")
+
+    assert out_dir.exists()
+    assert cache_dir.exists()
+
+    worker._clear_forge_cache(sandbox)
+
+    assert not out_dir.exists()
+    assert not cache_dir.exists()

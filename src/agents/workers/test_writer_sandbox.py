@@ -372,7 +372,7 @@ class SandboxManager:
             for line in content.splitlines():
                 line = line.strip()
                 if line.startswith("src ="):
-                    val = line.split("=", 1)[1].strip().strip('"')
+                    val = line.split("=", 1)[1].strip().strip('"').strip("'")
                     if val and (self.tmp_dir / val).exists():
                         return val
         return "src" if (self.tmp_dir / "src").exists() else "."
@@ -384,7 +384,7 @@ class SandboxManager:
             for line in content.splitlines():
                 line = line.strip()
                 if line.startswith("test ="):
-                    val = line.split("=", 1)[1].strip().strip('"')
+                    val = line.split("=", 1)[1].strip().strip('"').strip("'")
                     if val:
                         return val
         return "test"
