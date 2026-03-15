@@ -121,6 +121,29 @@ _ERROR_RULES: list[tuple[str, str]] = [
         "  }\n"
         "Then deploy ConcreteX, not AbstractX.",
     ),
+    (
+        r"6160",
+        "WRONG ARGUMENT COUNT (Error 6160): A constructor or function call has the wrong number of arguments.\n"
+        "COMMON CAUSE: MockV3Aggregator requires TWO arguments:\n"
+        "  new MockV3Aggregator(uint8 decimals, int256 initialAnswer)\n"
+        "  Example: new MockV3Aggregator(8, 2000e8)\n"
+        "  Never instantiate MockV3Aggregator with a single argument.\n\n"
+        "Other common Chainlink/OpenZeppelin mocks with multi-arg constructors:\n"
+        "  - ERC20Mock(string name, string symbol, address initialAccount, uint256 initialBalance)\n\n"
+        "Fix: Check the constructor signature of the contract you are instantiating "
+        "and pass ALL required arguments.",
+    ),
+    (
+        r"5883",
+        "DUPLICATE DECLARATION (Error 5883): An event or error with the same name and parameter types "
+        "is defined twice.\n"
+        "COMMON CAUSE: You redeclared Transfer, Approval, or other events already defined "
+        "in imported OpenZeppelin interfaces (IERC20, IERC721, etc.).\n\n"
+        "Fix: Do NOT redeclare events or errors that are already defined in imported interfaces.\n"
+        "Remove any event declarations (Transfer, Approval, etc.) from your mock/test contracts — "
+        "they are inherited from the imported interface.\n"
+        "If the duplicate is in lib/, you are importing a file that already has the declaration.",
+    ),
 ]
 
 _GUARD_PATTERNS: list[str] = [
@@ -1775,11 +1798,11 @@ Hypothesis: {finding.hypothesis}
                         sandbox.write_test_file(test_file, test_code_generated)
                     print(f"  [TestWriter] Template written to {test_path}")
 
-                    build_res = sandbox.run_forge_build()
+                    build_res = sandbox.run("forge build --no-cache")
                     if build_res.success:
                         print(f"  [TestWriter] Template compiled successfully!")
-                        test_res = sandbox.run_forge_test()
-                        test_logs = test_res.logs if hasattr(test_res, 'logs') else ""
+                        test_res = sandbox.run("forge test --match-test test_exploit --no-cache -vvvv --ignored-error-codes 8429 --ignored-error-codes 2424")
+                        test_logs = test_res.stdout or ""
                         if test_res.success:
                             print(f"  [TestWriter] Template test PASSED — exploit proven!")
                             compiled = True
@@ -1789,7 +1812,7 @@ Hypothesis: {finding.hypothesis}
                             print(f"  [TestWriter] Template compiled but test failed — falling through to LLM")
                             error_history.append(f"Code you wrote:\n```solidity\n{test_code_generated}\n```\n\nTemplate compiled but test failed.\nLogs:\n{test_logs[:400]}")
                     else:
-                        build_err = build_res.logs if hasattr(build_res, 'logs') else str(build_res)
+                        build_err = build_res.stdout + build_res.stderr
                         print(f"  [TestWriter] Template failed to compile — errors will seed LLM attempt")
                         error_history.append(
                             f"[Phoenix template attempt] Compilation failed:\n{build_err[:600]}\n\n"

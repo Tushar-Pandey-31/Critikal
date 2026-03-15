@@ -1,5 +1,5 @@
 """
-Penteam Ingestion Layer — Cluster-based compilation orchestration engine.
+Critikal Ingestion Layer — Cluster-based compilation orchestration engine.
 
 Public API:
     - IngestionReport, CompilationCluster, ContractRoot, RepoSizeClass

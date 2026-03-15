@@ -4744,7 +4744,7 @@ class GraphBuilder:
             if node_data.get("type") != "function":
                 continue
 
-            structural = 0
+            structural = node_data.get("structural_score", 0)
             exploitability = 0
             impact = 0
             risk_categories = []
@@ -4972,7 +4972,9 @@ class GraphBuilder:
                 or any(tw.get("sensitivity") for tw in node_data.get("tainted_state_writes", []))
             )
 
-            if not (has_taint_involvement or has_state_mutation or has_sensitive_impact):
+            has_titan_hits = bool(node_data.get("pattern_hits", []))
+
+            if not (has_taint_involvement or has_state_mutation or has_sensitive_impact or has_titan_hits):
                 # Structural-only shape should not clear hotspot thresholds by itself.
                 final = min(final, 55.0)
 
@@ -5097,7 +5099,9 @@ class GraphBuilder:
                 feasibility_weight = 0.4 + 0.6 * best_feasibility
                 score = int(round(score * feasibility_weight * best_economic_impact))
 
-            if not (has_taint_involvement or has_state_mutation or has_sensitive_impact):
+            has_titan_hits = bool(node_data.get("pattern_hits", []))
+
+            if not (has_taint_involvement or has_state_mutation or has_sensitive_impact or has_titan_hits):
                 # Structural-only/shape-only evidence is insufficient for exploit writer handoff.
                 score = min(score, threshold - 1)
 

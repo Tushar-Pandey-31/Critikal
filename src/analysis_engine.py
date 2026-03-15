@@ -1,7 +1,7 @@
 """
 Analysis Engine — Orchestrator for the cluster-based compilation pipeline.
 
-This module is the public entry point for Penteam's ingestion layer.
+This module is the public entry point for Critikal's ingestion layer.
 All compilation logic has been delegated to submodules in src/ingestion/.
 
 Public API:

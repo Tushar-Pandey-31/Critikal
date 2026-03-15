@@ -77,7 +77,7 @@ def build_agent_workflow(coordinator_tools) -> StateGraph:
 
 
 async def async_main():
-    parser = argparse.ArgumentParser(description="Penteam Lead Agent - End-to-End Ingestion")
+    parser = argparse.ArgumentParser(description="Critikal Lead Agent - End-to-End Ingestion")
     parser.add_argument("--repo", type=str, help="Path to local folder or GitHub URL of the smart contract repo", required=True)
     parser.add_argument(
         "--contract-addresses",
@@ -93,7 +93,7 @@ async def async_main():
     )
     args = parser.parse_args()
 
-    print("Initializing Penteam Coordinator Workflow...")
+    print("Initializing Critikal Coordinator Workflow...")
 
     contract_addresses_input = args.contract_addresses or os.getenv("CONTRACT_ADDRESSES_JSON")
     try:

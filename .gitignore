@@ -42,4 +42,6 @@ desktop.ini
 
 
 # Exploits
-proven_exploits/
+proven_exploits/.env
+env
+env

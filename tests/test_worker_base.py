@@ -9,7 +9,7 @@ from src.agents.base_worker import WorkerOutput, WorkerAgent
 from src.agents.lead_agent import (
     coordinator_node, 
     lead_researcher_node, 
-    synthesize_worker_outputs, 
+    deduplicate_leads, 
     should_escalate_to_human
 )
 from src.agents.state import AgentState
@@ -152,7 +152,7 @@ async def test_coordinator_with_no_risks(mock_get_llm):
 
 def test_synthesize_empty_outputs():
     """Empty worker list -> empty leads."""
-    assert synthesize_worker_outputs([]) == []
+    assert deduplicate_leads([]) == []
 
 def test_synthesize_single_output():
     """Single worker output converted to lead."""
@@ -162,7 +162,7 @@ def test_synthesize_single_output():
         "evidence_node_ids": ["A::b"],
         "confidence": 90
     }]
-    leads = synthesize_worker_outputs(outputs)
+    leads = deduplicate_leads(outputs)
     assert len(leads) == 1
     assert leads[0]["confidence"] == 90
     assert leads[0]["id"] == "LEAD-001"
@@ -183,7 +183,7 @@ def test_synthesize_multiple_outputs():
             "confidence": 80
         }
     ]
-    leads = synthesize_worker_outputs(outputs)
+    leads = deduplicate_leads(outputs)
     # Should pick the higher confidence one for the same target
     assert len(leads) == 1
     assert leads[0]["confidence"] == 80
@@ -237,7 +237,7 @@ def test_synthesis_deduplicates_same_node_higher_confidence_wins():
         attack_path=["Vault.deposit", "Vault.withdraw"],
         confidence=45
     )
-    result = synthesize_worker_outputs([output_a, output_b])
+    result = deduplicate_leads([output_a, output_b])
     assert len(result) == 1
     assert result[0]["confidence"] == 80
 
@@ -255,7 +255,7 @@ def test_synthesis_keeps_non_overlapping_findings():
         attack_path=["Vault.setOwner"],
         confidence=85
     )
-    result = synthesize_worker_outputs([output_a, output_b])
+    result = deduplicate_leads([output_a, output_b])
     assert len(result) == 2
 
 def test_synthesis_confidence_tie_keeps_first():
@@ -274,13 +274,13 @@ def test_synthesis_confidence_tie_keeps_first():
         confidence=70,
         hypothesis="Unprotected mutator in withdraw"
     )
-    result = synthesize_worker_outputs([output_a, output_b])
+    result = deduplicate_leads([output_a, output_b])
     assert len(result) == 1
     assert result[0]["hypothesis"] == "Reentrancy via withdraw"
 
 def test_synthesis_empty_inputs_returns_empty():
     """No workers, no findings (Fix 3)."""
-    result = synthesize_worker_outputs([])
+    result = deduplicate_leads([])
     assert result == []
 
 def test_synthesis_single_worker_passthrough():
@@ -292,7 +292,7 @@ def test_synthesis_single_worker_passthrough():
         confidence=90,
         hypothesis="Classic reentrancy"
     )
-    result = synthesize_worker_outputs([output])
+    result = deduplicate_leads([output])
     assert len(result) == 1
     assert result[0]["confidence"] == 90
     assert result[0]["hypothesis"] == "Classic reentrancy"

@@ -93,7 +93,7 @@ def render_graph_html(graph, findings) -> str:
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Penteam Attack Surface Graph</title>
+<title>Critikal Attack Surface Graph</title>
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
 body{{background:#0d1117;color:#c9d1d9;font-family:system-ui,-apple-system,sans-serif;overflow:hidden}}
@@ -114,7 +114,7 @@ svg{{display:block;width:100vw;height:100vh;padding-top:48px}}
 </head>
 <body>
 <div id="toolbar">
-  <h1>Penteam Attack Surface</h1>
+  <h1>Critikal Attack Surface</h1>
   <button class="filter-btn active" data-filter="all">All</button>
   <button class="filter-btn" data-filter="contracts">Contracts Only</button>
   <button class="filter-btn" data-filter="high">High Risk Only</button>

@@ -42,6 +42,9 @@ _VULN_CLASS_MAP: dict[str, str] = {
     "unprotected state mutator": "access_control",
     "tx.origin": "tx_origin",
     "tx.origin authentication": "tx_origin",
+    "unprotected_mutator": "access_control",
+    "privilege_escalation": "access_control",
+    "cei_violation": "reentrancy",
     "oracle manipulation": "oracle_manipulation",
     "price manipulation": "oracle_manipulation",
     "flash loan": "oracle_manipulation",
@@ -123,7 +126,7 @@ contract ReentrancyTest is Test {{
         vm.deal(address(attacker), 1 ether);
     }}
 
-    function test_reentrancy_exploit() public {{
+    function test_exploit() public {{
         uint256 victimBalBefore = address(victim).balance;
         vm.prank(address(attacker));
         attacker.attack();
@@ -151,7 +154,7 @@ def access_control_poc(
         target = new {contract_name}();
     }}
 
-    function test_access_control_bypass() public {{
+    function test_exploit() public {{
         vm.prank(attacker);
         // Attacker calls privileged function without authorization
         target.{func}(attacker);
@@ -193,7 +196,7 @@ contract TxOriginTest is Test {{
         attacker = new TxOriginAttacker(address(victim));
     }}
 
-    function test_tx_origin_exploit() public {{
+    function test_exploit() public {{
         // tx.origin == msg.sender for direct call, but different via intermediate
         vm.prank(address(0x1), address(0x1));
         attacker.attack();
@@ -218,7 +221,7 @@ def oracle_manipulation_poc(
         vm.deal(address(this), 100 ether);
     }}
 
-    function test_oracle_manipulation() public {{
+    function test_exploit() public {{
         // Step 1: Record price before manipulation
         // uint256 priceBefore = target.getPrice();
 
@@ -251,14 +254,14 @@ def integer_overflow_poc(
         target = new {contract_name}();
     }}
 
-    function test_integer_overflow() public {{
+    function test_exploit() public {{
         // Attempt overflow with max values
         uint256 maxVal = type(uint256).max;
         vm.expectRevert();
         target.{func}(maxVal);
     }}
 
-    function test_unchecked_overflow() public {{
+    function test_exploit_unchecked() public {{
         // If function uses unchecked block, overflow wraps silently
         // target.{func}(type(uint256).max);
         // assertEq(result, 0, "Unchecked overflow should wrap");
@@ -286,7 +289,7 @@ def vault_inflation_poc(
         vm.deal(victim, 10 ether);
     }}
 
-    function test_first_depositor_inflation() public {{
+    function test_exploit() public {{
         // Step 1: Attacker deposits minimum amount (1 wei)
         vm.startPrank(attacker);
         // vault.deposit{{value: 1}}();
@@ -333,7 +336,7 @@ contract DelegatecallTest is Test {{
         malicious = new MaliciousImpl();
     }}
 
-    function test_delegatecall_storage_collision() public {{
+    function test_exploit() public {{
         // Attacker sets malicious implementation that overwrites slot 0
         // proxy.upgrade(address(malicious));
         // assertEq(proxy.owner(), address(this), "Storage collision: owner overwritten");
@@ -360,7 +363,7 @@ def signature_replay_poc(
         signer = vm.addr(signerPk);
     }}
 
-    function test_signature_replay() public {{
+    function test_exploit() public {{
         bytes32 hash = keccak256("test message");
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, hash);
 
@@ -396,7 +399,7 @@ contract SelfdestructTest is Test {{
         target = new {contract_name}();
     }}
 
-    function test_force_ether() public {{
+    function test_exploit() public {{
         uint256 balBefore = address(target).balance;
         new ForceEther{{value: 1 ether}}(payable(address(target)));
         uint256 balAfter = address(target).balance;
@@ -431,7 +434,7 @@ contract StaleOracleTest is Test {{
         // target = new {contract_name}(address(mockFeed));
     }}
 
-    function test_stale_oracle_accepted() public {{
+    function test_exploit() public {{
         // With updatedAt = 0, the oracle data is stale
         // uint256 price = target.getPrice();
         // Price should be rejected but isn't if no staleness check
@@ -475,7 +478,7 @@ contract FeeOnTransferTest is Test {{
         token.mint(address(this), 1000 ether);
     }}
 
-    function test_fee_on_transfer_accounting() public {{
+    function test_exploit() public {{
         uint256 depositAmount = 100 ether;
         // target.deposit(depositAmount);
         // uint256 recorded = target.balances(address(this));
@@ -502,7 +505,7 @@ def dos_loop_poc(
         target = new {contract_name}();
     }}
 
-    function test_unbounded_loop_dos() public {{
+    function test_exploit() public {{
         // Add many entries to grow the array
         for (uint i = 0; i < 1000; i++) {{
             // target.addEntry(address(uint160(i)));

@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "penteam"
+name = "Critikal"
 version = "0.1.0"
-description = "Penteam: AI-Assisted Smart Contract Security System"
+description = "Critikal: AI-Assisted Smart Contract Security System"
 authors = ["tuxsharx <tuxsharx@gmail.com>"]
 readme = "README.md"
 packages = [{ include = "src" }]
@@ -24,6 +24,8 @@ langchain-core = "^0.3.0"
 langchain-community = "^0.3.0"
 langchain-huggingface = "^0.1.0"
 langchain-google-genai = "^2.1.0"
+langchain-anthropic = ">=0.3.0"
+langchain-openai = ">=0.2.0"
 langgraph = "^0.3.0"
 
 # Embeddings

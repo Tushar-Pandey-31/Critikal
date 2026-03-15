@@ -1,4 +1,4 @@
-# Penteam Architecture (Code-First Spec)
+# Critikal Architecture (Code-First Spec)
 
 Last verified from implementation in `src/` and tests in `tests/` on 2026-02-27.
 
@@ -6,7 +6,7 @@ This document is intentionally grounded in code behavior, not README status text
 
 ## 1) System Overview
 
-Penteam is a Python-based smart contract security pipeline that combines:
+Critikal is a Python-based smart contract security pipeline that combines:
 - repository ingestion + multi-strategy Slither compilation,
 - a NetworkX knowledge graph with layered security enrichments,
 - deterministic hotspot gating and graph query tools,

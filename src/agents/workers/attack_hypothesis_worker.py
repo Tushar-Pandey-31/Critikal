@@ -103,7 +103,7 @@ Return ONLY valid JSON. No markdown fences, no preamble, no explanation.
 
 
 class AttackHypothesisWorker(WorkerAgent):
-    model_name: str = "gemini-2.5-flash"
+    model_name: str = os.getenv("ATTACK_MODEL_NAME", "grok-3")
     MAX_ATTEMPTS: int = 4
 
     def __init__(self, graph, llm_client):
@@ -552,6 +552,10 @@ Known Attack Patterns: {recon_context.get("known_attack_patterns", [])}
                 parsed["evidence_node_ids"] = []
             parsed["attack_path"] = [normalize_node_id(p) for p in parsed["attack_path"] if isinstance(p, str)]
             parsed["evidence_node_ids"] = [normalize_node_id(n) for n in parsed["evidence_node_ids"] if isinstance(n, str)]
+
+            valid_nodes = set(self.graph.nodes())
+            parsed["attack_path"] = [n for n in parsed["attack_path"] if n in valid_nodes]
+            parsed["evidence_node_ids"] = [n for n in parsed["evidence_node_ids"] if n in valid_nodes]
 
             return parsed
         except Exception as e:

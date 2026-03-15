@@ -145,7 +145,7 @@ class FuzzGeneratorWorker(WorkerAgent):
 
     def _build_prompt(self, finding: Finding, poc_code: str, sources: dict[str, str], errors: list[str]) -> list[dict]:
         sys_msg = (
-            "You are Penteam's elite Fuzzing & Invariant Testing Engine.\n"
+            "You are Critikal's elite Fuzzing & Invariant Testing Engine.\n"
             "Your job is to write a Foundry stateless invariant test (Handler-based) or standard stateful fuzz test "
             "to demonstrate that a critical vulnerability exists.\n\n"
             "INVARIANT TEMPLATE GUIDELINES:\n"

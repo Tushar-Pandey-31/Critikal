@@ -40,6 +40,16 @@ try:
 except ImportError:
     ChatGoogleGenerativeAI = None
 
+try:
+    from langchain_anthropic import ChatAnthropic
+except ImportError:
+    ChatAnthropic = None
+
+try:
+    from langchain_openai import ChatOpenAI
+except ImportError:
+    ChatOpenAI = None
+
 
 def _finding_priority(f: Finding) -> tuple:
     """Sort key: highest confidence first, tie-break by severity (CRITICAL > HIGH > MEDIUM > LOW)."""
@@ -73,7 +83,7 @@ def _exploit_target_eligible(finding: Finding, graph) -> bool:
 #  COORDINATOR SYSTEM PROMPT
 # ════════════════════════════════════════════════════════════
 
-COORDINATOR_SYSTEM_PROMPT = """You are the Lead Security Coordinator for Penteam, an AI-assisted smart contract vulnerability hunting system.
+COORDINATOR_SYSTEM_PROMPT = """You are the Lead Security Coordinator for Critikal, an AI-assisted smart contract vulnerability hunting system.
 
 You are NOT an analyst. You are the ORCHESTRATOR. You do not read source code directly. Instead you:
   1. Assess risk signals from the Knowledge Graph
@@ -191,7 +201,7 @@ def set_tools(tools: List[Any]):
 
 
 def get_llm(
-    model_name: str = os.getenv("MODEL_NAME", "gemini-2.5-flash"),
+    model_name: str = os.getenv("MODEL_NAME", "gemini-2.5-pro"),
     temperature: float = 0.0,
     bind_tools: bool = True,
 ):
@@ -212,15 +222,17 @@ def _detect_provider(model_name: str) -> str:
     m = model_name.lower()
     if m.startswith("gemini") or m.startswith("models/gemini"):
         return "gemini"
-    if m.startswith("gpt") or m.startswith("o1") or m.startswith("o3"):
+    if m.startswith("gpt") or m.startswith("o1") or m.startswith("o3") or m.startswith("o4"):
         return "openai"
     if m.startswith("claude"):
         return "anthropic"
+    if m.startswith("grok"):
+        return "xai"
     return "gemini"  # default
 
 
 def get_worker_llm(
-    model_name: str = os.getenv("WORKER_MODEL_NAME", os.getenv("MODEL_NAME", "gemini-2.5-flash")),
+    model_name: str = os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"),
     temperature: float = 0.0,
 ):
     """
@@ -230,15 +242,11 @@ def get_worker_llm(
     The returned object is a RateLimitedLLM wrapper that transparently
     handles RPM throttling and API key rotation.
     """
-    if not ChatGoogleGenerativeAI:
-        raise ImportError("langchain-google-genai is not installed.")
-
     from src.utils.rate_limiter import get_rate_limiter, RateLimitedLLM
     from src.utils.key_pool import get_key_pool
 
     timeout = float(os.getenv("WORKER_LLM_TIMEOUT", "180"))
     max_retries = int(os.getenv("WORKER_LLM_MAX_RETRIES", "0"))
-    transport = os.getenv("WORKER_LLM_TRANSPORT", "rest")
     provider = _detect_provider(model_name)
     key_pool = get_key_pool()
 
@@ -249,18 +257,48 @@ def get_worker_llm(
         # No keys in pool — fall back to default env var behavior
         api_key = None
 
-    kwargs: dict[str, Any] = {
-        "model": model_name,
-        "temperature": temperature,
-        "timeout": timeout,
-        "request_timeout": timeout,
-        "max_retries": max_retries,
-        "transport": transport,
-    }
-    if api_key:
-        kwargs["google_api_key"] = api_key
-
-    llm = ChatGoogleGenerativeAI(**kwargs)
+    if provider == "anthropic":
+        if not ChatAnthropic:
+            raise ImportError("langchain-anthropic is not installed. Run: pip install langchain-anthropic")
+        llm = ChatAnthropic(
+            model=model_name,
+            temperature=temperature,
+            timeout=timeout,
+            api_key=api_key or os.getenv("ANTHROPIC_API_KEY"),
+        )
+    elif provider == "xai":
+        if not ChatOpenAI:
+            raise ImportError("langchain-openai is not installed.")
+        llm = ChatOpenAI(
+            model=model_name,
+            temperature=temperature,
+            timeout=timeout,
+            openai_api_key=api_key or os.getenv("XAI_API_KEY"),
+            openai_api_base="https://api.x.ai/v1",
+        )
+    elif provider == "openai":
+        if not ChatOpenAI:
+            raise ImportError("langchain-openai is not installed.")
+        llm = ChatOpenAI(
+            model=model_name,
+            temperature=temperature,
+            timeout=timeout,
+            openai_api_key=api_key or os.getenv("OPENAI_API_KEY"),
+        )
+    else:
+        # Default: Gemini
+        transport = os.getenv("WORKER_LLM_TRANSPORT", "rest")
+        kwargs: dict[str, Any] = {
+            "model": model_name,
+            "temperature": temperature,
+            "timeout": timeout,
+            "request_timeout": timeout,
+            "max_retries": max_retries,
+            "transport": transport,
+        }
+        if api_key:
+            kwargs["google_api_key"] = api_key
+        llm = ChatGoogleGenerativeAI(**kwargs)
 
     # Wrap with rate limiter
     limiter = get_rate_limiter()
@@ -274,11 +312,7 @@ def get_worker_llm(
     if api_key:
         wrapped.set_key(api_key)
 
-    logger.info(
-        f"[get_worker_llm] Created rate-limited worker LLM: {model_name} "
-        f"(provider={provider}, timeout={timeout}s, transport={transport}, "
-        f"key=...{api_key[-4:] if api_key else 'default'})"
-    )
+    logger.info(f"[get_worker_llm] {model_name} (provider={provider})")
     return wrapped
 
 
@@ -286,8 +320,8 @@ def get_worker_llm(
 #  SYNTHESIS & ESCALATION
 # ════════════════════════════════════════════════════════════
 
-def synthesize_worker_outputs(worker_outputs: List[Any]) -> List[dict]:
-    """Merge worker outputs into deduplicated, prioritised vulnerability leads."""
+def deduplicate_leads(worker_outputs: List[Any]) -> List[dict]:
+    """Deduplicate worker outputs by contract::function, keeping highest confidence per target."""
     if not worker_outputs:
         return []
 
@@ -379,14 +413,19 @@ async def coordinator_node(state: AgentState):
     messages = state.get("messages", [])
     worker_outputs = state.get("worker_outputs", [])
 
-    # ── LLM instances ──────────────────────────────────────
-    worker_llm = get_worker_llm()
+    # Per-worker model routing
+    recon_model = os.getenv("RECON_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"))
+    attack_model = os.getenv("ATTACK_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "grok-3"))
+    test_writer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "claude-sonnet-4-6"))
+
+    recon_llm = get_worker_llm(model_name=recon_model)
+    attack_llm = get_worker_llm(model_name=attack_model)
 
     # ── Step 1: Recon ──────────────────────────────────────
     etherscan = EtherscanClient()
     recon_worker = ReconWorker(
         graph=state["graph"],
-        llm_client=worker_llm,
+        llm_client=recon_llm,
         etherscan_client=etherscan,
     )
     recon_task = WorkerTask(
@@ -428,7 +467,7 @@ async def coordinator_node(state: AgentState):
         # ── Step 3: Attack Workers ─────────────────────────
         attack_worker = AttackHypothesisWorker(
             graph=state["graph"],
-            llm_client=worker_llm,
+            llm_client=attack_llm,
         )
 
         def _budget_for_priority(priority: str) -> int:
@@ -482,7 +521,7 @@ async def coordinator_node(state: AgentState):
                 continue
             
             out_conf = getattr(output, "confidence", 0)
-            if out_conf > 0:
+            if out_conf >= 65:
                 finding = Finding.from_worker_output(output, hotspot)
                 findings.append(finding)
 
@@ -516,7 +555,7 @@ async def coordinator_node(state: AgentState):
             )
 
     if worker_outputs:
-        synthesis = synthesize_worker_outputs(worker_outputs)
+        synthesis = deduplicate_leads(worker_outputs)
         escalate_human, reason = should_escalate_to_human(worker_outputs)
 
         worker_context = (
@@ -597,7 +636,7 @@ async def coordinator_node(state: AgentState):
     escalation = False
     if response is None:
         print("[Step 5] No LLM response — falling back to worker synthesis")
-        leads = synthesize_worker_outputs(worker_outputs) if worker_outputs else []
+        leads = deduplicate_leads(worker_outputs) if worker_outputs else []
         strategy = "LLM synthesis skipped (timeout or error)"
         # Build a dummy response for the return dict
         from langchain_core.messages import AIMessage
@@ -624,7 +663,7 @@ async def coordinator_node(state: AgentState):
             print(f"[Step 5] LLM synthesis complete: {len(leads)} lead(s)")
         except Exception as e:
             print(f"[Step 5] Parse error: {e}")
-            leads = synthesize_worker_outputs(worker_outputs) if worker_outputs else []
+            leads = deduplicate_leads(worker_outputs) if worker_outputs else []
             strategy = "Failed to parse LLM response"
 
     # ── Step 5b: DISABLED (Epic 2, Story 2.1) ───────────────

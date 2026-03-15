@@ -31,11 +31,11 @@ def render_markdown_report(
     total_proven = sum(v["proven"] for v in severity_counts.values())
 
     lines = [
-        f"# Penteam Security Report — {repo_name}",
+        f"# Critikal Security Report — {repo_name}",
         "",
         f"**Date:** {date_str}  ",
         f"**Repository:** {repo_url}  ",
-        "**Tool:** Penteam v2.0 (AI-Powered Smart Contract Security)",
+        "**Tool:** Critikal v2.0 (AI-Powered Smart Contract Security)",
         "",
         "---",
         "",

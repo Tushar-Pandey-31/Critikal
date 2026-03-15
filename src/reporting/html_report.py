@@ -43,7 +43,7 @@ def render_html_report(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Penteam Security Report — {e(repo_name)}</title>
+<title>Critikal Security Report — {e(repo_name)}</title>
 <style>
 {_CSS}
 </style>

@@ -13,6 +13,8 @@ Usage:
 """
 
 from __future__ import annotations
+from pydantic import SecretStr
+
 
 import asyncio
 import collections
@@ -348,7 +350,7 @@ class RateLimitedLLM:
             self._llm.openai_api_key = new_key
         # LangChain Anthropic
         elif hasattr(self._llm, "anthropic_api_key"):
-            self._llm.anthropic_api_key = new_key
+            self._llm.anthropic_api_key = SecretStr(new_key)
 
     @staticmethod
     def _is_rate_limit_error(e: Exception) -> bool:

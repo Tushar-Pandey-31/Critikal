@@ -15,12 +15,18 @@ from src.models.finding import Finding, FindingStatus
 @pytest.fixture
 def mock_graph():
     G = nx.DiGraph()
-    # Add a hotspot node
+    # Add hotspot node (dot-separated, as produced by graph builder)
     G.add_node("Vault.withdraw", type="function", contract="Vault", name="withdraw", risk_score=95)
     # Add a target state var
     G.add_node("Vault.balances", type="state_variable", contract="Vault", name="balances")
     # Add a call edge
     G.add_edge("Vault.withdraw", "Vault.balances", type="WRITES")
+    # Normalized variants (normalize_node_id converts "." to "::")
+    # These are needed so that _parse_response graph membership validation passes.
+    G.add_node("Vault::withdraw", type="function", contract="Vault", name="withdraw")
+    G.add_node("Vault::balances", type="state_variable", contract="Vault", name="balances")
+    G.add_node("Entry::func", type="function", contract="Entry", name="func")
+    G.add_node("Proxy::call", type="function", contract="Proxy", name="call")
     return G
 
 @pytest.fixture
