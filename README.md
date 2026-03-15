@@ -1,15 +1,15 @@
-# Penteam v3.0
+# Critikal v3.0
 
 **AI-Powered Smart Contract Security System**  
 *Human-in-the-loop • Multi-Agent • Graph-Powered • Pattern-Validated • Hallucination-Resistant*
 
-**Last Updated**: March 5, 2026
+**Last Updated**: March 14, 2026
 
 ## Overview & Vision
 
-Penteam is a **human-in-the-loop multi-agent system** designed for high-signal Web3 bug bounty hunting and smart contract security analysis.
+Critikal is a **human-in-the-loop multi-agent system** designed for high-signal Web3 bug bounty hunting and smart contract security analysis.
 
-Instead of a single generalist LLM, Penteam uses a **Mixture of Experts (MoE)** architecture where specialized agents work together under a central **Coordinator**. The system is built on a rich **Knowledge Graph** to ground every claim in deterministic facts, eliminating hallucinations.
+Instead of a single generalist LLM, Critikal uses a **Mixture of Experts (MoE)** architecture where specialized agents work together under a central **Coordinator**. The system is built on a rich **Knowledge Graph** to ground every claim in deterministic facts, eliminating hallucinations.
 
 **v3 "Hybrid-Agnostic" Architecture** combines broad pattern coverage (100+ regex detectors) with deep graph reasoning (taint, reachability, exploit chains) — patterns seed the search space, the graph proves the results.
 
@@ -25,17 +25,17 @@ Instead of a single generalist LLM, Penteam uses a **Mixture of Experts (MoE)** 
 
 ## Architecture
 
-Penteam v3 is organized into seven major phases with two new engines:
+Critikal v3 is organized into seven major phases with two new engines:
 
 | Phase | Name | Status |
 |:------|:-----|:-------|
 | 1–3 | Structural Intelligence Layer (Knowledge Graph + Security Signals + Exploit Feasibility) | ✅ Complete |
-| 4 | Multi-Agent Orchestration (Lead Coordinator + Workers) | ✅ Complete |
+| 4 | Multi-Agent Orchestration (Lead Coordinator + Workers + Multi-Provider Routing) | ✅ Complete |
 | 5 | Jury System (adversarial validation) | 🔄 In Progress |
-| 6 | Exploit Proof Layer (Phoenix Test Writer) | ✅ Complete |
+| 6 | Exploit Proof Layer (Phoenix Test Writer + Error Taxonomy) | ✅ Complete |
 | 7 | Reporting & Visualization (HTML Reports, Graph Exports) | ✅ Complete |
-| **New** | **Titan Pattern Engine** (100+ vulnerability detectors) | ✅ **Complete** |
-| **New** | **Phoenix Template-First Loop** (12 deterministic PoC templates) | ✅ **Complete** |
+| **New** | **Titan Pattern Engine** (30+ Categories, up to ETH-094) | ✅ **Complete** |
+| **New** | **API Key Pool** (Rotation, Cooldowns, Routing) | ✅ **Complete** |
 
 ---
 
@@ -105,16 +105,16 @@ flowchart TB
         direction TB
         KG --> CORD[Coordinator Node<br/>Lead Agent]:::agent
         
-        CORD -->|Step 1| RECON[Recon Worker<br/>Protocol Classification]:::agent
+        CORD -->|Step 1| RECON[Recon Worker<br/>Gemini-2.5-Flash]:::agent
         RECON -->|Security Dossier| CORD
         
         CORD -->|Step 2| HOTSPOT[Deterministic Gate<br/>get_high_risk_hotspots]:::core
         
         subgraph ATTACK [Parallel Hypothesis Generation]
             direction LR
-            AH1[AttackHypothesisWorker 1]:::agent
-            AH2[AttackHypothesisWorker 2]:::agent
-            AHn[AttackHypothesisWorker N]:::agent
+            AH1[Attack Worker 1<br/>Grok-3]:::agent
+            AH2[Attack Worker 2<br/>Grok-3]:::agent
+            AHn[Attack Worker N<br/>Grok-3]:::agent
         end
         
         HOTSPOT --> ATTACK
@@ -123,7 +123,7 @@ flowchart TB
         AHn --> FINDINGS
         
         FINDINGS -->|Structured Leads| CORD
-        CORD -->|Synthesized JSON| TW_TRIGGER[TestWriter Trigger]:::agent
+        CORD -->|Synthesized JSON| TW_TRIGGER[TestWriter Trigger<br/>Claude-3.5-Sonnet]:::agent
     end
 
     %% ───────────────────────────────────────────────────────────────
@@ -215,7 +215,10 @@ flowchart TB
   - External Call Reasoner: Risk assessment across `TOKEN_TRANSFER`, `ORACLE`, `UNTRUSTED_CONTRACT`, etc.
   - Contract tier classification (`CORE`, `FACTORY`, `LIBRARY`, `INFRA`) with tier-weighted impact scoring.
   - Read-only reentrancy risk detection across cross-contract view calls.
-  - **Pattern-validated signals** from the Titan Engine (30+ categories).
+  - **Negative Safety Signals**: High-confidence evidence used to suppress false positives.
+  - **SSA-Aware Access Control**: Dampened confidence for complex conditional permissioning.
+  - **Governance Classification**: Specialized logic for decision-making & voting protocols.
+  - **Pattern-validated signals** from the Titan Engine (30+ Categories).
 - Incorporates the **Economic Amplification Engine** capping dynamic economic distortions directly into scoring calculations.
 - Query API used by all agents (`get_high_risk_hotspots`, `get_function_context`, `get_pattern_hits`, etc.)
 
@@ -236,14 +239,18 @@ See **[Knowledge Graph Structure](#knowledge-graph-structure)** below for the co
   - **ERC-4337** (ETH-090/091): Account abstraction validation-execution confusion
   - **Uniswap V4** (ETH-094): Hook callback reentrancy
 - Produces `PatternHit` dataclasses — raw signals validated by the graph before scoring
-- **Key differentiator**: Unlike tools that report raw regex matches, Penteam validates every hit against the graph's taint analysis, reachability, and access control context to eliminate false positives
+- **Key differentiator**: Unlike tools that report raw regex matches, Critikal validates every hit against the graph's taint analysis, reachability, and access control context to eliminate false positives
 
 ### 3. Lead Coordinator
-- Pure orchestrator (never analyzes code directly)
-- Maintains global state using LangGraph
-- Spawns workers in parallel
-- Synthesizes findings and handles LLM synthesis fallbacks
-- Analyzes disagreement to compute `should_escalate_to_human()`
+- Pure orchestrator utilizing **LangGraph** for global state management.
+- **Multi-Provider Routing**: Dynamically assigns workers to specialized LLMs:
+    - `RECON_MODEL_NAME` (e.g. `gemini-2.5-flash`)
+    - `ATTACK_MODEL_NAME` (e.g. `grok-3`)
+    - `TEST_WRITER_MODEL_NAME` (e.g. `claude-3.5-sonnet`)
+- **API Key Pool**: Thread-safe rotating singleton managing `GEMINI_API_KEYS`, `OPENAI_API_KEYS`, and `ANTHROPIC_API_KEYS`.
+    - Automated round-robin rotation.
+    - Rate-limit (429) detection with configurable cooldowns (benchmarking).
+- Analyzes disagreement to compute `should_escalate_to_human()`.
 - Triggers **Phase 7** reporting execution via `ReportGenerator`.
 
 ### 4. Workers (Mixture of Experts)
@@ -261,16 +268,13 @@ See **[Knowledge Graph Structure](#knowledge-graph-structure)** below for the co
 - Safely handles API downtime and transient timeouts natively.
 
 **Test Writer Worker — Phoenix Loop** (v3 Upgrade)
-- **Attempt 1 (Template-First)**: Selects from **12 deterministic PoC templates** (`poc_templates.py`) based on vulnerability class — no LLM call needed:
-  - Reentrancy, Access Control, tx.origin, Oracle Manipulation
-  - Integer Overflow, Vault Inflation, Delegatecall, Signature Replay
-  - Selfdestruct, Stale Oracle, Fee-on-Transfer, DoS Loop
-- **Attempts 2-6 (LLM Refinement)**: Template errors + code seed the LLM context, giving it a concrete starting point instead of a blank slate
-- Generates Foundry test code using either **Modern (`^0.8.0`)** or **Bridge Mode (`deployCode()`)** for legacy projects (`0.5.x`-`0.7.x`).
-- Validates compiler output iteratively: maps exact errors (Cast fix, Interface omission) using strict Error Rules.
-- Safely detects falsification signals (e.g. hitting `already initialized` guards) to prevent retry loops.
-- Authenticity validation: Prevents LLM from passing tests by fabricating shadow mocks.
-- Automated import repair resolving missing `forge-std` contexts.
+- **Attempt 1 (Template-First)**: Selects from **12 deterministic PoC templates** (`poc_templates.py`) based on vulnerability class.
+- **Attempts 2-6 (LLM Refinement)**: Uses an **Error Taxonomy** to inject targeted fix guidelines for specific compiler errors (e.g. Error 2333, 6160, 5883).
+- **Authenticity Validation**: Prevents LLM from passing tests by redefining target contracts or fabricating shadow mocks.
+- **Guard Hit Detection**: Aborts retry loops when real contract protections (e.g. `Initializable`) are encountered.
+- **Timelock Support**: Automatically detects and bypasses time-locks using `vm.warp` injections.
+- **Bridge Mode**: Support for legacy projects (`0.5.x`-`0.7.x`) via `deployCode()` and `BridgeInterfaces.sol` generation.
+- **Import Repair**: Resolves file-path and dependency context issues automatically.
 - Uses `tempfile` isolated environments via `SandboxManager`.
 
 ### 5. Economic Amplification Engine
@@ -349,7 +353,7 @@ A function becomes a hotspot only if ALL conditions pass:
 ## Project Structure
 
 ```
-penteam/
+Critikal/
 ├── src/
 │   ├── main.py                         # CLI entry point
 │   ├── graph_builder.py                # Knowledge Graph construction (5400+ lines)
@@ -395,15 +399,15 @@ penteam/
 - **Orchestration**: LangGraph + LangChain
 - **Graph**: NetworkX
 - **Static Analysis**: Slither
-- **Pattern Scanning**: Custom regex engine (Titan, 670 lines)
+- **Pattern Scanning**: Custom regex engine (Titan, 670 lines, up to ETH-094)
 - **Testing**: Foundry (Forge)
 - **Vector DB**: ChromaDB
 - **Embeddings**: all-MiniLM-L6-v2
 - **LLMs**:
-  - Lead & most workers: Gemini 2.5 / 3.0 Flash/Pro
-  - Reasoning: GPT-5 / o3, Claude 4.6 Sonnet
+  - Lead & Multi-Agent Coordinator: `gemini-2.5-pro` (v3 default)
+  - Workers (Defaults): `gemini-2.5-flash` (Recon), `grok-3` (Attack), `claude-3.5-sonnet` (TestWriter)
 - **Models**: Pydantic for strict schemas
-- **Testing**: pytest (554 collected tests across 40 files)
+- **Testing**: pytest (573 collected tests across 40 files)
 
 ---
 
@@ -411,30 +415,36 @@ penteam/
 
 ```bash
 # 1. Clone & install
-git clone https://github.com/yourusername/penteam.git
-cd penteam
+git clone https://github.com/yourusername/Critikal.git
+cd Critikal
 pip install -e .
 
 # 2. Add API keys to .env
 GOOGLE_API_KEY=...
-XAI_API_KEY=...        # for Grok
-# OPENAI_API_KEY=...
+GOOGLE_API_KEYS=key1,key2,key3  # optional pool for rotation
+XAI_API_KEY=...                 # for Grok-3 (Attack Worker)
+ANTHROPIC_API_KEY=...           # for Claude-3.5-Sonnet (TestWriter)
 
-# 3. Run on any repo
+# 3. Configure Worker Models (defaults used if omitted)
+RECON_MODEL_NAME=gemini-2.5-flash
+ATTACK_MODEL_NAME=grok-3
+TEST_WRITER_MODEL_NAME=claude-3.5-sonnet
+
+# 4. Run on any repo
 python -m src.main --repo https://github.com/theredguild/damn-vulnerable-defi
 ```
 
 ## Current Status (March 5, 2026)
 
 - **Phase 1–3**: Complete (Rich Knowledge Graph, advanced security signals, Exploit Feasibility Validations, Economic Amplification Engine, **Titan Pattern Engine**)
-- **Phase 4**: Complete (MoE + Coordinator + Recon + Attack Hypothesis with resilient worker timeouts/crash safety)
+- **Phase 4**: Complete (MoE + Coordinator + Recon + Attack Hypothesis with **Multi-Provider Routing** and API Key Pooling)
 - **Phase 5**: Partially Complete (Jury models validation architecture in progress)
 - **Phase 6**: Complete! **Phoenix Test Writer** with template-first loop, bridge-mode testing, guard hit aborts, error taxonomy inference, and full sandbox automations preventing fake test proofs.
 - **Phase 7**: Complete (Structured HTML output, detailed graphing representations via `ReportGenerator`)
 - **Ingestion Engine v2**: Complete
-- **Titan Pattern Engine**: Complete (30+ detectors, graph-validated, integrated into scoring)
+- **Titan Pattern Engine**: Complete (30+ Categories, graph-validated, integrated into scoring)
 - **Phoenix Template Library**: Complete (12 deterministic PoC templates for instant exploit generation)
-- **Total Tests**: 554 collected across 40 test files
+- **Total Tests**: 573 collected across 40 test files
 
 ## Roadmap
 
@@ -456,5 +466,5 @@ python -m src.main --repo https://github.com/theredguild/damn-vulnerable-defi
 
 ---
 
-*Penteam — Turning AI into a real smart contract security weapon.*  
+*Critikal — Turning AI into a real smart contract security weapon.*  
 *Built with ❤️ for the Web3 security community.*

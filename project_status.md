@@ -1,4 +1,4 @@
-# Penteam Project Status
+# Critikal Project Status
 
 **Last Updated**: February 24, 2026
 
@@ -16,7 +16,7 @@
 - Finding timestamps now use timezone-aware UTC serialization.
 
 ## Overview
-**Penteam** is an AI-assisted smart contract security system designed for "Plan-and-Execute" vulnerability hunting. It combines Knowledge Graphs (for code structure understanding) and Retrieval-Augmented Generation (RAG) (for security knowledge retrieval).
+**Critikal** is an AI-assisted smart contract security system designed for "Plan-and-Execute" vulnerability hunting. It combines Knowledge Graphs (for code structure understanding) and Retrieval-Augmented Generation (RAG) (for security knowledge retrieval).
 
 ---
 
