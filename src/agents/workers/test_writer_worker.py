@@ -1883,6 +1883,43 @@ Hypothesis: {finding.hypothesis}
                         exploit_sequence=task.context.get("exploit_sequence"),
                     )
                 prompt_chars = sum(len(m.get("content", "")) for m in prompt)
+
+                # Inject jury brief if available — this is the Judge's synthesized attack spec
+                jury_brief = task.context.get("jury_brief", {})
+                if jury_brief and prompt:
+                    brief_lines = [
+                        "\n\n## JURY-VALIDATED ATTACK BRIEF",
+                        "This finding has been independently validated by 3 security researchers.",
+                        "Use this brief as your PRIMARY guide — it supersedes the general hypothesis.",
+                        "",
+                        f"WHAT TO PROVE: {jury_brief.get('what_to_prove', '')}",
+                        "",
+                        "ATTACK STEPS (verified by independent attacker juror):",
+                    ]
+                    for step in jury_brief.get("attack_steps", []):
+                        brief_lines.append(f"  {step}")
+
+                    brief_lines += [
+                        "",
+                        "VERIFIED PRECONDITIONS (confirmed in source code):",
+                    ]
+                    for pc in jury_brief.get("preconditions_verified", []):
+                        brief_lines.append(f"  ✓ {pc}")
+
+                    brief_lines += [
+                        "",
+                        f"WHAT SUCCESS LOOKS LIKE: {jury_brief.get('what_success_looks_like', '')}",
+                        f"WATCH OUT FOR: {jury_brief.get('watch_out_for', '')}",
+                        f"DEPLOYMENT NOTES: {jury_brief.get('deployment_notes', '')}",
+                        f"SUGGESTED APPROACH: {jury_brief.get('suggested_approach', 'forge_test')}",
+                        "",
+                        "FULL ATTACK SCENARIO (from attacker juror):",
+                        jury_brief.get("attacker_scenario", ""),
+                    ]
+
+                    # Append to the last (user) message content
+                    prompt[-1]["content"] += "\n".join(brief_lines)
+
                 print(f"  [TestWriter] Prompt built: {len(prompt)} messages, {prompt_chars} total chars (RAG={'skip' if attempts==1 else 'on'})")
 
                 try:
@@ -1962,7 +1999,27 @@ Hypothesis: {finding.hypothesis}
                             logger.info(f"[TestWriter] Attempt {attempts}: Missing 'function test_exploit()' in generated code.")
                             if funcs:
                                 logger.info(f"[TestWriter]   Found functions: {funcs}")
-                            error_history.append(f"Code you wrote:\n```solidity\n{test_code_generated}\n```\n\nGenerated test must include function test_exploit() exactly.")
+                            error_history.append(
+                                f"❌ REJECTED — MISSING test_exploit() ❌\n\n"
+                                f"Your previous output was AUTOMATICALLY REJECTED because it did not contain "
+                                f"'function test_exploit() public'.\n\n"
+                                f"YOU WROTE ONLY INTERFACES/MOCKS WITHOUT A TEST FUNCTION. THIS IS WRONG.\n\n"
+                                f"REQUIRED OUTPUT STRUCTURE (non-negotiable):\n"
+                                f"```solidity\n"
+                                f"pragma solidity ^0.8.0;\n"
+                                f"import \"forge-std/Test.sol\";\n"
+                                f"// ... any helper contracts ...\n"
+                                f"contract ExploitTest is Test {{\n"
+                                f"    function setUp() public {{ /* deploy contracts */ }}\n"
+                                f"    function test_exploit() public {{ /* THE ATTACK */ }}\n"  
+                                f"}}\n"
+                                f"```\n\n"
+                                f"Your previous rejected code (first 300 chars):\n"
+                                f"```solidity\n{test_code_generated[:300]}\n```\n\n"
+                                f"DO NOT write only interfaces. DO NOT write only mock contracts. "
+                                f"The ONLY acceptable output is a complete test file ending with "
+                                f"contract ExploitTest is Test {{ ... function test_exploit() ... }}"
+                            )
                             continue
 
                         if not is_legacy and not use_two_file_mode:

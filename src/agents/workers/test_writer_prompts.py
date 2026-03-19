@@ -156,11 +156,46 @@ FORMAT:
   - Pragma matching the real contract (or ^0.8.0)
   - Real imports (not mocks) — from IMPORT CHEAT SHEET only
   - Any helper/attacker contracts at FILE LEVEL before ExploitTest
-  - Test contract inheriting from `Test`
-  - `setUp()` deploying real contracts
-  - `test_exploit()` with the attack
+  - contract ExploitTest is Test { ... }
+  - setUp() deploying real contracts
+  - test_exploit() with the attack
 - Only output Solidity code in a ```solidity block.
 - NO explanations outside the code block.
+
+═══════════════════════════════════════════════════════
+ABSOLUTE REQUIREMENT — YOUR OUTPUT WILL BE REJECTED IF VIOLATED
+═══════════════════════════════════════════════════════
+
+Your output MUST contain this exact structure:
+
+contract ExploitTest is Test {
+    function setUp() public { ... }
+    function test_exploit() public { ... }   ← THIS IS MANDATORY
+}
+
+If your output does not contain 'function test_exploit()' it will be
+automatically rejected and you will be asked to retry.
+Do NOT write only mock contracts or only interfaces.
+Do NOT write setUp() without test_exploit().
+The test runner executes: forge test --match-test test_exploit
+If test_exploit() does not exist, NOTHING runs.
+
+═══════════════════════════════════════════════════════
+FINAL REMINDER — READ THIS LAST
+═══════════════════════════════════════════════════════
+
+No matter how complex the protocol is, no matter how many
+interfaces and abstract contracts exist, your output MUST
+end with:
+
+    contract ExploitTest is Test {
+        function setUp() public { ... }
+        function test_exploit() public { ... }
+    }
+
+If you write ONLY interfaces or ONLY mock contracts without
+ExploitTest and test_exploit(), your output is worthless.
+The test runner cannot run anything without test_exploit().
 """
 
 BRIDGE_MODE_SYSTEM_PROMPT = """You are an expert smart-contract exploit developer using Foundry.

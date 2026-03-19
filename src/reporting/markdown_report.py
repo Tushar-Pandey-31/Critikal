@@ -10,6 +10,7 @@ def render_markdown_report(
     findings: list,
     leads: list[dict],
     token_usage: dict | None = None,
+    jury_rejected: list | None = None,
 ) -> str:
     """Returns a Markdown report suitable for HackerOne / Immunefi submission."""
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
@@ -52,6 +53,19 @@ def render_markdown_report(
         c = severity_counts[sev]
         lines.append(f"| {sev} | {c['total']} | {c['proven']} |")
 
+    jury_confirmed = sum(1 for f in findings if getattr(f, "jury_decision", "") in ("CONFIRMED", "CONFIRMED_UNPROVABLE", "ESCALATE"))
+    jury_rejected_count = len(jury_rejected) if jury_rejected else 0
+    jury_unprovable_count = sum(1 for f in findings if getattr(f, "jury_decision", "") == "CONFIRMED_UNPROVABLE")
+
+    if jury_confirmed + jury_rejected_count > 0:
+        lines.append(f"\n### Jury Validation Summary\n")
+        lines.append(f"| Status | Count |")
+        lines.append(f"|--------|-------|")
+        lines.append(f"| Confirmed | {jury_confirmed - jury_unprovable_count} |")
+        lines.append(f"| Confirmed (unprovable in isolation) | {jury_unprovable_count} |")
+        lines.append(f"| Rejected (false positives) | {jury_rejected_count} |")
+        lines.append(f"| Escalated (human review needed) | {sum(1 for f in findings if getattr(f, 'jury_decision', '') == 'ESCALATE')} |")
+
     lines += ["", "---", ""]
 
     for idx, finding in enumerate(findings, start=1):
@@ -67,11 +81,42 @@ def render_markdown_report(
             f"**Function:** {finding.affected_function}  ",
             f"**Confidence:** {confidence_label}  ",
             "",
+        ]
+        lines += [
             "### Description",
             "",
             finding.hypothesis or "No hypothesis available.",
             "",
         ]
+
+        # Add jury verdict if jury was run
+        jury_decision = getattr(finding, "jury_decision", "")
+        if jury_decision:
+            jury_emoji = {
+                "CONFIRMED": "✅",
+                "CONFIRMED_UNPROVABLE": "⚠️",
+                "ESCALATE": "🔍",
+                "REJECTED": "❌",
+            }.get(jury_decision, "")
+
+            lines.append(f"\n### Jury Verdict: {jury_emoji} {jury_decision}\n")
+            
+            vote_summary = getattr(finding, "jury_vote_summary", "")
+            if vote_summary:
+                lines.append(f"**Votes:** {vote_summary}\n")
+            
+            jury_reasoning = getattr(finding, "jury_reasoning", "")
+            if jury_reasoning:
+                lines.append(f"**Reasoning:** {jury_reasoning}\n")
+
+            if jury_decision == "CONFIRMED_UNPROVABLE":
+                unprovable_reason = getattr(finding, "jury_unprovable_reason", "")
+                if unprovable_reason:
+                    lines.append(f"**Why unprovable in isolation:** {unprovable_reason}\n")
+                lines.append(f"**Recommendation:** Test with mainnet fork or manual review\n")
+
+            if jury_decision == "ESCALATE":
+                lines.append(f"**Action required:** Human review recommended — jurors disagreed\n")
 
         if finding.attack_path:
             path_str = " → ".join(
@@ -113,6 +158,20 @@ def render_markdown_report(
             ]
 
         lines += ["---", ""]
+
+    # Add jury rejected findings section if any
+    if jury_rejected:
+        lines.append("\n---\n")
+        lines.append("## Jury-Rejected Findings\n")
+        lines.append(
+            "The following findings were identified by static analysis and hypothesis generation "
+            "but rejected by the Jury as false positives or invalid:\n"
+        )
+        for finding in jury_rejected:
+            lines.append(f"\n### ~~{finding.affected_function}~~ — REJECTED\n")
+            lines.append(f"**Contract:** {finding.affected_contract}\n")
+            lines.append(f"**Votes:** {getattr(finding, 'jury_vote_summary', '')}\n")
+            lines.append(f"**Rejection reason:** {getattr(finding, 'jury_rejection_reason', '')}\n")
 
     # ── Token Usage & Cost Section ──
     if token_usage:

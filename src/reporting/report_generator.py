@@ -10,13 +10,14 @@ from src.utils.node_ids import normalize_node_id
 
 
 class ReportGenerator:
-    def __init__(self, repo_url, repo_name, findings, leads, graph, token_usage=None):
+    def __init__(self, repo_url, repo_name, findings, leads, graph, token_usage=None, jury_rejected=None):
         self.repo_url = repo_url
         self.repo_name = repo_name or "unknown"
         self.findings = findings or []
         self.leads = leads or []
         self.graph = graph
         self.token_usage = token_usage
+        self.jury_rejected = jury_rejected or []
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.output_dir = Path(f"data/reports/{self.repo_name}_{timestamp}")
 
@@ -43,6 +44,7 @@ class ReportGenerator:
                 self.repo_url, self.repo_name,
                 self.findings, self.leads,
                 token_usage=self.token_usage,
+                jury_rejected=self.jury_rejected,
             ),
             encoding="utf-8",
         )

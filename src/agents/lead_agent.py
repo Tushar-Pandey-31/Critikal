@@ -35,6 +35,14 @@ from src.utils.node_ids import normalize_node_id
 from src.tools.etherscan_client import EtherscanClient
 import asyncio
 
+# Jury system
+JURY_ENABLED = os.getenv("JURY_ENABLED", "false").lower() == "true"
+JURY_CONCURRENCY = int(os.getenv("JURY_CONCURRENCY", "5"))
+JURY_SKEPTIC_MODEL = os.getenv("JURY_SKEPTIC_MODEL", "claude-sonnet-4-6")
+JURY_ATTACKER_MODEL = os.getenv("JURY_ATTACKER_MODEL", "grok-3")
+JURY_AUDITOR_MODEL = os.getenv("JURY_AUDITOR_MODEL", "gpt-4o")
+JURY_JUDGE_MODEL = os.getenv("JURY_JUDGE_MODEL", "gemini-2.5-pro")
+
 try:
     from langchain_google_genai import ChatGoogleGenerativeAI
 except ImportError:
@@ -532,6 +540,121 @@ async def coordinator_node(state: AgentState):
 
         print(f"[Step 4] Findings that passed filter: {len(findings)}")
 
+    # ── Step 4.5: Jury Validation (gated by JURY_ENABLED) ─────────
+    jury_briefs: dict[str, dict] = {}
+
+    if JURY_ENABLED and findings:
+        print(f"[Step 4.5] Jury enabled — evaluating {len(findings)} finding(s)...")
+
+        from src.agents.workers.jury_worker import JuryCoordinator
+        from src.agents.workers.jury_context import build_jury_context_package
+
+        skeptic_llm = get_worker_llm(model_name=JURY_SKEPTIC_MODEL)
+        attacker_llm = get_worker_llm(model_name=JURY_ATTACKER_MODEL)
+        auditor_llm = get_worker_llm(model_name=JURY_AUDITOR_MODEL)
+        judge_llm = get_worker_llm(model_name=JURY_JUDGE_MODEL)
+
+        jury = JuryCoordinator(
+            skeptic_llm=skeptic_llm,
+            attacker_llm=attacker_llm,
+            auditor_llm=auditor_llm,
+            judge_llm=judge_llm,
+            skeptic_model=JURY_SKEPTIC_MODEL,
+            attacker_model=JURY_ATTACKER_MODEL,
+            auditor_model=JURY_AUDITOR_MODEL,
+            judge_model=JURY_JUDGE_MODEL,
+        )
+
+        _jury_sem = asyncio.Semaphore(JURY_CONCURRENCY)
+
+        async def _run_jury_for_finding(finding, hotspot):
+            async with _jury_sem:
+                raw_source = ""
+                try:
+                    ctx = get_function_context(state["graph"], finding.hotspot_node_id)
+                    raw_source = ctx.get("source_code") or ctx.get("code") or ""
+                except Exception:
+                    pass
+
+                context_package = build_jury_context_package(
+                    finding=finding,
+                    hotspot=hotspot,
+                    graph=state["graph"],
+                    raw_source_code=raw_source,
+                )
+
+                try:
+                    return finding, await jury.evaluate(context_package)
+                except Exception as e:
+                    logger.warning(f"[Jury] Failed for {finding.hotspot_node_id}: {e}")
+                    return finding, None
+
+        hotspot_map = {h.node_id: h for h in hotspots}
+        jury_tasks = []
+        for finding in findings:
+            hotspot = hotspot_map.get(finding.hotspot_node_id)
+            if hotspot:
+                jury_tasks.append(_run_jury_for_finding(finding, hotspot))
+
+        jury_results = await asyncio.gather(*jury_tasks, return_exceptions=True)
+
+        confirmed_findings = []
+        for result in jury_results:
+            if isinstance(result, Exception):
+                continue
+            finding, judge_output = result
+            if judge_output is None:
+                confirmed_findings.append(finding)
+                continue
+
+            decision = judge_output.decision
+
+            if decision == "CONFIRMED":
+                confirmed_findings.append(finding)
+                jury_briefs[finding.hotspot_node_id] = judge_output.testwriter_brief
+                # Store jury result on finding for report
+                finding.jury_decision = "CONFIRMED"
+                finding.jury_vote_summary = judge_output.vote_summary
+                finding.jury_reasoning = judge_output.reasoning
+                print(f"  [Jury] ✓ CONFIRMED: {finding.hotspot_node_id}")
+
+            elif decision == "CONFIRMED_UNPROVABLE":
+                confirmed_findings.append(finding)
+                setattr(finding, "jury_unprovable", True)
+                setattr(finding, "jury_unprovable_reason", judge_output.unprovable_reason)
+                finding.jury_decision = "CONFIRMED_UNPROVABLE"
+                finding.jury_vote_summary = judge_output.vote_summary
+                finding.jury_reasoning = judge_output.reasoning
+                print(f"  [Jury] ~ CONFIRMED_UNPROVABLE: {finding.hotspot_node_id} — {judge_output.unprovable_reason[:80]}")
+
+            elif decision == "ESCALATE":
+                confirmed_findings.append(finding)
+                setattr(finding, "jury_escalate", True)
+                finding.jury_decision = "ESCALATE"
+                finding.jury_vote_summary = judge_output.vote_summary
+                finding.jury_reasoning = judge_output.reasoning
+                print(f"  [Jury] ? ESCALATE: {finding.hotspot_node_id}")
+
+            else:  # REJECTED
+                # Store rejection info before dropping
+                finding.jury_decision = "REJECTED"
+                finding.jury_vote_summary = judge_output.vote_summary
+                finding.jury_reasoning = judge_output.reasoning
+                finding.jury_rejection_reason = judge_output.rejection_reason
+                print(f"  [Jury] ✗ REJECTED: {finding.hotspot_node_id} — {judge_output.rejection_reason[:80]}")
+                # Add to rejected list for report — don't add to confirmed_findings
+                if not hasattr(state, "_jury_rejected"):
+                    state["jury_rejected_findings"] = []
+                state["jury_rejected_findings"].append(finding)
+
+        rejected_count = len(findings) - len(confirmed_findings)
+        print(f"[Step 4.5] Jury complete: {len(confirmed_findings)} confirmed, {rejected_count} rejected")
+        findings = confirmed_findings
+
+    else:
+        if not JURY_ENABLED:
+            print(f"[Step 4.5] Jury disabled (set JURY_ENABLED=true to enable)")
+
     # ── Step 5: Coordinator LLM Synthesis ─────────────────
     # The programmatic pipeline (Recon → Hotspots → Attack → TestWriter) has
     # already run above. The LLM's ONLY job here is to produce the final JSON
@@ -706,7 +829,11 @@ async def coordinator_node(state: AgentState):
 
     # Sort findings by confidence descending; tie-break by severity (highest first)
     sorted_findings = sorted(
-        [f for f in findings if f.confidence >= 65 and f.severity_estimate in ("CRITICAL", "HIGH", "MEDIUM") and _exploit_target_eligible(f, state.get("graph"))],
+        [f for f in findings
+         if f.confidence >= 65
+         and f.severity_estimate in ("CRITICAL", "HIGH", "MEDIUM")
+         and _exploit_target_eligible(f, state.get("graph"))
+         and not getattr(f, "jury_unprovable", False)],
         key=_finding_priority,
     )
 
@@ -776,6 +903,8 @@ async def coordinator_node(state: AgentState):
                 "repo_path": linux_repo_path,  # shared Linux-fs copy
                 "contract_signatures": contract_signatures,
                 "exploit_sequence": exploit_seq,
+                "jury_brief": jury_briefs.get(finding.hotspot_node_id, {}),
+                "jury_unprovable": getattr(finding, "jury_unprovable", False),
             }
         )
         test_tasks.append(task)
@@ -944,6 +1073,7 @@ async def coordinator_node(state: AgentState):
             leads=leads,
             graph=state["graph"],
             token_usage=token_usage,
+            jury_rejected=state.get("jury_rejected_findings", []),
         )
         report_paths = reporter.generate()
         print(f"\n{'='*60}")

@@ -24,6 +24,8 @@ CONFIDENCE_THRESHOLDS = {
     "privilege_escalation": 35,
     "unprotected_mutator": 30,
     "cei_violation": 35,
+    "invariant_violation": 55,
+    "flash_loan_amplification": 50,
     "unknown": 40,
 }
 
@@ -55,7 +57,7 @@ You MUST always produce a hypothesis — never return confidence=0 unless the fu
 Return ONLY valid JSON. No markdown fences, no preamble, no explanation.
 
 {
-  "vulnerability_class": "reentrancy" | "unprotected_mutator" | "privilege_escalation" | "cei_violation" | "unknown",
+  "vulnerability_class": "reentrancy" | "unprotected_mutator" | "privilege_escalation" | "cei_violation" | "invariant_violation" | "flash_loan_amplification" | "unknown",
   "title": "Short one-line title of the vulnerability",
   "hypothesis": "2-4 sentence narrative of HOW to exploit this. Be specific about the attack steps.",
   "attack_path": ["ContractName::functionName", "ContractName::otherFunction"],
@@ -99,6 +101,16 @@ Return ONLY valid JSON. No markdown fences, no preamble, no explanation.
 - Graph signal only, no source code = 45-65
 - Speculative based on function name alone = 35-50
 - NEVER return confidence < 35 (use 35 as floor if any signal exists)
+
+**INVARIANT_VIOLATION** (invariant_violation_count > 0):
+- Accounting invariant broken across functions (e.g., balance updated without supply, index not refreshed)
+- Common patterns: supply/balance desync, mint without burn, share price manipulation, reward index skipping
+- confidence >= 65 if invariant_violation_score >= 40 and function is external entry
+
+**FLASH_LOAN_AMPLIFICATION** (flash_loan_risk=True):
+- Function is vulnerable to economic manipulation via flash-loaned capital
+- Typical factors: spot oracle dependency, ratio math with user input, collateral checks, price-sensitive external calls
+- confidence >= 60 if flash_loan_score >= 50 and function reads price oracle
 """
 
 
@@ -285,11 +297,25 @@ class AttackHypothesisWorker(WorkerAgent):
             "signature_includes_nonce": hotspot.signals.get("signature_includes_nonce", False),
             "signature_marks_used": hotspot.signals.get("signature_marks_used", False),
             "signature_replay_risk": hotspot.signals.get("signature_replay_risk", False),
+            "flash_loan_risk": hotspot.signals.get("flash_loan_risk", False),
             "contract_tier": hotspot.tier,
             "structural_score": hotspot.structural_score,
             "exploitability_score": hotspot.exploitability_score,
             "impact_score": hotspot.impact_score,
         }
+
+        # Phase 1.2: Invariant violation details
+        invariant_violations = node_data.get("invariant_violations", [])
+        if invariant_violations:
+            context["invariant_violations"] = invariant_violations
+            context["invariant_violation_count"] = node_data.get("invariant_violation_count", 0)
+            context["invariant_violation_score"] = node_data.get("invariant_violation_score", 0)
+
+        # Phase 2.1: Flash loan risk details
+        if node_data.get("flash_loan_risk", False):
+            context["flash_loan_risk"] = True
+            context["flash_loan_score"] = node_data.get("flash_loan_score", 0)
+            context["flash_loan_risk_factors"] = node_data.get("flash_loan_risk_factors", {})
 
         if hotspot.signals.get("can_escalate_privileges"):
             try:
@@ -329,6 +355,15 @@ class AttackHypothesisWorker(WorkerAgent):
         elif signals.get("can_escalate_privileges"):
             expected_class = "privilege_escalation"
 
+        # Phase 1.3: Invariant violation class
+        invariant_violations = graph_context.get("invariant_violations", [])
+        if invariant_violations and expected_class == "unknown":
+            expected_class = "invariant_violation"
+
+        # Phase 2.2: Flash loan amplification class
+        if graph_context.get("flash_loan_risk") and expected_class == "unknown":
+            expected_class = "flash_loan_amplification"
+
         user_content = f"""## Target Hotspot
 Contract: {hotspot.contract}
 Function: {hotspot.function}
@@ -355,6 +390,7 @@ Expected Vulnerability Class (from static analysis): {expected_class}
 - division_before_multiplication: {signals.get("division_before_multiplication")}
 - unchecked_with_state_write: {signals.get("unchecked_with_state_write")}
 - contract_tier: {signals.get("contract_tier", "INFRA")}
+- flash_loan_risk: {signals.get("flash_loan_risk", False)}
 """
 
         if signals.get("oracle_manipulation_risk"):
@@ -423,6 +459,43 @@ Classify as ARITHMETIC_PRECISION. Check if the precision loss or overflow can be
 The static analyzer has identified the following multi-step exploit path:
 {steps_text}
 Use this chain to guide your hypothesis — each step is a verified reachable call.
+"""
+
+        # Phase 1.3: Invariant violation section
+        invariant_violations = graph_context.get("invariant_violations", [])
+        if invariant_violations:
+            inv_lines = []
+            for v in invariant_violations:
+                inv_lines.append(f"  - [{v.get('severity', '?')}] {v.get('type', '?')}: {v.get('description', '')} ({v.get('invariant_id', '')})")
+            user_content += f"""
+## INVARIANT VIOLATIONS DETECTED
+The static analyzer detected the following cross-function invariant violations in this function:
+{chr(10).join(inv_lines)}
+
+Invariant violation score: {graph_context.get('invariant_violation_score', 0)}
+These invariants were verified across ALL functions in the contract — if flagged, the accounting is provably inconsistent.
+Classify as INVARIANT_VIOLATION if the violation is exploitable. Confidence >= 65 if score >= 40.
+"""
+
+        # Phase 2.2: Flash loan amplification section
+        if graph_context.get("flash_loan_risk"):
+            fl_factors = graph_context.get("flash_loan_risk_factors", {})
+            active_factors = [k for k, v in fl_factors.items() if v]
+            user_content += f"""
+## FLASH LOAN AMPLIFICATION RISK DETECTED
+This function is vulnerable to economic manipulation via flash-loaned capital.
+
+Active risk factors: {', '.join(active_factors)}
+Flash loan score: {graph_context.get('flash_loan_score', 0)}
+
+Standard flash loan attack pattern:
+1. Attacker borrows large capital via flash loan (Aave/dYdX/Balancer)
+2. Attacker uses capital to manipulate on-chain state this function depends on
+3. Attacker calls this function — it makes decisions based on manipulated state
+4. Attacker profits from price-dependent outcome
+5. Attacker repays flash loan in same transaction
+
+Classify as FLASH_LOAN_AMPLIFICATION if the function makes price-dependent decisions. Confidence >= 60 if score >= 50.
 """
 
         # Improvement 3c: State variable sensitivity

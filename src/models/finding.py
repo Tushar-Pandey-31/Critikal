@@ -37,6 +37,15 @@ class Finding:
     title: str | None
     risk_score: int = 0
     status: FindingStatus = FindingStatus.UNCONFIRMED
+    # Jury system fields — all optional, only populated when JURY_ENABLED=true
+    jury_decision: str = ""
+    jury_vote_summary: str = ""
+    jury_unprovable: bool = False
+    jury_unprovable_reason: str = ""
+    jury_escalate: bool = False
+    jury_brief: dict = field(default_factory=dict)
+    jury_reasoning: str = ""
+    jury_rejection_reason: str = ""
 
     @classmethod
     def from_worker_output(cls, output: WorkerOutput, hotspot: Hotspot) -> Finding:

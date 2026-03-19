@@ -534,3 +534,221 @@ class TestReadOnlyReentrancy:
 
         self._run_with_read_only_detection(g)
         assert g.nodes[f]["read_only_reentrancy_risk"] is True
+
+
+# ================================================================
+# Helper for CALLS edges (needed for transitive invariant tests)
+# ================================================================
+
+def _calls(g: nx.DiGraph, caller_fid: str, callee_fid: str):
+    g.add_edge(caller_fid, callee_fid, relationship="CALLS")
+
+
+# ================================================================
+# Phase 1.1 Tests — Usage-Pattern Role Inference
+# ================================================================
+
+class TestUsagePatternRoleInference:
+    """Tests for _infer_roles_from_usage_patterns()."""
+
+    def test_usage_pattern_upgrades_unknown_to_supply(self):
+        """Variable written by function containing _mint() gets SUPPLY role."""
+        g = nx.DiGraph()
+        _add_contract(g, "Token")
+        v = _add_var(g, "Token", "totalCount")  # Not a supply-like name
+        f = _add_func(g, "Token", "createTokens", source_code="function createTokens() { _mint(msg.sender, amount);}")
+        _writes(g, f, v)
+        _run_ds4_ds5_ds6(g)
+
+        assert g.nodes[v]["accounting_role"] == "SUPPLY"
+        assert g.nodes[v]["role_inference_method"] == "usage_pattern"
+
+    def test_usage_pattern_upgrades_unknown_to_balance(self):
+        """Variable written by function containing msg.sender gets BALANCE role."""
+        g = nx.DiGraph()
+        _add_contract(g, "Token")
+        v = _add_var(g, "Token", "userCount")  # Not a balance-like name
+        f = _add_func(g, "Token", "transfer", source_code="function transfer(address to) { userCount[msg.sender] -= amount;}")
+        _writes(g, f, v)
+        _run_ds4_ds5_ds6(g)
+
+        assert g.nodes[v]["accounting_role"] == "BALANCE"
+        assert g.nodes[v]["role_inference_method"] == "usage_pattern"
+
+    def test_usage_pattern_does_not_downgrade_name_inferred(self):
+        """Already-inferred roles from name are NOT downgraded by usage patterns."""
+        g = nx.DiGraph()
+        _add_contract(g, "Token")
+        v = _add_var(g, "Token", "totalSupply")  # Name-inferred as SUPPLY
+        f = _add_func(g, "Token", "foo", source_code="function foo() { x += 1; }")
+        _writes(g, f, v)
+        _run_ds4_ds5_ds6(g)
+
+        assert g.nodes[v]["accounting_role"] == "SUPPLY"
+        assert g.nodes[v]["role_inference_method"] == "name"
+
+
+# ================================================================
+# Phase 1.2 Tests — Cross-Function Invariant Violation Detection
+# ================================================================
+
+class TestInvariantViolationDetection:
+    """Tests for _detect_invariant_violations()."""
+
+    def test_supply_balance_desync_flagged(self):
+        """Function that writes BALANCE without writing SUPPLY gets flagged."""
+        g = nx.DiGraph()
+        _add_contract(g, "Vault")
+        supply_v = _add_var(g, "Vault", "totalSupply")
+        balance_v = _add_var(g, "Vault", "balances")
+
+        # This function writes balance but not supply — violation
+        f = _add_func(g, "Vault", "directWithdraw", source_code="function directWithdraw() {}")
+        _writes(g, f, balance_v)
+
+        _run_ds4_ds5_ds6(g)
+
+        violations = g.nodes[f].get("invariant_violations", [])
+        assert len(violations) >= 1
+        assert any(v["type"] == "SUPPLY_BALANCE_DESYNC" for v in violations)
+
+    def test_supply_balance_desync_not_flagged_when_transitive(self):
+        """Function that calls a function which writes SUPPLY should NOT get flagged."""
+        g = nx.DiGraph()
+        _add_contract(g, "Vault")
+        supply_v = _add_var(g, "Vault", "totalSupply")
+        balance_v = _add_var(g, "Vault", "balances")
+
+        # Internal function that writes supply
+        internal = _add_func(g, "Vault", "_updateSupply",
+                             is_external_entry=False,
+                             source_code="function _updateSupply() {}")
+        _writes(g, internal, supply_v)
+
+        # External function writes balance AND calls _updateSupply
+        f = _add_func(g, "Vault", "withdraw",
+                      source_code="function withdraw() {}",
+                      propagated_state_variables=["Vault::totalSupply"])
+        _writes(g, f, balance_v)
+        _calls(g, f, internal)
+
+        _run_ds4_ds5_ds6(g)
+
+        violations = g.nodes[f].get("invariant_violations", [])
+        # Should NOT be flagged because transitive write to SUPPLY exists
+        desync_violations = [v for v in violations if v["type"] == "SUPPLY_BALANCE_DESYNC"]
+        assert len(desync_violations) == 0
+
+    def test_mint_burn_asymmetry_flagged(self):
+        """Contract with mint but no burn → MINT_BURN_ASYMMETRY on unprotected mint function."""
+        g = nx.DiGraph()
+        _add_contract(g, "Token")
+        v = _add_var(g, "Token", "totalSupply")
+        f = _add_func(g, "Token", "publicMint",
+                      source_code="function publicMint() { _mint(msg.sender, 1000); }",
+                      is_protected=False)
+        _writes(g, f, v)
+
+        _run_ds4_ds5_ds6(g)
+
+        violations = g.nodes[f].get("invariant_violations", [])
+        assert any(v["type"] == "MINT_BURN_ASYMMETRY" for v in violations)
+
+    def test_index_update_missing_flagged(self):
+        """Function that writes BALANCE without reading INDEX → INDEX_UPDATE_MISSING."""
+        g = nx.DiGraph()
+        _add_contract(g, "Farm")
+        balance_v = _add_var(g, "Farm", "userBalance")  # Name → BALANCE
+        # INDEX variable: inferred via usage pattern (writes division + writes balance var)
+        index_v = _add_var(g, "Farm", "accRewardPerShare")  # Name has "reward" → none of the name patterns match, but let's tag it manually
+        g.nodes[index_v]["accounting_role"] = "INDEX"
+
+        f = _add_func(g, "Farm", "directDeposit",
+                      source_code="function directDeposit() { /* writes balance, does not read index */ }")
+        _writes(g, f, balance_v)
+        # Notably does NOT read index_v
+
+        _run_ds4_ds5_ds6(g)
+
+        violations = g.nodes[f].get("invariant_violations", [])
+        assert any(v["type"] == "INDEX_UPDATE_MISSING" for v in violations)
+
+    def test_invariant_score_in_global_risk(self):
+        """Verify invariant_violation_score contributes to structural_score."""
+        g = nx.DiGraph()
+        _add_contract(g, "Vault")
+        supply_v = _add_var(g, "Vault", "totalSupply")
+        balance_v = _add_var(g, "Vault", "balances")
+
+        f = _add_func(g, "Vault", "directWithdraw",
+                      source_code="function directWithdraw() {}")
+        _writes(g, f, balance_v)
+
+        _run_ds4_ds5_ds6(g)
+
+        # Should have nonzero structural score from invariant violation
+        structural = g.nodes[f].get("structural_score", 0)
+        assert structural > 0
+        risk_cats = g.nodes[f].get("risk_categories", [])
+        assert "invariant_violation" in risk_cats
+
+
+# ================================================================
+# Phase 2.1 Tests — Flash Loan Attack Surface Detection
+# ================================================================
+
+class TestFlashLoanAttackSurface:
+    """Tests for _detect_flash_loan_attack_surface()."""
+
+    def test_flash_loan_risk_detected(self):
+        """Function with spot oracle + taint risk gets flagged (2+ factors required)."""
+        g = nx.DiGraph()
+        _add_contract(g, "Lending")
+        f = _add_func(g, "Lending", "liquidate",
+                      source_code="function liquidate(address user) { uint price = oracle.price(); if (health(user) < 1) { collateral -= debt; } }",
+                      uses_spot_price_oracle=True,
+                      uses_safe_oracle=False,
+                      has_taint_risk=True)
+
+        gb = _run_ds4_ds5_ds6(g)
+        gb._detect_flash_loan_attack_surface()
+
+        assert g.nodes[f]["flash_loan_risk"] is True
+        assert g.nodes[f]["flash_loan_score"] > 0
+        factors = g.nodes[f]["flash_loan_risk_factors"]
+        assert factors["oracle_price_dependency"] is True
+
+    def test_flash_loan_no_oracle_not_flagged(self):
+        """Function without oracle is not flagged even with other factors."""
+        g = nx.DiGraph()
+        _add_contract(g, "Vault")
+        f = _add_func(g, "Vault", "deposit",
+                      source_code="function deposit(uint amount) { balances[msg.sender] += amount; }",
+                      uses_spot_price_oracle=False,
+                      has_taint_risk=False)
+
+        gb = _run_ds4_ds5_ds6(g)
+        gb._detect_flash_loan_attack_surface()
+
+        assert g.nodes[f]["flash_loan_risk"] is False
+        assert g.nodes[f]["flash_loan_score"] == 0
+
+    def test_flash_loan_score_in_global_risk(self):
+        """Verify flash_loan_score contributes to structural_score."""
+        g = nx.DiGraph()
+        _add_contract(g, "Lending")
+        f = _add_func(g, "Lending", "liquidate",
+                      source_code="function liquidate(address user) { uint price = oracle.price(); if (health(user) < 1) { collateral -= debt; } }",
+                      uses_spot_price_oracle=True,
+                      uses_safe_oracle=False,
+                      has_taint_risk=True,
+                      flash_loan_risk=True,
+                      flash_loan_score=70)
+
+        _run_ds4_ds5_ds6(g)
+
+        structural = g.nodes[f].get("structural_score", 0)
+        risk_cats = g.nodes[f].get("risk_categories", [])
+        assert structural > 0
+        assert "flash_loan_amplifiable" in risk_cats
+

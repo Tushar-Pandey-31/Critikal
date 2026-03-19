@@ -88,6 +88,7 @@ class GraphBuilder:
         
         # Epic 8 — Semantic vulnerability detection
         self._detect_oracle_patterns()
+        self._detect_flash_loan_attack_surface()  # Phase 2.1 — must run after oracle patterns
         self._detect_arithmetic_patterns()
         self._detect_signature_patterns()
         
@@ -4187,10 +4188,12 @@ class GraphBuilder:
     def _run_accounting_invariant_heuristics(self):
         """Runs all accounting and invariant-focused heuristic detectors."""
         self._infer_state_variable_roles()
+        self._infer_roles_from_usage_patterns()  # Phase 1.1 — usage-pattern upgrade
         self._detect_supply_consistency_issues()
         self._detect_cap_enforcement_issues()
         self._detect_reward_drift_issues()
         self._detect_monotonic_variable_issues()
+        self._detect_invariant_violations()  # Phase 1.2 — cross-function invariants
 
     @staticmethod
     def _name_has_any(name: str, patterns: List[str]) -> bool:
@@ -4238,6 +4241,86 @@ class GraphBuilder:
                 role = "BALANCE"
 
             var_data["accounting_role"] = role
+            var_data["role_inference_method"] = "name" if role != "UNKNOWN" else "none"
+
+    def _infer_roles_from_usage_patterns(self):
+        """
+        Phase 1.1 — Upgrade UNKNOWN variable roles by analyzing how they are used
+        across all functions. Called after _infer_state_variable_roles().
+
+        A variable gets upgraded to SUPPLY if any function that writes it
+        also calls _mint or _burn internally.
+
+        A variable gets upgraded to BALANCE if it is written per-address
+        (mapping indexed by address) in functions that transfer value.
+
+        A variable gets upgraded to INDEX if it is read in division
+        operations inside functions that also write BALANCE variables.
+        """
+        for var_id, var_data in self.graph.nodes(data=True):
+            if var_data.get("type") != "state_variable":
+                continue
+            if var_data.get("accounting_role", "UNKNOWN") != "UNKNOWN":
+                continue  # Don't downgrade already-inferred roles
+
+            # Collect all functions that WRITE this variable
+            writing_functions = []
+            for src_id, tgt_id, edge_data in self.graph.in_edges(var_id, data=True):
+                if edge_data.get("relationship") == "WRITES":
+                    src_data = self.graph.nodes.get(src_id, {})
+                    if src_data.get("type") == "function":
+                        writing_functions.append((src_id, src_data))
+
+            if not writing_functions:
+                continue
+
+            upgraded = False
+
+            # Check for SUPPLY: writing functions contain _mint or _burn
+            for func_id, func_data in writing_functions:
+                src = str(func_data.get("source_code", "") or "").lower()
+                if "_mint(" in src or "_burn(" in src or "mint(" in src or "burn(" in src:
+                    var_data["accounting_role"] = "SUPPLY"
+                    var_data["role_inference_method"] = "usage_pattern"
+                    upgraded = True
+                    break
+
+            if upgraded:
+                continue
+
+            # Check for BALANCE: writing functions contain msg.sender or
+            # address-indexed mapping writes
+            for func_id, func_data in writing_functions:
+                src = str(func_data.get("source_code", "") or "").lower()
+                if "msg.sender" in src or "[msg.sender]" in src or "address =>" in src:
+                    var_data["accounting_role"] = "BALANCE"
+                    var_data["role_inference_method"] = "usage_pattern"
+                    upgraded = True
+                    break
+
+            if upgraded:
+                continue
+
+            # Check for INDEX: function uses division AND also writes a BALANCE variable
+            for func_id, func_data in writing_functions:
+                src = str(func_data.get("source_code", "") or "").lower()
+                uses_division = "/" in src or ".div(" in src
+
+                if not uses_division:
+                    continue
+
+                # Check if this function also writes a BALANCE variable
+                _, func_writes = self._function_state_sets(func_id)
+                writes_balance = any(
+                    self.graph.nodes.get(v, {}).get("accounting_role") == "BALANCE"
+                    for v in func_writes
+                )
+                if writes_balance:
+                    var_data["accounting_role"] = "INDEX"
+                    var_data["role_inference_method"] = "usage_pattern"
+                    upgraded = True
+                    break
+
 
     def _detect_supply_consistency_issues(self):
         """
@@ -4436,6 +4519,203 @@ class GraphBuilder:
             node_data["monotonicity_flags"] = flags
             node_data["monotonicity_issue"] = len(flags) > 0
             node_data["monotonicity_score"] = score
+
+    # ================================================================
+    # Phase 1.2 — Cross-Function Invariant Violation Detector
+    # ================================================================
+
+    _INVARIANT_SEVERITY_SCORES = {
+        "HIGH": 40,
+        "MEDIUM": 25,
+        "LOW": 10,
+    }
+
+    def _detect_invariant_violations(self):
+        """
+        For each contract, verify that claimed invariants hold across
+        all state-changing functions.
+
+        Invariant 1 — Supply/Balance Consistency:
+        If a contract has SUPPLY variables and BALANCE variables,
+        every function that writes BALANCE should also write SUPPLY
+        (or call a function that does). If it doesn't, that's a
+        potential supply/balance desync vulnerability.
+
+        Invariant 2 — Mint/Burn Symmetry:
+        Every function that mints (writes SUPPLY upward) should have
+        a corresponding burn path. If mint is accessible but burn
+        is owner-only or nonexistent, that's unbounded inflation risk.
+
+        Invariant 3 — Share Price Monotonicity:
+        In vault-style contracts (ERC4626 pattern), the share price
+        (totalAssets / totalSupply) should be monotonically non-decreasing
+        for non-loss operations. If a function can decrease share price
+        without loss accounting, that's a share price manipulation vector.
+
+        Invariant 4 — Index Update Atomicity:
+        If a contract uses a reward index pattern (accRewardPerShare or similar),
+        every function that changes user balances MUST update the index first.
+        If any balance-changing function does not update the index, that's
+        a reward theft vulnerability.
+        """
+        # Step 1: Group state variables by contract and role
+        contract_vars: dict[str, dict[str, list[str]]] = {}  # contract -> role -> [var_ids]
+        for var_id, var_data in self.graph.nodes(data=True):
+            if var_data.get("type") != "state_variable":
+                continue
+            contract = var_data.get("contract", "")
+            role = var_data.get("accounting_role", "UNKNOWN")
+            if contract not in contract_vars:
+                contract_vars[contract] = {}
+            if role not in contract_vars[contract]:
+                contract_vars[contract][role] = []
+            contract_vars[contract][role].append(var_id)
+
+        # Step 2: Determine invariant types per contract
+        contract_invariants: dict[str, list[str]] = {}
+        for contract, roles in contract_vars.items():
+            invariants = []
+            if "SUPPLY" in roles and "BALANCE" in roles:
+                invariants.append("SUPPLY_BALANCE_CONSISTENCY")
+            if "INDEX" in roles and "BALANCE" in roles:
+                invariants.append("INDEX_UPDATE_ATOMICITY")
+            # ERC4626 pattern: both totalAssets-like and totalSupply-like
+            if "SUPPLY" in roles:
+                supply_names = [
+                    self.graph.nodes.get(v, {}).get("name", "").lower()
+                    for v in roles["SUPPLY"]
+                ]
+                has_assets = any("asset" in n or "debt" in n or "borrow" in n for n in supply_names)
+                has_shares = any("supply" in n or "share" in n for n in supply_names)
+                if has_assets and has_shares:
+                    invariants.append("SHARE_PRICE_MONOTONICITY")
+            contract_invariants[contract] = invariants
+
+        # Step 3: Check mint/burn symmetry across all contracts
+        contract_mint_burn: dict[str, dict[str, bool]] = {}
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            contract = node_data.get("contract", "")
+            src = str(node_data.get("source_code", "") or "").lower()
+            if contract not in contract_mint_burn:
+                contract_mint_burn[contract] = {"has_mint": False, "has_burn": False}
+            if "_mint(" in src or "mint(" in src:
+                contract_mint_burn[contract]["has_mint"] = True
+            if "_burn(" in src or "burn(" in src:
+                contract_mint_burn[contract]["has_burn"] = True
+
+        # Step 4: For each function, check invariant preservation
+        inv_counter = 0
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+            if node_data.get("is_view_or_pure", False):
+                node_data["invariant_violations"] = []
+                node_data["invariant_violation_count"] = 0
+                node_data["invariant_violation_score"] = 0
+                continue
+
+            contract = node_data.get("contract", "")
+            invariants = contract_invariants.get(contract, [])
+
+            reads, writes = self._function_state_sets(node_id)
+            # Get propagated (transitive) writes — includes writes from called functions
+            propagated = set(node_data.get("propagated_state_variables", []))
+            # Combine direct + transitive writes
+            all_writes = writes | propagated
+
+            violations: list[dict] = []
+            src = str(node_data.get("source_code", "") or "").lower()
+
+            # ── Invariant 1: Supply/Balance Consistency ──
+            if "SUPPLY_BALANCE_CONSISTENCY" in invariants:
+                roles_in = contract_vars.get(contract, {})
+                balance_vars = set(roles_in.get("BALANCE", []))
+                supply_vars = set(roles_in.get("SUPPLY", []))
+
+                writes_balance = bool(all_writes & balance_vars)
+                # Check if ANY transitively-written variable has accounting_role == "SUPPLY"
+                writes_supply = any(
+                    self.graph.nodes.get(v, {}).get("accounting_role") == "SUPPLY"
+                    for v in all_writes
+                )
+
+                if writes_balance and not writes_supply:
+                    is_external = node_data.get("is_external_entry", False)
+                    if is_external:
+                        inv_counter += 1
+                        violations.append({
+                            "type": "SUPPLY_BALANCE_DESYNC",
+                            "description": "writes balance but not supply (directly or transitively)",
+                            "severity": "HIGH",
+                            "invariant_id": f"INV-{inv_counter:03d}",
+                        })
+
+            # ── Invariant 2: Mint/Burn Symmetry ──
+            mb = contract_mint_burn.get(contract, {})
+            if mb.get("has_mint") and not mb.get("has_burn"):
+                # Only flag on mint functions
+                if "_mint(" in src or "mint(" in src:
+                    is_external = node_data.get("is_external_entry", False)
+                    weak_access = not node_data.get("is_protected", False)
+                    if is_external and weak_access:
+                        inv_counter += 1
+                        violations.append({
+                            "type": "MINT_BURN_ASYMMETRY",
+                            "description": "contract has mint but no burn — unbounded inflation risk",
+                            "severity": "MEDIUM",
+                            "invariant_id": f"INV-{inv_counter:03d}",
+                        })
+
+            # ── Invariant 3: Share Price Monotonicity ──
+            if "SHARE_PRICE_MONOTONICITY" in invariants:
+                roles_in = contract_vars.get(contract, {})
+                supply_vars = set(roles_in.get("SUPPLY", []))
+                writes_supply_var = bool(all_writes & supply_vars)
+                is_external = node_data.get("is_external_entry", False)
+
+                # Check if function can decrease share price
+                if writes_supply_var and is_external:
+                    has_donation = "donate" in src or "skim" in src or "sync" in src
+                    has_no_accounting = "loss" not in src and "deficit" not in src
+                    if has_donation and has_no_accounting:
+                        inv_counter += 1
+                        violations.append({
+                            "type": "SHARE_PRICE_MANIPULATION",
+                            "description": "can alter total supply/assets without loss accounting — share price manipulation vector",
+                            "severity": "HIGH",
+                            "invariant_id": f"INV-{inv_counter:03d}",
+                        })
+
+            # ── Invariant 4: Index Update Atomicity ──
+            if "INDEX_UPDATE_ATOMICITY" in invariants:
+                roles_in = contract_vars.get(contract, {})
+                balance_vars = set(roles_in.get("BALANCE", []))
+                index_vars = set(roles_in.get("INDEX", []))
+
+                writes_balance = bool(all_writes & balance_vars)
+                reads_index = bool(reads & index_vars)
+
+                if writes_balance and not reads_index:
+                    is_external = node_data.get("is_external_entry", False)
+                    if is_external:
+                        inv_counter += 1
+                        violations.append({
+                            "type": "INDEX_UPDATE_MISSING",
+                            "description": "writes balance without reading reward index first — reward theft risk",
+                            "severity": "HIGH",
+                            "invariant_id": f"INV-{inv_counter:03d}",
+                        })
+
+            # Store results
+            total_score = sum(
+                self._INVARIANT_SEVERITY_SCORES.get(v["severity"], 0) for v in violations
+            )
+            node_data["invariant_violations"] = violations
+            node_data["invariant_violation_count"] = len(violations)
+            node_data["invariant_violation_score"] = total_score
+
 
     # ================================================================
     # Dev Story 6 — External Call Risk Analyzer
@@ -4824,8 +5104,10 @@ class GraphBuilder:
                 + node_data.get("reward_drift_score", 0)
                 + node_data.get("monotonicity_score", 0)
             )
-            if accounting_score > 0:
-                structural += min(accounting_score, 60)
+            # Phase 1.2: Invariant violation scoring — combined cap at 100
+            invariant_score = node_data.get("invariant_violation_score", 0)
+            total_accounting = min(accounting_score, 60) + min(invariant_score, 80)
+            structural += min(total_accounting, 100)
 
             for key, cat in (
                 ("supply_consistency_issue", "supply_consistency"),
@@ -4835,6 +5117,9 @@ class GraphBuilder:
             ):
                 if node_data.get(key) and cat not in risk_categories:
                     risk_categories.append(cat)
+
+            if invariant_score > 0:
+                risk_categories.append("invariant_violation")
 
             # Dev Story 6: External call risk analyzer
             ext_score = node_data.get("external_call_risk_score", 0)
@@ -4849,6 +5134,12 @@ class GraphBuilder:
             if node_data.get("read_only_reentrancy_risk"):
                 structural += 35
                 risk_categories.append("read_only_reentrancy")
+
+            # Phase 2.1: Flash loan amplification risk
+            flash_score = node_data.get("flash_loan_score", 0)
+            if flash_score > 0:
+                structural += min(flash_score, 70)
+                risk_categories.append("flash_loan_amplifiable")
 
             # ── Exploitability Score ──────────────────────────
             if node_data.get("reachable_from_external_entry"):
@@ -5187,6 +5478,75 @@ class GraphBuilder:
                 cats = list(self.graph.nodes[node_id].get("risk_categories", []))
                 self.graph.nodes[node_id]["risk_score"] = current + 120
                 self.graph.nodes[node_id]["risk_categories"] = cats + ["oracle_manipulation"]
+
+    # ================================================================
+    # Phase 2.1 — Flash Loan Attack Surface Detector
+    # ================================================================
+
+    def _detect_flash_loan_attack_surface(self):
+        """
+        Identify functions vulnerable to flash loan amplification.
+
+        Checks 4 risk factors:
+        1. Oracle price dependency: uses spot price oracle without safe (TWAP) oracle
+        2. Ratio math with taint risk: performs division with user-controlled input
+        3. Collateral/health check: contains collateral-related logic
+        4. Price-sensitive external calls: calls external contracts in price-dependent context
+
+        Each factor contributes to a composite score (0-110).
+        Must run AFTER _detect_oracle_patterns() since it depends on oracle signals.
+        """
+        for node_id, node_data in self.graph.nodes(data=True):
+            if node_data.get("type") != "function":
+                continue
+
+            risk_factors: dict[str, bool] = {}
+            score = 0
+            src = str(node_data.get("source_code", "") or "").lower()
+
+            # Factor 1: Oracle price dependency
+            uses_spot = node_data.get("uses_spot_price_oracle", False)
+            uses_safe = node_data.get("uses_safe_oracle", False)
+            oracle_risk = uses_spot and not uses_safe
+            risk_factors["oracle_price_dependency"] = oracle_risk
+            if oracle_risk:
+                score += 40
+
+            # Factor 2: Ratio math with taint risk
+            has_division = "/" in src or ".div(" in src or "mulDiv" in src
+            has_taint = node_data.get("has_taint_risk", False)
+            ratio_taint_risk = has_division and has_taint
+            risk_factors["ratio_math_with_taint"] = ratio_taint_risk
+            if ratio_taint_risk:
+                score += 30
+
+            # Factor 3: Collateral/health check logic
+            collateral_keywords = [
+                "collateral", "health", "liquidat", "ltv",
+                "borrow", "leverage", "margin", "position",
+            ]
+            has_collateral = any(kw in src for kw in collateral_keywords)
+            risk_factors["collateral_check"] = has_collateral
+            if has_collateral:
+                score += 20
+
+            # Factor 4: Price-sensitive external calls
+            makes_call = node_data.get("makes_external_call", False)
+            price_keywords = ["price", "rate", "exchange", "swap", "getamount", "quote"]
+            price_in_src = any(kw in src for kw in price_keywords)
+            price_sensitive = makes_call and price_in_src
+            risk_factors["price_sensitive_external_call"] = price_sensitive
+            if price_sensitive:
+                score += 20
+
+            # Only flag if at least 2 factors are present
+            factor_count = sum(1 for v in risk_factors.values() if v)
+            if factor_count < 2:
+                score = 0
+
+            node_data["flash_loan_risk"] = score > 0
+            node_data["flash_loan_score"] = score
+            node_data["flash_loan_risk_factors"] = risk_factors
 
     def _detect_arithmetic_patterns(self) -> None:
         """Epic 8.2 — Detect arithmetic precision and safety patterns."""
