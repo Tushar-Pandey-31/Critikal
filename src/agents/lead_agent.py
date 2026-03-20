@@ -464,6 +464,10 @@ async def coordinator_node(state: AgentState):
 
     # ── Step 2: Hotspots ───────────────────────────────────
     hotspots = get_high_risk_hotspots(state["graph"], min_score=70)
+    # v2 E2E TESTING: fallback to relaxed gate if no hotspots found (single-contract repos)
+    if not hotspots:
+        from src.utils.graph_queries import get_graph_queries as _gq
+        hotspots = _gq(state["graph"]).get_high_risk_hotspots(min_score=70, require_exploit_target=False)
     print(f"[Step 2] Found {len(hotspots)} high-risk hotspot(s)")
     findings = []
 
@@ -486,7 +490,7 @@ async def coordinator_node(state: AgentState):
                 task_id=f"attack_{hotspot.node_id}",
                 task_type="attack_analysis",
                 hotspot=hotspot,
-                context={"recon_context": state.get("recon_context", {})},
+                context={"recon_context": recon_context},
                 budget_tokens=_budget_for_priority(hotspot.priority),
             )
             for hotspot in hotspots
@@ -584,7 +588,13 @@ async def coordinator_node(state: AgentState):
                 )
 
                 try:
-                    return finding, await jury.evaluate(context_package)
+                    return finding, await asyncio.wait_for(
+                        jury.evaluate(context_package),
+                        timeout=150,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"[Jury] Timeout (150s) for {finding.hotspot_node_id} — skipping jury")
+                    return finding, None
                 except Exception as e:
                     logger.warning(f"[Jury] Failed for {finding.hotspot_node_id}: {e}")
                     return finding, None
@@ -654,6 +664,11 @@ async def coordinator_node(state: AgentState):
     else:
         if not JURY_ENABLED:
             print(f"[Step 4.5] Jury disabled (set JURY_ENABLED=true to enable)")
+
+    # ── Step 4.6: RAG Batch Validation ────────────────────
+    if findings:
+        from src.knowledge.rag_system import rag_batch_validate
+        findings = rag_batch_validate(findings)
 
     # ── Step 5: Coordinator LLM Synthesis ─────────────────
     # The programmatic pipeline (Recon → Hotspots → Attack → TestWriter) has
@@ -808,240 +823,254 @@ async def coordinator_node(state: AgentState):
     # All sandboxes will symlink lib/ from this shared Linux-fs copy.
     linux_repo_path = None
     tmp_base = None  # track for cleanup
-    if repo_path:
-        try:
-            tmp_base = tempfile.mkdtemp()
-            repo_copy_root = os.path.join(tmp_base, Path(repo_path).name)
-            print(f"[Step 6] Copying repo to Linux fs: {repo_copy_root}")
-            shutil.copytree(repo_path, repo_copy_root, symlinks=False)
-            print(f"[Step 6] Repo copy complete.")
-
-            # KEY FIX: resolve the actual Foundry project root within the copy.
-            # Many repos have foundry.toml in a subdirectory (e.g. ethernaut/contracts/).
-            # Passing the repo root causes SandboxManager to look for lib/ in the wrong place.
-            foundry_root = _get_foundry_project_root(Path(repo_copy_root))
-            linux_repo_path = str(foundry_root)
-            if str(foundry_root) != repo_copy_root:
-                print(f"[Step 6] Foundry project root resolved: {linux_repo_path}")
-        except Exception as e:
-            print(f"[Step 6] Failed to copy repo to Linux fs: {e}, falling back to original path")
-            linux_repo_path = repo_path
-
-    # Sort findings by confidence descending; tie-break by severity (highest first)
-    sorted_findings = sorted(
-        [f for f in findings
-         if f.confidence >= 65
-         and f.severity_estimate in ("CRITICAL", "HIGH", "MEDIUM")
-         and _exploit_target_eligible(f, state.get("graph"))
-         and not getattr(f, "jury_unprovable", False)],
-        key=_finding_priority,
-    )
-
-    for finding in sorted_findings:
-        # Permanent filter — never waste time on test helpers
-        skip_list = {"balancesum", "riskycontract", "test", "mock", "dstest", "invariant", "fuzz"}
-        if finding.affected_contract and any(kw in finding.affected_contract.lower() for kw in skip_list):
-            print(f"  Skipping test/mock helper: {finding.affected_contract}")
-            continue
-
-        # Skip findings whose source lives in lib/ or node_modules/
-        _node_data = state["graph"].nodes.get(finding.affected_contract, {}) if state.get("graph") else {}
-        _src_file = (_node_data.get("source_file", "") or "").replace("\\", "/")
-        if "/lib/" in _src_file or "/node_modules/" in _src_file:
-            print(f"  Skipping library contract: {finding.affected_contract} ({_src_file})")
-            continue
-
-        # === FIXED: Robust relevant_code lookup (fixes BUG-001, 002, 003) ===
-        relevant_code = {}
-
-        # 1. From attack_path
-        for raw_id in finding.attack_path:
-            norm_id = normalize_node_id(raw_id)
+    try:
+        if repo_path:
             try:
-                ctx = get_function_context(state["graph"], norm_id)
-                code = ctx.get("source_code") or ctx.get("code")
-                if code:
-                    relevant_code[norm_id] = code
-            except Exception:
-                pass
+                tmp_base = tempfile.mkdtemp()
+                repo_copy_root = os.path.join(tmp_base, Path(repo_path).name)
+                print(f"[Step 6] Copying repo to Linux fs: {repo_copy_root}")
+                shutil.copytree(repo_path, repo_copy_root, symlinks=False)
+                print(f"[Step 6] Repo copy complete.")
 
-        # 2. From evidence nodes
-        for ep in finding.evidence_nodes:
-            norm_id = normalize_node_id(ep.node_id)
-            try:
-                ctx = get_function_context(state["graph"], norm_id)
-                code = ctx.get("source_code") or ctx.get("code")
-                if code and norm_id not in relevant_code:
-                    relevant_code[norm_id] = code
-            except Exception:
-                pass
+                # KEY FIX: resolve the actual Foundry project root within the copy.
+                # Many repos have foundry.toml in a subdirectory (e.g. ethernaut/contracts/).
+                # Passing the repo root causes SandboxManager to look for lib/ in the wrong place.
+                foundry_root = _get_foundry_project_root(Path(repo_copy_root))
+                linux_repo_path = str(foundry_root)
+                if str(foundry_root) != repo_copy_root:
+                    print(f"[Step 6] Foundry project root resolved: {linux_repo_path}")
+            except Exception as e:
+                print(f"[Step 6] Failed to copy repo to Linux fs: {e}, falling back to original path")
+                linux_repo_path = repo_path
 
-        # 3. Fallback to hotspot
-        if not relevant_code and finding.hotspot_node_id:
-            norm_id = normalize_node_id(finding.hotspot_node_id)
-            try:
-                ctx = get_function_context(state["graph"], norm_id)
-                code = ctx.get("source_code") or ctx.get("code")
-                if code:
-                    relevant_code[norm_id] = code
-            except Exception:
-                pass
-
-        contract_signatures = get_contract_signatures(state["graph"], finding.affected_contract)
-
-        # Improvement 4: Pass exploit sequence to TestWriter
-        _node_data = state["graph"].nodes.get(finding.hotspot_node_id, {}) if finding.hotspot_node_id and state.get("graph") else {}
-        exploit_seq = _node_data.get("exploit_sequence", [])
-
-        task = WorkerTask(
-            task_id=f"test_{finding.id}",
-            task_type="test_writer",
-            context={
-                "finding": finding,
-                "relevant_code": relevant_code,
-                "recon_context": state.get("recon_context", {}),
-                "repo_path": linux_repo_path,  # shared Linux-fs copy
-                "contract_signatures": contract_signatures,
-                "exploit_sequence": exploit_seq,
-                "jury_brief": jury_briefs.get(finding.hotspot_node_id, {}),
-                "jury_unprovable": getattr(finding, "jury_unprovable", False),
-            }
+        # Sort findings by confidence descending; tie-break by severity (highest first)
+        sorted_findings = sorted(
+            [f for f in findings
+             if f.confidence >= 65
+             and f.severity_estimate in ("CRITICAL", "HIGH", "MEDIUM")
+             and _exploit_target_eligible(f, state.get("graph"))
+             and not getattr(f, "jury_unprovable", False)],
+            key=_finding_priority,
         )
-        test_tasks.append(task)
-        target_findings.append(finding)
 
-    test_outputs = []  # Initialize before conditional — avoids UnboundLocalError
-    if test_tasks:
-        _tw_concurrency = int(os.getenv("TEST_WRITER_CONCURRENCY", "3"))
-        _tw_sem = asyncio.Semaphore(_tw_concurrency)
-        print(
-            f"[Step 6] Spawning TestWriter for {len(test_tasks)} finding(s) "
-            f"(parallel, concurrency={_tw_concurrency}, highest confidence first)..."
-        )
-        test_writer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"))
-        test_writer_llm = get_worker_llm(model_name=test_writer_model)
-        test_writer = TestWriterWorker(llm_client=test_writer_llm, graph=state["graph"])
+        for finding in sorted_findings:
+            # Permanent filter — never waste time on test helpers
+            skip_list = {"balancesum", "riskycontract", "test", "mock", "dstest", "invariant", "fuzz"}
+            if finding.affected_contract and any(kw in finding.affected_contract.lower() for kw in skip_list):
+                print(f"  Skipping test/mock helper: {finding.affected_contract}")
+                continue
 
-        async def _run_test_writer(idx, task, finding):
-            async with _tw_sem:
-                print(f"[Step 6] TestWriter {idx+1}/{len(test_tasks)}: {finding.hotspot_node_id} (confidence={finding.confidence})")
+            # Skip findings whose source lives in lib/ or node_modules/
+            _node_data = state["graph"].nodes.get(finding.affected_contract, {}) if state.get("graph") else {}
+            _src_file = (_node_data.get("source_file", "") or "").replace("\\", "/")
+            if "/lib/" in _src_file or "/node_modules/" in _src_file:
+                print(f"  Skipping library contract: {finding.affected_contract} ({_src_file})")
+                continue
+
+            # === FIXED: Robust relevant_code lookup (fixes BUG-001, 002, 003) ===
+            relevant_code = {}
+
+            # 1. From attack_path
+            for raw_id in finding.attack_path:
+                norm_id = normalize_node_id(raw_id)
                 try:
-                    return await test_writer.run(task)
-                except Exception as e:
-                    print(f"[Step 6] TestWriter error on {finding.hotspot_node_id}: {e}")
-                    return e
+                    ctx = get_function_context(state["graph"], norm_id)
+                    code = ctx.get("source_code") or ctx.get("code")
+                    if code:
+                        relevant_code[norm_id] = code
+                except Exception:
+                    pass
 
-        test_outputs = await asyncio.gather(
-            *[
-                _run_test_writer(i, task, finding)
-                for i, (task, finding) in enumerate(zip(test_tasks, target_findings))
-            ]
-        )
+            # 2. From evidence nodes
+            for ep in finding.evidence_nodes:
+                norm_id = normalize_node_id(ep.node_id)
+                try:
+                    ctx = get_function_context(state["graph"], norm_id)
+                    code = ctx.get("source_code") or ctx.get("code")
+                    if code and norm_id not in relevant_code:
+                        relevant_code[norm_id] = code
+                except Exception:
+                    pass
 
-        print(f"[Step 6] Validation sweep complete: {len(test_tasks)} attempted")
-        proven = []
-        for finding, output in zip(sorted_findings, test_outputs):
-            if isinstance(output, Exception):
-                print(f"  TestWriter error on {finding.hotspot_node_id}: {output}")
-                continue
+            # 3. Fallback to hotspot
+            if not relevant_code and finding.hotspot_node_id:
+                norm_id = normalize_node_id(finding.hotspot_node_id)
+                try:
+                    ctx = get_function_context(state["graph"], norm_id)
+                    code = ctx.get("source_code") or ctx.get("code")
+                    if code:
+                        relevant_code[norm_id] = code
+                except Exception:
+                    pass
 
-            if not getattr(output, "validation_passed", False):
-                print(f"  [x] {finding.hotspot_node_id} — Validation FAILED")
-                finding.status = FindingStatus.REJECTED
-                setattr(finding, "confidence", getattr(output, "confidence", getattr(finding, "confidence", 0)))
-                
-                # Keep the false-positive in the list, just update status
-                # finding is passed by reference inside `findings`
-            else:
-                score = getattr(output, "confidence", 100)
-                print(f"  [v] {finding.hotspot_node_id} — PROVEN (confidence {score})")
-                finding.status = FindingStatus.PROVEN
-                setattr(finding, "confidence", score)
-                
-                if output and hasattr(output, "model_dump"):
-                    proven.append({
-                        "finding_id": finding.id,
-                        "hotspot": finding.hotspot_node_id,
-                        "confidence": finding.confidence,
-                        "test_code": getattr(output, "test_code", None),
-                        "test_output": getattr(output, "compiler_output", None)
-                    })
-            
-            # Update leads with TestWriter results
-            for lead in leads:
-                lead_id = normalize_node_id(lead.get("affected_function_node_id", ""))
-                finding_id = normalize_node_id(finding.hotspot_node_id)
+            contract_signatures = get_contract_signatures(state["graph"], finding.affected_contract)
 
-                if lead_id == finding_id:
-                    raw = getattr(output, "raw_output", {}) or {} # Use getattr for raw_output
-                    lead.update({
-                        "confidence": finding.confidence,
-                        "test_code": getattr(output, "test_code", None), # Use getattr
-                        "exploit_success": getattr(output, "exploit_success", False), # Use getattr
-                        "compiled": raw.get("compiled"),
-                        "attempts": raw.get("attempts"),
-                    })
-                    if getattr(output, "exploit_success", False) and not lead.get("title", "").startswith("[PROVEN]"): # Use getattr
-                        lead["title"] = f"[PROVEN] {lead.get('title', '')}"
-                    break
+            # Improvement 4: Pass exploit sequence to TestWriter
+            _node_data = state["graph"].nodes.get(finding.hotspot_node_id, {}) if finding.hotspot_node_id and state.get("graph") else {}
+            exploit_seq = _node_data.get("exploit_sequence", [])
 
-    if not test_tasks:
-        print(f"[Step 6] No findings qualified for TestWriter.")
-
-    # ── Step 6.5: Fuzz Generator (Medusa Layer) ───────────────
-    fuzz_targets = []
-    fuzz_tasks = []
-    for finding, output in zip(sorted_findings, test_outputs):
-        if finding.status == FindingStatus.PROVEN and finding.severity_estimate == "CRITICAL" and not isinstance(output, Exception):
-            fuzz_targets.append(finding)
-            fuzz_tasks.append(
-                WorkerTask(
-                    task_id=f"fuzz_{finding.id}",
-                    task_type="fuzz_generator",
-                    context={
-                        "finding": finding,
-                        "poc_code": getattr(output, "test_code", ""),
-                        "repo_path": linux_repo_path,
-                    }
-                )
+            task = WorkerTask(
+                task_id=f"test_{finding.id}",
+                task_type="test_writer",
+                context={
+                    "finding": finding,
+                    "relevant_code": relevant_code,
+                    "recon_context": state.get("recon_context", {}),
+                    "repo_path": linux_repo_path,  # shared Linux-fs copy
+                    "contract_signatures": contract_signatures,
+                    "exploit_sequence": exploit_seq,
+                    "jury_brief": jury_briefs.get(finding.hotspot_node_id, {}),
+                    "jury_unprovable": getattr(finding, "jury_unprovable", False),
+                }
             )
-            
-    if fuzz_tasks:
-        print(f"[Step 6.5] Spawning FuzzGenerator for {len(fuzz_tasks)} CRITICAL finding(s)...")
-        from src.agents.workers.fuzz_generator import FuzzGeneratorWorker
-        fuzzer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"))
-        fuzzer_llm = get_worker_llm(model_name=fuzzer_model)
-        fuzzer = FuzzGeneratorWorker(llm_client=fuzzer_llm, graph=state["graph"])
-        
-        fuzz_outputs = await asyncio.gather(
-            *[fuzzer.run(task) for task in fuzz_tasks],
-            return_exceptions=True
-        )
-        
-        for finding, output in zip(fuzz_targets, fuzz_outputs):
-            if isinstance(output, Exception):
-                print(f"  Fuzzer error on {finding.hotspot_node_id}: {output}")
-                continue
+            test_tasks.append(task)
+            target_findings.append(finding)
+
+        test_outputs = []  # Initialize before conditional — avoids UnboundLocalError
+        if test_tasks:
+            _tw_concurrency = int(os.getenv("TEST_WRITER_CONCURRENCY", "3"))
+            _tw_sem = asyncio.Semaphore(_tw_concurrency)
+            print(
+                f"[Step 6] Spawning TestWriter for {len(test_tasks)} finding(s) "
+                f"(parallel, concurrency={_tw_concurrency}, highest confidence first)..."
+            )
+            test_writer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"))
+            test_writer_llm = get_worker_llm(model_name=test_writer_model)
+            test_writer = TestWriterWorker(llm_client=test_writer_llm, graph=state["graph"])
+
+            async def _run_test_writer(idx, task, finding):
+                async with _tw_sem:
+                    print(f"[Step 6] TestWriter {idx+1}/{len(test_tasks)}: {finding.hotspot_node_id} (confidence={finding.confidence})")
+                    try:
+                        return await test_writer.run(task)
+                    except Exception as e:
+                        print(f"[Step 6] TestWriter error on {finding.hotspot_node_id}: {e}")
+                        return e
+
+            test_outputs = await asyncio.gather(
+                *[
+                    _run_test_writer(i, task, finding)
+                    for i, (task, finding) in enumerate(zip(test_tasks, target_findings))
+                ]
+            )
+
+            print(f"[Step 6] Validation sweep complete: {len(test_tasks)} attempted")
+            proven = []
+            for finding, output in zip(target_findings, test_outputs):
+                if isinstance(output, Exception):
+                    print(f"  TestWriter error on {finding.hotspot_node_id}: {output}")
+                    continue
+
+                if not getattr(output, "validation_passed", False):
+                    print(f"  [x] {finding.hotspot_node_id} — Validation FAILED")
+                    finding.status = FindingStatus.REJECTED
+                    setattr(finding, "confidence", getattr(output, "confidence", getattr(finding, "confidence", 0)))
+                    
+                    # Keep the false-positive in the list, just update status
+                    # finding is passed by reference inside `findings`
+                else:
+                    score = getattr(output, "confidence", 100)
+                    print(f"  [v] {finding.hotspot_node_id} — PROVEN (confidence {score})")
+                    finding.status = FindingStatus.PROVEN
+                    setattr(finding, "confidence", score)
+
+                    # v2: Set evidence tag and verdict from TestWriter output
+                    raw = getattr(output, "raw_output", {}) or {}
+                    evidence_tag = raw.get("evidence_tag", "[POC-PASS]")
+                    finding.evidence_tag = evidence_tag
+                    finding.verdict = "CONFIRMED"
+                    finding.confidence_evidence = score
+                    if raw.get("variant_success"):
+                        print(f"  [v] {finding.hotspot_node_id} — proven via VARIANT exploration")
+                    
+                    if output and hasattr(output, "model_dump"):
+                        proven.append({
+                            "finding_id": finding.id,
+                            "hotspot": finding.hotspot_node_id,
+                            "confidence": finding.confidence,
+                            "test_code": getattr(output, "test_code", None),
+                            "test_output": getattr(output, "compiler_output", None)
+                        })
                 
-            raw = getattr(output, "raw_output", {}) or {}
-            if raw.get("violation_found"):
-                print(f"  [!] {finding.hotspot_node_id} — INVARIANT BROKEN (Fuzzing successful)")
-                finding.confidence = getattr(output, "confidence", finding.confidence)
+                # Update leads with TestWriter results
                 for lead in leads:
                     lead_id = normalize_node_id(lead.get("affected_function_node_id", ""))
-                    if lead_id == normalize_node_id(finding.hotspot_node_id):
-                        lead["fuzz_code"] = raw.get("fuzz_code")
-                        lead["fuzz_logs"] = raw.get("logs")
-                        if not lead.get("title", "").endswith("[FUZZED]"):
-                            lead["title"] = f"{lead.get('title', '')} [FUZZED]"
+                    finding_id = normalize_node_id(finding.hotspot_node_id)
+
+                    if lead_id == finding_id:
+                        raw = getattr(output, "raw_output", {}) or {} # Use getattr for raw_output
+                        lead.update({
+                            "confidence": finding.confidence,
+                            "test_code": getattr(output, "test_code", None), # Use getattr
+                            "exploit_success": getattr(output, "exploit_success", False), # Use getattr
+                            "compiled": raw.get("compiled"),
+                            "attempts": raw.get("attempts"),
+                            "evidence_tag": raw.get("evidence_tag", ""),
+                            "variant_success": raw.get("variant_success", False),
+                        })
+                        if getattr(output, "exploit_success", False) and not lead.get("title", "").startswith("[PROVEN]"): # Use getattr
+                            lead["title"] = f"[PROVEN] {lead.get('title', '')}"
                         break
 
-    # Cleanup shared Linux-fs repo copy
-    if tmp_base and os.path.exists(tmp_base):
-        try:
-            shutil.rmtree(tmp_base)
-        except Exception:
-            pass
+        if not test_tasks:
+            print(f"[Step 6] No findings qualified for TestWriter.")
+
+        # ── Step 6.5: Fuzz Generator (Medusa Layer) ───────────────
+        fuzz_targets = []
+        fuzz_tasks = []
+        for finding, output in zip(sorted_findings, test_outputs):
+            if finding.status == FindingStatus.PROVEN and finding.severity_estimate == "CRITICAL" and not isinstance(output, Exception):
+                fuzz_targets.append(finding)
+                fuzz_tasks.append(
+                    WorkerTask(
+                        task_id=f"fuzz_{finding.id}",
+                        task_type="fuzz_generator",
+                        context={
+                            "finding": finding,
+                            "poc_code": getattr(output, "test_code", ""),
+                            "repo_path": linux_repo_path,
+                        }
+                    )
+                )
+                
+        if fuzz_tasks:
+            print(f"[Step 6.5] Spawning FuzzGenerator for {len(fuzz_tasks)} CRITICAL finding(s)...")
+            from src.agents.workers.fuzz_generator import FuzzGeneratorWorker
+            fuzzer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"))
+            fuzzer_llm = get_worker_llm(model_name=fuzzer_model)
+            fuzzer = FuzzGeneratorWorker(llm_client=fuzzer_llm, graph=state["graph"])
+            
+            fuzz_outputs = await asyncio.gather(
+                *[fuzzer.run(task) for task in fuzz_tasks],
+                return_exceptions=True
+            )
+            
+            for finding, output in zip(fuzz_targets, fuzz_outputs):
+                if isinstance(output, Exception):
+                    print(f"  Fuzzer error on {finding.hotspot_node_id}: {output}")
+                    continue
+                    
+                raw = getattr(output, "raw_output", {}) or {}
+                if raw.get("violation_found"):
+                    print(f"  [!] {finding.hotspot_node_id} — INVARIANT BROKEN (Fuzzing successful)")
+                    finding.confidence = getattr(output, "confidence", finding.confidence)
+                    for lead in leads:
+                        lead_id = normalize_node_id(lead.get("affected_function_node_id", ""))
+                        if lead_id == normalize_node_id(finding.hotspot_node_id):
+                            lead["fuzz_code"] = raw.get("fuzz_code")
+                            lead["fuzz_logs"] = raw.get("logs")
+                            if not lead.get("title", "").endswith("[FUZZED]"):
+                                lead["title"] = f"{lead.get('title', '')} [FUZZED]"
+                            break
+
+    finally:
+        # Cleanup shared Linux-fs repo copy — always runs even on exception
+        if tmp_base and os.path.exists(tmp_base):
+            try:
+                shutil.rmtree(tmp_base)
+            except Exception:
+                pass
+
 
     proven_count = sum(1 for f in findings if f.status == FindingStatus.PROVEN)
     print(f"[Pipeline] All steps complete: {len(findings)} finding(s), {proven_count} proven, {len(leads)} lead(s)")
@@ -1093,6 +1122,7 @@ async def coordinator_node(state: AgentState):
         "worker_outputs": worker_outputs,
         "recon_context": recon_context,  # LOGIC-004 fix: include so LangGraph state is updated
         "escalate": state["escalate"],
+        "jury_rejected_findings": state.get("jury_rejected_findings", []),
     }
 
 

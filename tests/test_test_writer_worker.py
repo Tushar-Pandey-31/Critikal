@@ -498,3 +498,230 @@ def test_clear_forge_cache(tmp_path):
 
     assert not out_dir.exists()
     assert not cache_dir.exists()
+
+
+# ── Problem 1: Anchored contract-definition matching ──────────────
+
+def test_collect_repo_sources_exact_match(tmp_path):
+    """
+    _collect_repo_sources must pick the file that DEFINES 'contract Pool'
+    not a file that merely mentions 'Pool' in a comment or base-contract list.
+    """
+    # File that only *mentions* Pool (e.g. a registry that imports it)
+    mention_file = tmp_path / "src" / "PoolAddressesProviderRegistry.sol"
+    mention_file.parent.mkdir(parents=True)
+    mention_file.write_text(
+        "// SPDX-License-Identifier: MIT\n"
+        "pragma solidity ^0.8.10;\n"
+        "// Manages Pool addresses\n"
+        "contract PoolAddressesProviderRegistry {\n"
+        "    address public pool;\n"
+        "}\n"
+    )
+
+    # File that actually DEFINES 'contract Pool'
+    define_file = tmp_path / "src" / "protocol" / "pool" / "Pool.sol"
+    define_file.parent.mkdir(parents=True, exist_ok=True)
+    define_file.write_text(
+        "// SPDX-License-Identifier: MIT\n"
+        "pragma solidity ^0.8.10;\n"
+        "contract Pool {\n"
+        "    function setReserveInterestRateStrategyAddress() external {}\n"
+        "}\n"
+    )
+
+    finding = Finding(
+        id="f1",
+        hotspot_node_id="Pool::setReserveInterestRateStrategyAddress",
+        vulnerability_class="access-control",
+        title="T",
+        hypothesis="H",
+        evidence_nodes=[],
+        attack_path=[],
+        status=FindingStatus.UNCONFIRMED,
+        confidence=80,
+        impact="High",
+        severity_estimate="HIGH",
+        affected_contract="Pool",
+        affected_function="setReserveInterestRateStrategyAddress",
+    )
+
+    worker = TestWriterWorker(llm_client=None)
+    sources = worker._collect_repo_sources(finding, str(tmp_path), remappings={})
+
+    assert sources, "Should have found at least one source file"
+    collected_paths = list(sources.keys())
+    # The defining file must be the first entry; the registry must NOT be present
+    assert any("Pool.sol" in p for p in collected_paths), (
+        f"Expected Pool.sol in collected sources, got: {collected_paths}"
+    )
+    assert not any("PoolAddressesProviderRegistry" in p for p in collected_paths), (
+        f"Registry file should NOT be collected; got: {collected_paths}"
+    )
+
+
+# ── Problem 2A: Error history deduplication ───────────────────────
+
+@pytest.mark.asyncio
+async def test_error_history_dedup_on_repeated_missing_test_exploit(
+    mock_llm, dummy_finding, monkeypatch, tmp_path
+):
+    """
+    When test_exploit() is missing on two consecutive attempts the error_history
+    should REPLACE the last entry, not grow to length 2.
+    """
+    # LLM returns code without test_exploit on first two calls,
+    # then valid code on the third.
+    no_test_code = (
+        "```solidity\n"
+        "pragma solidity ^0.8.0;\n"
+        "interface ITarget { function foo() external; }\n"
+        "```"
+    )
+    valid_code = (
+        "```solidity\n"
+        "pragma solidity ^0.8.0;\n"
+        "import \"forge-std/Test.sol\";\n"
+        "contract ExploitTest is Test {\n"
+        "    function setUp() public {}\n"
+        "    function test_exploit() public {}\n"
+        "}\n"
+        "```"
+    )
+    mock_llm.invoke.side_effect = [
+        MagicMock(content=no_test_code),
+        MagicMock(content=no_test_code),
+        MagicMock(content=valid_code),
+    ]
+
+    mock_sandbox = MagicMock()
+    mock_sandbox.tmp_dir = tmp_path
+    mock_sandbox.get_test_path.return_value = "test"
+    # Only called after test_exploit() IS present (third attempt)
+    mock_sandbox.run.return_value = MagicMock(success=True, stdout="[PASS]", stderr="")
+    monkeypatch.setattr(
+        "src.agents.workers.test_writer_worker.SandboxManager",
+        lambda repo_path=None: mock_sandbox,
+    )
+
+    worker = TestWriterWorker(llm_client=mock_llm)
+    # Return a non-empty source so the worker enters standard mode (MAX_ATTEMPTS=6)
+    # Empty sources triggers MOCK mode which caps at 2 attempts — not enough for this test.
+    _fake_src = {"src/Contract.sol": "pragma solidity ^0.8.0; contract Contract {}"}
+    monkeypatch.setattr(worker, "_collect_repo_sources", lambda *a, **kw: _fake_src)
+    monkeypatch.setattr(worker, "_collect_minimal_sources", lambda *a, **kw: _fake_src)
+    monkeypatch.setattr(worker, "_fetch_rag_context", lambda *a, **kw: "")
+    monkeypatch.setattr(worker, "_fetch_error_rag_context", lambda *a, **kw: "")
+
+    task = WorkerTask(
+        task_id="t_dedup",
+        task_type="test_write",
+        context={"finding": dummy_finding, "relevant_code": {}},
+    )
+    output = await worker.run(task)
+
+    assert output.raw_output["attempts"] == 3
+    assert output.raw_output["exploit_success"] is True
+
+
+# ── Problem 2B: Minimal prompt activates after 2 consecutive misses ──
+
+def test_build_minimal_prompt_structure(dummy_finding):
+    """
+    _build_minimal_prompt returns a 2-message list with a system + user role.
+    The user message must contain the contract name and 'test_exploit'.
+    """
+    worker = TestWriterWorker(llm_client=None)
+    jury_brief = {
+        "what_to_prove": "setReserveInterestRateStrategyAddress is callable by anyone",
+        "attack_steps": ["Call setReserveInterestRateStrategyAddress directly"],
+        "what_success_looks_like": "call succeeds without revert",
+    }
+    source = "contract Pool { function setReserveInterestRateStrategyAddress() external {} }"
+
+    messages = worker._build_minimal_prompt(dummy_finding, source, jury_brief)
+
+    assert len(messages) == 2
+    assert messages[0]["role"] == "system"
+    assert messages[1]["role"] == "user"
+    system_text = messages[0]["content"]
+    user_text = messages[1]["content"]
+    # Must insist on test_exploit()
+    assert "test_exploit" in system_text
+    # Must include the what_to_prove directive
+    assert "setReserveInterestRateStrategyAddress is callable by anyone" in user_text
+    # Must include the source code
+    assert "contract Pool" in user_text
+
+
+@pytest.mark.asyncio
+async def test_minimal_prompt_activates_after_2_misses(
+    mock_llm, dummy_finding, monkeypatch, tmp_path
+):
+    """
+    After 2 consecutive test_exploit() missing failures, use_minimal_prompt
+    is set to True and _build_minimal_prompt() is called on the third attempt.
+    """
+    no_test_code = (
+        "```solidity\n"
+        "pragma solidity ^0.8.0;\n"
+        "interface IFoo { function bar() external; }\n"
+        "```"
+    )
+    valid_code = (
+        "```solidity\n"
+        "pragma solidity ^0.8.0;\n"
+        "import \"forge-std/Test.sol\";\n"
+        "contract ExploitTest is Test {\n"
+        "    function setUp() public {}\n"
+        "    function test_exploit() public {}\n"
+        "}\n"
+        "```"
+    )
+    mock_llm.invoke.side_effect = [
+        MagicMock(content=no_test_code),  # attempt 1: miss #1
+        MagicMock(content=no_test_code),  # attempt 2: miss #2 → triggers minimal
+        MagicMock(content=valid_code),    # attempt 3: minimal prompt, valid response
+    ]
+
+    mock_sandbox = MagicMock()
+    mock_sandbox.tmp_dir = tmp_path
+    mock_sandbox.get_test_path.return_value = "test"
+    mock_sandbox.run.return_value = MagicMock(success=True, stdout="[PASS]", stderr="")
+    monkeypatch.setattr(
+        "src.agents.workers.test_writer_worker.SandboxManager",
+        lambda repo_path=None: mock_sandbox,
+    )
+
+    minimal_prompt_calls: list[dict] = []
+    worker = TestWriterWorker(llm_client=mock_llm)
+
+    # Patch _build_minimal_prompt to record calls while still delegating
+    _orig = worker._build_minimal_prompt
+    def _recording_minimal_prompt(finding, source_code, jury_brief):
+        result = _orig(finding, source_code, jury_brief)
+        minimal_prompt_calls.append({"source_code": source_code, "result": result})
+        return result
+    monkeypatch.setattr(worker, "_build_minimal_prompt", _recording_minimal_prompt)
+
+    # Return a non-empty source so the worker enters standard mode (MAX_ATTEMPTS=6)
+    # Empty sources triggers MOCK mode which caps at 2 attempts — not enough for this test.
+    _fake_src = {"src/Contract.sol": "pragma solidity ^0.8.0; contract Contract {}"}
+    monkeypatch.setattr(worker, "_collect_repo_sources", lambda *a, **kw: _fake_src)
+    monkeypatch.setattr(worker, "_collect_minimal_sources", lambda *a, **kw: _fake_src)
+    monkeypatch.setattr(worker, "_fetch_rag_context", lambda *a, **kw: "")
+    monkeypatch.setattr(worker, "_fetch_error_rag_context", lambda *a, **kw: "")
+
+    task = WorkerTask(
+        task_id="t_minimal",
+        task_type="test_write",
+        context={"finding": dummy_finding, "relevant_code": {}},
+    )
+    output = await worker.run(task)
+
+    assert output.raw_output["attempts"] == 3
+    assert output.raw_output["exploit_success"] is True
+    # _build_minimal_prompt must have been called exactly once (on attempt 3)
+    assert len(minimal_prompt_calls) == 1, (
+        f"Expected _build_minimal_prompt called once, got {len(minimal_prompt_calls)}"
+    )

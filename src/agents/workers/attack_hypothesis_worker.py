@@ -65,14 +65,59 @@ Return ONLY valid JSON. No markdown fences, no preamble, no explanation.
   "confidence": <integer 35-100>,
   "impact": "What an attacker gains if this succeeds",
   "preconditions": ["What must be true for this exploit to work"],
+  "preconditions_missing": ["Conditions NOT currently met but needed for the exploit"],
+  "postconditions": ["What state changes if this exploit succeeds"],
+  "verdict": "CONFIRMED | PARTIAL | CONTESTED",
   "reasoning": "Why this confidence score"
 }
+
+## verdict Rules
+- CONFIRMED: You have high confidence (>=70) this is exploitable with current state.
+- PARTIAL: Exploitable only if certain preconditions are met that are NOT currently true.
+  List missing preconditions in "preconditions_missing". Another vulnerability might create them.
+- CONTESTED: Evidence is mixed. You see signals but can't conclusively confirm or deny.
+  ALWAYS prefer CONTESTED over dismissing the finding.
+- NEVER output verdict "REFUTED" — that requires proof, which happens in later pipeline stages.
+
+## postconditions Rules
+- List ALL state changes that would occur if this exploit succeeds.
+- Include: balance changes, ownership transfers, variable modifications, emitted events.
+- These enable discovery of MULTI-STEP EXPLOITS where this finding enables another.
+- Example: ["attacker gains ownership", "admin variable set to attacker address"]
 
 ## attack_path Rules
 - Use the format "ContractName::functionName" (double colon)
 - Start with the external entry point, end with the vulnerable function
 - Minimum 1 element. If only one function is involved, just list that one.
 - Do NOT leave this empty. Always include at least the target function.
+
+## ═══════════════════════════════════════════════════════════
+## ANTI-DISMISSAL RULES (MANDATORY — violation is pipeline failure)
+## ═══════════════════════════════════════════════════════════
+
+**R4 — CONTESTED beats REFUTED**: When uncertain, verdict MUST be CONTESTED, not dismissed.
+  Only later pipeline stages with PoC evidence can REFUTE. You cannot.
+
+**R10 — Worst-state severity**: Assess severity at the WORST reachable state, not the
+  current deployment snapshot. If the protocol could reach a state where this is
+  exploitable (e.g., after a governance action, after pool grows), assess at THAT state.
+
+**R12 — Exhaustive enabler enumeration**: Before concluding a precondition blocks exploitation,
+  you MUST check whether ANY of these actors could create it:
+  1. External attacker (flash loan, MEV, direct call)
+  2. Semi-trusted role (admin, keeper, operator)
+  3. Natural protocol operation (over time, as TVL grows)
+  4. External event (oracle failure, chain reorg, price crash)
+  5. User action sequence (specific order of deposits/withdrawals)
+  If ANY actor could create the precondition → verdict PARTIAL, not dismissed.
+
+**R13 — Anti-normalization**: "By design" describes mechanism, not impact. If a function
+  intentionally allows X but X causes fund loss, the IMPACT is still real.
+  The sentence "this is by design" must NEVER reduce severity.
+
+**R15 — Flash loan precondition check**: Before concluding an economic attack requires
+  "too much capital", check if a flash loan removes the capital barrier.
+  If flash-loaned capital could fund the attack → precondition is NOT missing.
 
 ## Common Vulnerability Patterns (trust graph signals heavily)
 
@@ -209,6 +254,9 @@ class AttackHypothesisWorker(WorkerAgent):
                 "title": parsed.get("title"),
                 "impact": parsed.get("impact"),
                 "preconditions": parsed.get("preconditions", []),
+                "preconditions_missing": parsed.get("preconditions_missing", []),
+                "postconditions": parsed.get("postconditions", []),
+                "verdict": parsed.get("verdict", "CONTESTED"),
                 "graph_signals_used": signals,
                 "affected_contract": hotspot.contract,
                 "affected_function": hotspot.function,

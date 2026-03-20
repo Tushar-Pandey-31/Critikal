@@ -2,6 +2,7 @@ import html
 from datetime import datetime
 
 from src.models.finding import FindingStatus
+from src.reporting.markdown_report import _assign_finding_ids
 from src.utils.node_ids import normalize_node_id
 
 
@@ -15,6 +16,9 @@ def render_html_report(
 ) -> str:
     """Returns a complete self-contained HTML string."""
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+
+    # Epic 7: Assign clean finding IDs (C-01, H-01, etc.)
+    findings = _assign_finding_ids(findings)
 
     severity_counts: dict[str, dict[str, int]] = {
         "CRITICAL": {"total": 0, "proven": 0},
@@ -51,7 +55,7 @@ def render_html_report(
 <body>
 <header id="header">
   <div class="header-left">
-    <span class="logo">PENTEAM</span>
+    <span class="logo">CRITIKAL</span>
     <span class="header-title">Security Report</span>
   </div>
   <div class="header-right">
@@ -117,14 +121,17 @@ def _build_sidebar_items(findings: list) -> str:
         sev_color = _SEV_COLORS.get(f.severity_estimate, "#8b949e")
         icon = "●" if is_proven else "○"
         icon_color = "#3fb950" if is_proven else sev_color
+        fid = getattr(f, 'report_id', '') or ''
         label = html.escape(f"{f.affected_contract}::{f.affected_function}")
         proven_tag = ' <span class="proven-tag">PROVEN</span>' if is_proven else ""
+        evidence_tag = getattr(f, 'evidence_tag', '') or ''
+        ev_html = f' <span class="evidence-tag">{html.escape(evidence_tag)}</span>' if evidence_tag else ''
         parts.append(
             f'<a class="sidebar-item" href="#finding-{idx}" data-idx="{idx}">'
             f'<span class="si-icon" style="color:{icon_color}">{icon}</span>'
             f'<span class="si-body">'
-            f'<span class="si-sev" style="color:{sev_color}">{html.escape(f.severity_estimate)}</span>'
-            f'{proven_tag}'
+            f'<span class="si-sev" style="color:{sev_color}">{html.escape(fid)} {html.escape(f.severity_estimate)}</span>'
+            f'{proven_tag}{ev_html}'
             f'<span class="si-name">{label}</span>'
             f'</span></a>'
         )
@@ -176,12 +183,36 @@ def _build_finding_panels(findings: list, leads: list[dict], poc_files: list[dic
         sev_color = _SEV_COLORS.get(f.severity_estimate, "#8b949e")
 
         # Status badges
-        sev_badge = _badge(f.severity_estimate, sev_color, "sev-badge")
+        fid = getattr(f, 'report_id', '') or ''
+        sev_badge = _badge(f"{fid} {f.severity_estimate}" if fid else f.severity_estimate, sev_color, "sev-badge")
         status_badge = (
             _badge("PROVEN EXPLOIT", "#3fb950", "status-badge")
             if is_proven
             else _badge("UNVERIFIED", "#d29922", "status-badge")
         )
+
+        # v2: Evidence tag badge
+        evidence_tag = getattr(f, 'evidence_tag', '') or ''
+        ev_badge_html = ''
+        if evidence_tag:
+            ev_colors = {
+                '[POC-PASS]': '#3fb950', '[POC-PASS-VARIANT]': '#56d364',
+                '[POC-FAIL]': '#f85149', '[CODE-TRACE]': '#d29922',
+                '[FUZZ-PASS]': '#79c0ff',
+            }
+            ev_color = ev_colors.get(evidence_tag, '#8b949e')
+            ev_badge_html = _badge(evidence_tag, ev_color, 'evidence-badge')
+
+        # v2: Verdict badge
+        verdict = getattr(f, 'verdict', '') or ''
+        verdict_badge_html = ''
+        if verdict and verdict != 'UNASSESSED':
+            v_colors = {
+                'CONFIRMED': '#3fb950', 'PARTIAL': '#d29922',
+                'CONTESTED': '#f78166', 'REFUTED': '#f85149',
+            }
+            v_color = v_colors.get(verdict, '#8b949e')
+            verdict_badge_html = _badge(f'VERDICT: {verdict}', v_color, 'verdict-badge')
 
         # Attack path visualization
         attack_path_html = ""
@@ -198,6 +229,35 @@ def _build_finding_panels(findings: list, leads: list[dict], poc_files: list[dic
         # Confidence bar
         conf = max(0, min(100, f.confidence))
         conf_color = "#3fb950" if conf >= 80 else ("#d29922" if conf >= 50 else "#f85149")
+
+        # v2: Preconditions / postconditions
+        preconditions_html = ''
+        preconditions = getattr(f, 'preconditions', []) or []
+        preconditions_missing = getattr(f, 'preconditions_missing', []) or []
+        if preconditions or preconditions_missing:
+            items = ''
+            for p in preconditions:
+                items += f'<li class="pre-met">✅ {html.escape(p)}</li>'
+            for p in preconditions_missing:
+                items += f'<li class="pre-unmet">❌ {html.escape(p)} <em>(not currently met)</em></li>'
+            preconditions_html = f'<div class="section"><h3>Preconditions</h3><ul class="conditions-list">{items}</ul></div>'
+
+        postconditions_html = ''
+        postconditions = getattr(f, 'postconditions', []) or []
+        if postconditions:
+            items = ''.join(f'<li>{html.escape(p)}</li>' for p in postconditions)
+            postconditions_html = f'<div class="section"><h3>Postconditions (if exploited)</h3><ul class="conditions-list">{items}</ul></div>'
+
+        # v2: RAG references
+        rag_html = ''
+        rag_matches = getattr(f, 'rag_matches', []) or []
+        if rag_matches:
+            rag_items = ''
+            for m in rag_matches[:3]:
+                source = html.escape(m.get('source', 'Unknown'))
+                snippet = html.escape(m.get('snippet', '')[:120])
+                rag_items += f'<li><strong>{source}</strong>: {snippet}...</li>'
+            rag_html = f'<div class="section"><h3>Historical References (RAG)</h3><ul class="rag-list">{rag_items}</ul></div>'
 
         # PoC code
         test_code = _find_test_code_for_finding(f, leads, poc_files)
@@ -228,7 +288,7 @@ def _build_finding_panels(findings: list, leads: list[dict], poc_files: list[dic
         panels.append(f"""
     <article class="finding-panel" id="finding-{idx}">
       <div class="finding-header">
-        <div class="badges">{sev_badge}{status_badge}</div>
+        <div class="badges">{sev_badge}{status_badge}{ev_badge_html}{verdict_badge_html}</div>
         <h2>{html.escape(f.affected_contract)}::{html.escape(f.affected_function)}</h2>
         <p class="finding-title">{html.escape(f.title)}</p>
       </div>
@@ -237,6 +297,8 @@ def _build_finding_panels(findings: list, leads: list[dict], poc_files: list[dic
         <p>{html.escape(f.hypothesis or 'No hypothesis available.')}</p>
       </div>
       {f'<div class="section"><h3>Attack Path</h3>{attack_path_html}</div>' if attack_path_html else ''}
+      {preconditions_html}
+      {postconditions_html}
       <div class="section">
         <h3>Impact</h3>
         <p>{html.escape(f.impact or 'Not specified.')}</p>
@@ -248,6 +310,7 @@ def _build_finding_panels(findings: list, leads: list[dict], poc_files: list[dic
         </div>
         <span class="confidence-val" style="color:{conf_color}">{conf}%</span>
       </div>
+      {rag_html}
       {poc_html}
     </article>""")
     return "\n".join(panels)
@@ -404,6 +467,22 @@ body { background:var(--bg); color:var(--text); font-family:system-ui,-apple-sys
 .section { margin-top:16px; }
 .section h3 { font-size:12px; text-transform:uppercase; letter-spacing:.5px; color:#8b949e; margin-bottom:6px; }
 .section p { color:var(--text); }
+
+/* v2: Conditions lists */
+.conditions-list { list-style:none; padding:0; }
+.conditions-list li { padding:4px 0; font-size:13px; }
+.pre-met { color:#3fb950; }
+.pre-unmet { color:#f85149; }
+.pre-unmet em { color:#8b949e; font-size:11px; }
+
+/* v2: RAG references */
+.rag-list { list-style:none; padding:0; }
+.rag-list li { padding:4px 0; font-size:12px; color:#8b949e; border-left:2px solid #30363d; padding-left:10px; margin-bottom:4px; }
+.rag-list strong { color:var(--accent); }
+
+/* v2: Evidence & verdict badges */
+.evidence-badge { font-size:10px; }
+.verdict-badge { font-size:10px; }
 
 /* Attack Path */
 .attack-path { display:flex; flex-wrap:wrap; align-items:center; gap:4px; }

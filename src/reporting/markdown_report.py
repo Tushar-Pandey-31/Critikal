@@ -1,8 +1,44 @@
+from collections import defaultdict
 from datetime import datetime
 
 from src.models.finding import FindingStatus
 from src.utils.node_ids import normalize_node_id
 
+
+# ═══════════════════════════════════════════════════════════
+#  Finding ID helpers (Epic 7)
+# ═══════════════════════════════════════════════════════════
+
+_SEV_PREFIX = {"CRITICAL": "C", "HIGH": "H", "MEDIUM": "M", "LOW": "L"}
+
+
+def _assign_finding_ids(findings: list) -> list:
+    """Assign sequential IDs like C-01, H-02 per severity."""
+    counters: dict[str, int] = defaultdict(int)
+    for f in findings:
+        sev = f.severity_estimate if f.severity_estimate in _SEV_PREFIX else "MEDIUM"
+        counters[sev] += 1
+        prefix = _SEV_PREFIX.get(sev, "F")
+        f.report_id = f"{prefix}-{counters[sev]:02d}"
+    return findings
+
+
+def _group_by_root_cause(findings: list) -> list[list]:
+    """Group findings by root_cause_group. Ungrouped findings are singletons."""
+    groups: dict[str, list] = {}
+    singles = []
+    for f in findings:
+        rcg = getattr(f, "root_cause_group", "") or ""
+        if rcg:
+            groups.setdefault(rcg, []).append(f)
+        else:
+            singles.append([f])
+    return list(groups.values()) + singles
+
+
+# ═══════════════════════════════════════════════════════════
+#  Main renderer
+# ═══════════════════════════════════════════════════════════
 
 def render_markdown_report(
     repo_url: str,
@@ -14,6 +50,9 @@ def render_markdown_report(
 ) -> str:
     """Returns a Markdown report suitable for HackerOne / Immunefi submission."""
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+
+    # Assign clean IDs
+    findings = _assign_finding_ids(findings)
 
     severity_counts: dict[str, dict[str, int]] = {
         "CRITICAL": {"total": 0, "proven": 0},
@@ -53,6 +92,7 @@ def render_markdown_report(
         c = severity_counts[sev]
         lines.append(f"| {sev} | {c['total']} | {c['proven']} |")
 
+    # Jury summary
     jury_confirmed = sum(1 for f in findings if getattr(f, "jury_decision", "") in ("CONFIRMED", "CONFIRMED_UNPROVABLE", "ESCALATE"))
     jury_rejected_count = len(jury_rejected) if jury_rejected else 0
     jury_unprovable_count = sum(1 for f in findings if getattr(f, "jury_decision", "") == "CONFIRMED_UNPROVABLE")
@@ -68,98 +108,23 @@ def render_markdown_report(
 
     lines += ["", "---", ""]
 
-    for idx, finding in enumerate(findings, start=1):
-        is_proven = finding.status == FindingStatus.PROVEN
-        proven_tag = "[PROVEN] " if is_proven else ""
-        confidence_label = f"{finding.confidence}% (Proven)" if is_proven else f"{finding.confidence}%"
-
-        lines += [
-            f"## Finding {idx} — {proven_tag}{finding.title}",
-            "",
-            f"**Severity:** {finding.severity_estimate}  ",
-            f"**Contract:** {finding.affected_contract}  ",
-            f"**Function:** {finding.affected_function}  ",
-            f"**Confidence:** {confidence_label}  ",
-            "",
-        ]
-        lines += [
-            "### Description",
-            "",
-            finding.hypothesis or "No hypothesis available.",
-            "",
-        ]
-
-        # Add jury verdict if jury was run
-        jury_decision = getattr(finding, "jury_decision", "")
-        if jury_decision:
-            jury_emoji = {
-                "CONFIRMED": "✅",
-                "CONFIRMED_UNPROVABLE": "⚠️",
-                "ESCALATE": "🔍",
-                "REJECTED": "❌",
-            }.get(jury_decision, "")
-
-            lines.append(f"\n### Jury Verdict: {jury_emoji} {jury_decision}\n")
-            
-            vote_summary = getattr(finding, "jury_vote_summary", "")
-            if vote_summary:
-                lines.append(f"**Votes:** {vote_summary}\n")
-            
-            jury_reasoning = getattr(finding, "jury_reasoning", "")
-            if jury_reasoning:
-                lines.append(f"**Reasoning:** {jury_reasoning}\n")
-
-            if jury_decision == "CONFIRMED_UNPROVABLE":
-                unprovable_reason = getattr(finding, "jury_unprovable_reason", "")
-                if unprovable_reason:
-                    lines.append(f"**Why unprovable in isolation:** {unprovable_reason}\n")
-                lines.append(f"**Recommendation:** Test with mainnet fork or manual review\n")
-
-            if jury_decision == "ESCALATE":
-                lines.append(f"**Action required:** Human review recommended — jurors disagreed\n")
-
-        if finding.attack_path:
-            path_str = " → ".join(
-                f"`{node}`" for node in finding.attack_path
-            )
+    # ── Findings (grouped by root cause) ──────────────────
+    groups = _group_by_root_cause(findings)
+    for group in groups:
+        if len(group) > 1:
+            # Root-cause group header
+            rcg = group[0].root_cause_group
+            ids = ", ".join(f.report_id for f in group)
             lines += [
-                "### Attack Path",
-                "",
-                path_str,
+                f"## Root Cause Group: {rcg}",
+                f"*Findings {ids} share the same underlying root cause.*",
                 "",
             ]
 
-        if finding.impact:
-            lines += [
-                "### Impact",
-                "",
-                finding.impact,
-                "",
-            ]
+        for finding in group:
+            lines += _render_finding(finding, leads)
 
-        # Find matching test_code from leads
-        test_code = _find_test_code(finding, leads)
-        if test_code:
-            lines += [
-                "### Proof of Concept",
-                "",
-                "```solidity",
-                test_code,
-                "```",
-                "",
-                "### Reproduction",
-                "",
-                "```bash",
-                f'forge test --match-path "test/ExploitTest_{finding.affected_contract}'
-                f'_{finding.affected_function}.t.sol" \\',
-                '           --match-test test_exploit -vvv',
-                "```",
-                "",
-            ]
-
-        lines += ["---", ""]
-
-    # Add jury rejected findings section if any
+    # ── Rejected findings ─────────────────────────────────
     if jury_rejected:
         lines.append("\n---\n")
         lines.append("## Jury-Rejected Findings\n")
@@ -178,6 +143,125 @@ def render_markdown_report(
         lines += _render_token_usage_md(token_usage)
 
     return "\n".join(lines)
+
+
+def _render_finding(finding, leads: list[dict]) -> list[str]:
+    """Render a single finding with all v2 fields."""
+    is_proven = finding.status == FindingStatus.PROVEN
+    proven_tag = "[PROVEN] " if is_proven else ""
+    confidence_label = f"{finding.confidence}% (Proven)" if is_proven else f"{finding.confidence}%"
+    fid = getattr(finding, "report_id", "") or ""
+    evidence_tag = getattr(finding, "evidence_tag", "") or ""
+    verdict = getattr(finding, "verdict", "") or ""
+
+    lines = [
+        f"## {fid} — {proven_tag}{finding.title}",
+        "",
+        f"**Severity:** {finding.severity_estimate}  ",
+        f"**Contract:** {finding.affected_contract}  ",
+        f"**Function:** {finding.affected_function}  ",
+        f"**Confidence:** {confidence_label}  ",
+    ]
+
+    # v2: Evidence tag and verdict
+    meta_parts = []
+    if evidence_tag:
+        meta_parts.append(f"**Evidence:** {evidence_tag}")
+    if verdict and verdict != "UNASSESSED":
+        meta_parts.append(f"**Verdict:** {verdict}")
+    if meta_parts:
+        lines.append("  ".join(meta_parts) + "  ")
+
+    lines += [
+        "",
+        "### Description",
+        "",
+        finding.hypothesis or "No hypothesis available.",
+        "",
+    ]
+
+    # v2: Preconditions / postconditions
+    preconditions = getattr(finding, "preconditions", []) or []
+    preconditions_missing = getattr(finding, "preconditions_missing", []) or []
+    postconditions = getattr(finding, "postconditions", []) or []
+
+    if preconditions or preconditions_missing:
+        lines.append("### Preconditions\n")
+        for p in preconditions:
+            lines.append(f"- ✅ {p}")
+        for p in preconditions_missing:
+            lines.append(f"- ❌ {p} *(not currently met)*")
+        lines.append("")
+
+    if postconditions:
+        lines.append("### Postconditions (if exploited)\n")
+        for p in postconditions:
+            lines.append(f"- {p}")
+        lines.append("")
+
+    # Jury verdict
+    jury_decision = getattr(finding, "jury_decision", "")
+    if jury_decision:
+        jury_emoji = {
+            "CONFIRMED": "✅",
+            "CONFIRMED_UNPROVABLE": "⚠️",
+            "ESCALATE": "🔍",
+            "REJECTED": "❌",
+        }.get(jury_decision, "")
+        lines.append(f"\n### Jury Verdict: {jury_emoji} {jury_decision}\n")
+        vote_summary = getattr(finding, "jury_vote_summary", "")
+        if vote_summary:
+            lines.append(f"**Votes:** {vote_summary}\n")
+        jury_reasoning = getattr(finding, "jury_reasoning", "")
+        if jury_reasoning:
+            lines.append(f"**Reasoning:** {jury_reasoning}\n")
+        if jury_decision == "CONFIRMED_UNPROVABLE":
+            unprovable_reason = getattr(finding, "jury_unprovable_reason", "")
+            if unprovable_reason:
+                lines.append(f"**Why unprovable in isolation:** {unprovable_reason}\n")
+            lines.append(f"**Recommendation:** Test with mainnet fork or manual review\n")
+        if jury_decision == "ESCALATE":
+            lines.append(f"**Action required:** Human review recommended — jurors disagreed\n")
+
+    if finding.attack_path:
+        path_str = " → ".join(f"`{node}`" for node in finding.attack_path)
+        lines += ["### Attack Path", "", path_str, ""]
+
+    if finding.impact:
+        lines += ["### Impact", "", finding.impact, ""]
+
+    # v2: RAG references
+    rag_matches = getattr(finding, "rag_matches", []) or []
+    if rag_matches:
+        lines.append("### Historical References (RAG)\n")
+        for m in rag_matches[:3]:
+            source = m.get("source", "Unknown")
+            snippet = m.get("snippet", "")[:120]
+            lines.append(f"- **{source}**: {snippet}...")
+        lines.append("")
+
+    # PoC code
+    test_code = _find_test_code(finding, leads)
+    if test_code:
+        lines += [
+            "### Proof of Concept",
+            "",
+            "```solidity",
+            test_code,
+            "```",
+            "",
+            "### Reproduction",
+            "",
+            "```bash",
+            f'forge test --match-path "test/ExploitTest_{finding.affected_contract}'
+            f'_{finding.affected_function}.t.sol" \\',
+            '           --match-test test_exploit -vvv',
+            "```",
+            "",
+        ]
+
+    lines += ["---", ""]
+    return lines
 
 
 def _render_token_usage_md(token_usage: dict) -> list[str]:

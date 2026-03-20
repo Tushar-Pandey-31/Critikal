@@ -1101,6 +1101,11 @@ Hypothesis: {finding.hypothesis}
             return {}
         contract_name = finding.affected_contract
         target_path: Path | None = None
+        # Compile anchored pattern once for efficiency
+        _contract_def_re = re.compile(
+            rf'^(?:abstract\s+)?contract\s+{re.escape(contract_name)}[\s({{]',
+            re.MULTILINE,
+        )
         for search_dir in ["src", "contracts", "."]:
             base = repo / search_dir
             if not base.exists():
@@ -1110,7 +1115,12 @@ Hypothesis: {finding.hypothesis}
                     continue
                 try:
                     content = sol_file.read_text(encoding='utf-8', errors='replace')
-                    if f"contract {contract_name}" in content or f"contract {contract_name} " in content:
+                    # Strip comments first (method already exists) to avoid
+                    # false-positives from NatSpec / inline notes that merely
+                    # *mention* the contract name.  The anchored regex then
+                    # matches only actual `contract X` declarations.
+                    stripped = self._strip_solidity_comments(content)
+                    if _contract_def_re.search(stripped):
                         target_path = sol_file
                         break
                 except Exception:
@@ -1554,6 +1564,98 @@ Hypothesis: {finding.hypothesis}
             {"role": "user", "content": user_content}
         ]
 
+    def _build_variant_prompt(self, finding: "Finding", failed_code: str, failed_logs: str) -> list[dict]:
+        """
+        v2: Build a variant exploration prompt.
+        When a PoC compiles but the assertion fails, generate ONE relaxed variant
+        by changing a single dimension (amount, ordering, timing, or initial state).
+        """
+        system = """You are a Foundry exploit test writer. Your PREVIOUS test compiled and ran but the
+assertion FAILED — the exploit did NOT succeed as expected.
+
+Your job: write ONE relaxed variant that changes EXACTLY ONE dimension. Pick the most likely to succeed:
+
+1. **AMOUNT**: Change attack amounts (try 1 wei, 1 ether, 1000 ether, type(uint256).max)
+2. **ORDERING**: Change the order of operations (call B before A, or interleave differently)
+3. **TIMING**: Add vm.warp() or vm.roll() to advance time/blocks
+4. **INITIAL STATE**: Change setUp() to create a different starting condition (more liquidity, different roles)
+
+Rules:
+- Keep the SAME attack hypothesis — you're proving the same bug, just with different parameters
+- Output ONLY a complete .t.sol file with contract ExploitTest is Test { setUp(), test_exploit() }
+- The test_exploit() function MUST include assertEqual/assertTrue assertions that prove the exploit
+- Do NOT write interfaces or mocks only — write the FULL test
+- State which dimension you relaxed and why in a comment at the top"""
+
+        user = (
+            f"## Exploit that compiled but FAILED\n\n"
+            f"Vulnerability: {finding.vulnerability_class}\n"
+            f"Contract: {finding.affected_contract}\n"
+            f"Function: {finding.affected_function}\n"
+            f"Hypothesis: {finding.hypothesis or 'unknown'}\n\n"
+            f"## Failed test code:\n```solidity\n{failed_code[:4000]}\n```\n\n"
+            f"## Test output (showing WHY it failed):\n```\n{failed_logs}\n```\n\n"
+            f"Write ONE variant that relaxes a single dimension to prove this exploit works.\n"
+            f"State which dimension you changed and why."
+        )
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+
+    def _build_minimal_prompt(self, finding: "Finding", source_code: str, jury_brief: dict) -> list[dict]:
+        """
+        Emergency fallback when Claude keeps writing interfaces instead of test_exploit().
+        Strips ALL complexity — no imports, no manifests, no error history.
+        Just: vulnerable code + what to prove + write the test.
+        Activated after 2 consecutive test_exploit() missing failures.
+        """
+        contract = finding.affected_contract
+        func = finding.affected_function
+
+        what_to_prove = jury_brief.get('what_to_prove', f'{func} is callable without authorization')
+        attack_steps = jury_brief.get('attack_steps', [f'Call {func} directly'])
+        success = jury_brief.get('what_success_looks_like', 'call succeeds without revert')
+
+        system = """You are writing a Foundry test. Output ONLY a complete .t.sol file.
+The file MUST contain:
+  pragma solidity ^0.8.0;
+  import \"forge-std/Test.sol\";
+  contract ExploitTest is Test {
+      function setUp() public { ... }
+      function test_exploit() public { ... }
+  }
+Nothing else matters. Just write the test."""
+
+        user = (
+            f"Write a Foundry test proving: {what_to_prove}\n\n"
+            f"Contract: {contract}\n"
+            f"Function: {func}\n\n"
+            f"Source code:\n"
+            f"```solidity\n{source_code[:3000]}\n```\n\n"
+            f"Attack steps:\n"
+            + "\n".join(f"- {s}" for s in attack_steps)
+            + f"\n\nSuccess condition: {success}\n\n"
+            f"Output a complete .t.sol file exactly matching this structure. Do NOT write any other contracts:\n"
+            f"```solidity\n"
+            f"pragma solidity ^0.8.0;\n"
+            f"import \"forge-std/Test.sol\";\n"
+            f"// imports here\n"
+            f"contract ExploitTest is Test {{\n"
+            f"    function setUp() public {{\n"
+            f"        // target = new {contract}();\n"
+            f"    }}\n"
+            f"    function test_exploit() public {{\n"
+            f"        // YOUR ATTACK HERE\n"
+            f"    }}\n"
+            f"}}\n"
+            f"```"
+        )
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+
     async def run(self, task: WorkerTask) -> WorkerOutput:
         finding = task.context.get("finding")
         if isinstance(finding, list):
@@ -1687,9 +1789,13 @@ Hypothesis: {finding.hypothesis}
         error_history: list[str] = []
         compiled = False
         exploit_success = False
+        variant_success = False  # v2: variant exploration succeeded
         test_code_generated = None
         test_logs = ""
         persistent_error_codes: dict[str, int] = {}
+        # Problem 2B: track consecutive test_exploit() misses for minimal-prompt fallback
+        consecutive_missing_test_exploit = 0
+        use_minimal_prompt = False
 
         use_repo = repo_path if real_sources_full else None
         sandbox = SandboxManager(repo_path=use_repo)
@@ -1759,9 +1865,11 @@ Hypothesis: {finding.hypothesis}
                     vuln_class = finding.vulnerability_class or ""
                     _template_fn = get_template_for_vuln(vuln_class)
                     if _template_fn:
+                        # Resolve real path instead of hardcoding src/
+                        from src.agents.workers.bridge_interface_generator import resolve_deploy_code_path
                         deploy_path_for_template = deploy_paths.get(
                             finding.affected_contract,
-                            f"src/{finding.affected_contract}.sol",
+                            resolve_deploy_code_path(finding.affected_contract, repo_manifest, real_sources_full)
                         )
                         template_pragma = target_pragma or "^0.8.20"
                         test_code_generated = _template_fn(
@@ -1843,7 +1951,20 @@ Hypothesis: {finding.hypothesis}
                             "Define any missing interfaces inline in your test file (pragma ^0.8.0).\n\n" + last_err
                         )
 
-                if use_two_file_mode:
+                if use_minimal_prompt and not is_legacy and not use_two_file_mode:
+                    # Problem 2B: after 2 consecutive test_exploit() misses, strip ALL
+                    # complexity and give Claude only the vulnerable source + directive.
+                    _min_src_text = next(
+                        iter((real_sources_full or real_sources_minimal or {}).values()), ""
+                    )
+                    _jury_brief = task.context.get("jury_brief", {})
+                    prompt = self._build_minimal_prompt(finding, _min_src_text, _jury_brief)
+                    print(
+                        f"  [TestWriter] MINIMAL FALLBACK PROMPT activated "
+                        f"(consecutive misses={consecutive_missing_test_exploit})"
+                    )
+                    use_minimal_prompt = False  # one attempt at a time
+                elif use_two_file_mode:
                     prompt = self._build_attack_only_prompt(
                         finding,
                         error_history,
@@ -1999,7 +2120,10 @@ Hypothesis: {finding.hypothesis}
                             logger.info(f"[TestWriter] Attempt {attempts}: Missing 'function test_exploit()' in generated code.")
                             if funcs:
                                 logger.info(f"[TestWriter]   Found functions: {funcs}")
-                            error_history.append(
+                            # Problem 2A: replace the last error entry if it was also a
+                            # test_exploit-missing rejection.  Growing the list causes Claude
+                            # to anchor on 'fixing' the previous code rather than writing a test.
+                            _rejection_msg = (
                                 f"❌ REJECTED — MISSING test_exploit() ❌\n\n"
                                 f"Your previous output was AUTOMATICALLY REJECTED because it did not contain "
                                 f"'function test_exploit() public'.\n\n"
@@ -2011,7 +2135,7 @@ Hypothesis: {finding.hypothesis}
                                 f"// ... any helper contracts ...\n"
                                 f"contract ExploitTest is Test {{\n"
                                 f"    function setUp() public {{ /* deploy contracts */ }}\n"
-                                f"    function test_exploit() public {{ /* THE ATTACK */ }}\n"  
+                                f"    function test_exploit() public {{ /* THE ATTACK */ }}\n"
                                 f"}}\n"
                                 f"```\n\n"
                                 f"Your previous rejected code (first 300 chars):\n"
@@ -2020,7 +2144,23 @@ Hypothesis: {finding.hypothesis}
                                 f"The ONLY acceptable output is a complete test file ending with "
                                 f"contract ExploitTest is Test {{ ... function test_exploit() ... }}"
                             )
+                            if error_history and "MISSING test_exploit()" in error_history[-1]:
+                                error_history[-1] = _rejection_msg  # replace — don't grow
+                            else:
+                                error_history.append(_rejection_msg)
+                            # Problem 2B: track consecutive misses
+                            consecutive_missing_test_exploit += 1
+                            if consecutive_missing_test_exploit >= 2:
+                                use_minimal_prompt = True
+                                logger.info(
+                                    f"[TestWriter] 2 consecutive test_exploit() misses — "
+                                    f"minimal prompt will be used on next attempt"
+                                )
                             continue
+
+                        # test_exploit() found — reset miss counter
+                        consecutive_missing_test_exploit = 0
+                        use_minimal_prompt = False
 
                         if not is_legacy and not use_two_file_mode:
                             test_code_generated = self._auto_correct_imports(
@@ -2208,6 +2348,67 @@ Hypothesis: {finding.hypothesis}
                     err_msg = f"Test compiled but exploit check failed.\nLogs:\n{test_logs[:400]}"
                     if test_code_generated:
                         err_msg = f"Code you wrote:\n```solidity\n{test_code_generated}\n```\n\n" + err_msg
+
+                    # ── v2: Variant Exploration ──────────────────────────────────
+                    # Before giving up, try ONE relaxed variant. This catches cases
+                    # where the exploit is real but the specific parameters fail.
+                    if not use_two_file_mode and not is_legacy and attempts < effective_max:
+                        print(f"  [TestWriter] ── VARIANT EXPLORATION ──")
+                        variant_prompt = self._build_variant_prompt(
+                            finding, test_code_generated, test_logs[:800]
+                        )
+                        try:
+                            t_var = time.time()
+                            var_response = await asyncio.wait_for(
+                                asyncio.to_thread(self.llm_client.invoke, variant_prompt),
+                                timeout=self.LLM_TIMEOUT
+                            )
+                            var_elapsed = time.time() - t_var
+                            var_content = var_response.content if hasattr(var_response, "content") else str(var_response)
+                            if isinstance(var_content, list):
+                                var_content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in var_content])
+                            print(f"  [TestWriter] Variant LLM responded in {var_elapsed:.1f}s ({len(var_content)} chars)")
+
+                            var_code = self._extract_test_code(var_content)
+                            if var_code and self._has_exact_test_exploit(var_code):
+                                var_code = self._auto_correct_imports(
+                                    var_code, sandbox, remappings,
+                                    collected_paths=list(sources_for_attempt.keys()) if sources_for_attempt else None,
+                                )
+                                test_path = sandbox.get_test_path()
+                                test_file = f"{test_path}/ExploitTest.t.sol"
+                                sandbox.write_test_file(test_file, var_code)
+                                self._clear_forge_cache(sandbox)
+
+                                var_test_res = sandbox.run(
+                                    "forge test --match-test test_exploit --no-cache -vvvv"
+                                    " --ignored-error-codes 8429 --ignored-error-codes 2424"
+                                )
+                                var_logs = (var_test_res.stdout or "") + "\n" + (var_test_res.stderr or "")
+                                var_passed = var_test_res.success and ("[PASS]" in var_logs or "exploit succeeded" in var_logs.lower())
+
+                                if var_passed:
+                                    # Check authenticity
+                                    authentic, auth_reason = self._check_test_authenticity(
+                                        var_code, finding.affected_contract, is_legacy,
+                                    )
+                                    if authentic:
+                                        print(f"  [TestWriter] ✓ VARIANT SUCCEEDED! Exploit proven via relaxed parameters")
+                                        exploit_success = True
+                                        variant_success = True
+                                        test_code_generated = var_code
+                                        test_logs = var_logs
+                                        break
+                                    else:
+                                        print(f"  [TestWriter] Variant passed but FABRICATED: {auth_reason}")
+                                else:
+                                    print(f"  [TestWriter] Variant also failed — exploit genuinely not provable with this approach")
+                            else:
+                                print(f"  [TestWriter] Variant LLM did not produce valid test code")
+                        except (asyncio.TimeoutError, Exception) as var_err:
+                            print(f"  [TestWriter] Variant exploration failed: {var_err}")
+                    # ── End variant exploration ──────────────────────────────────
+
                     error_history.append(err_msg)
                     self._clear_forge_cache(sandbox)
                     logger.info(f"[TestWriter] Attempt {attempts}: Test compiled but exploit FAILED.")
@@ -2258,6 +2459,16 @@ Hypothesis: {finding.hypothesis}
             print(f"  [TestWriter]   Last error: {error_history[-1][:150]}")
         print(f"{'='*70}\n")
 
+        # ── v2: Assign evidence tag ───────────────────────────────
+        if compiled and exploit_success and variant_success:
+            evidence_tag = "[POC-PASS-VARIANT]"
+        elif compiled and exploit_success:
+            evidence_tag = "[POC-PASS]"
+        elif compiled:
+            evidence_tag = "[POC-FAIL]"
+        else:
+            evidence_tag = "[CODE-TRACE]"
+
         return WorkerOutput(
             worker_type=self.get_worker_type(),
             task_id=task.task_id,
@@ -2265,6 +2476,8 @@ Hypothesis: {finding.hypothesis}
             raw_output={
                 "compiled": compiled,
                 "exploit_success": exploit_success,
+                "variant_success": variant_success,
+                "evidence_tag": evidence_tag,
                 "test_code": test_code_generated,
                 "test_logs": test_logs,
                 "attempts": attempts,
