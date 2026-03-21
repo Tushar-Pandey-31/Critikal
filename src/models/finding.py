@@ -78,6 +78,12 @@ class Finding:
     root_cause_group: str = ""    # for consolidation: same root_cause_group → merged
     rag_matches: List[dict] = field(default_factory=list)  # [{source, snippet}]
 
+    # ── v2: Chain analysis fields ─────────────────────────────────
+    chain_ids: List[str] = field(default_factory=list)      # CH-01, CH-02 if part of a chain
+    chain_role: str = ""                                     # "enabler" or "blocked" or ""
+    chain_severity_upgrade: str = ""                         # "MEDIUM → HIGH" etc.
+
+
     # ── Jury system fields (existing) ─────────────────────────────
     jury_decision: str = ""
     jury_vote_summary: str = ""

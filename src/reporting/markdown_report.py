@@ -47,6 +47,7 @@ def render_markdown_report(
     leads: list[dict],
     token_usage: dict | None = None,
     jury_rejected: list | None = None,
+    chain_hypotheses: list | None = None,
 ) -> str:
     """Returns a Markdown report suitable for HackerOne / Immunefi submission."""
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
@@ -124,6 +125,38 @@ def render_markdown_report(
         for finding in group:
             lines += _render_finding(finding, leads)
 
+    # ── Chain Hypotheses ──────────────────────────────────
+    if chain_hypotheses:
+        lines.append("\n---\n")
+        lines.append("## 🔗 Multi-Step Exploit Chains\n")
+        lines.append(
+            "Chain analysis links findings where one vulnerability's postconditions "
+            "create the preconditions needed by another, forming multi-step exploits.\n"
+        )
+        for chain in chain_hypotheses:
+            enabler = chain.enabler_finding
+            blocked = chain.blocked_finding
+            e_id = getattr(enabler, 'report_id', enabler.id[:8])
+            b_id = getattr(blocked, 'report_id', blocked.id[:8])
+            lines.append(f"### {chain.chain_id}: {enabler.affected_function} → {blocked.affected_function}\n")
+            lines.append(f"**Match:** {chain.match_strength} {chain.match_type}  ")
+            lines.append(f"**Chain Severity:** `{chain.chain_severity}`\n")
+            lines.append(f"| Role | Finding | Contract | Function |")
+            lines.append(f"|------|---------|----------|----------|")
+            lines.append(
+                f"| Enabler | {e_id} | {enabler.affected_contract} | {enabler.affected_function} |"
+            )
+            lines.append(
+                f"| Blocked | {b_id} | {blocked.affected_contract} | {blocked.affected_function} |"
+            )
+            lines.append(f"\n**Postcondition (B creates):** {chain.matched_postcondition}  ")
+            lines.append(f"**Precondition (A needs):** {chain.matched_precondition}\n")
+            if chain.combined_attack_steps:
+                lines.append("**Combined Attack Sequence:**\n")
+                for i, step in enumerate(chain.combined_attack_steps, 1):
+                    lines.append(f"{i}. `{step}`")
+                lines.append("")
+
     # ── Rejected findings ─────────────────────────────────
     if jury_rejected:
         lines.append("\n---\n")
@@ -171,6 +204,26 @@ def _render_finding(finding, leads: list[dict]) -> list[str]:
         meta_parts.append(f"**Verdict:** {verdict}")
     if meta_parts:
         lines.append("  ".join(meta_parts) + "  ")
+
+    # v2: Chain link badges
+    chain_ids = getattr(finding, "chain_ids", []) or []
+    chain_role = getattr(finding, "chain_role", "") or ""
+    chain_upgrade = getattr(finding, "chain_severity_upgrade", "") or ""
+    if chain_ids:
+        chain_str = ", ".join(chain_ids)
+        lines.append(f"**Chains:** {chain_str} (role: {chain_role})  ")
+        if chain_upgrade:
+            lines.append(f"**Severity Upgrade:** {chain_upgrade}  ")
+
+    # v2: Depth verdicts
+    depth_verdicts = getattr(finding, "depth_verdicts", []) or []
+    if depth_verdicts:
+        lines.append(f"**Depth Passes:** {len(depth_verdicts)}  ")
+        for dv in depth_verdicts:
+            agent = dv.get("agent", "unknown")
+            verdict_d = dv.get("verdict", "CONTESTED")
+            lines.append(f"  - `{agent}` → **{verdict_d}** (confidence: {dv.get('confidence', '?')})  ")
+
 
     lines += [
         "",

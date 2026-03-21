@@ -670,6 +670,52 @@ async def coordinator_node(state: AgentState):
         from src.knowledge.rag_system import rag_batch_validate
         findings = rag_batch_validate(findings)
 
+    # ── Step 4.7: Depth Worker Pass ──────────────────────
+    # Re-analyze uncertain findings from specialized angles
+    uncertain_count = sum(
+        1 for f in findings
+        if f.verdict in ("CONTESTED", "PARTIAL", "UNASSESSED")
+    )
+    if uncertain_count > 0:
+        print(f"[Step 4.7] Running depth workers on {uncertain_count} uncertain finding(s)...")
+        try:
+            from src.agents.workers.depth_workers import run_depth_workers
+            depth_llm = get_llm(bind_tools=False)
+            depth_model = os.getenv("DEPTH_MODEL_NAME", os.getenv("MODEL_NAME", "gemini-2.5-flash"))
+            import asyncio as _aio
+            loop = _aio.get_event_loop()
+            depth_results = loop.run_until_complete(
+                run_depth_workers(
+                    findings=findings,
+                    graph=state["graph"],
+                    source_cache={},  # depth workers extract source from graph nodes
+                    llm_client=depth_llm,
+                    model_name=depth_model,
+                )
+            )
+            print(f"[Step 4.7] Depth pass complete: {len(depth_results)} finding(s) re-analyzed")
+        except Exception as e:
+            print(f"[Step 4.7] Depth workers failed (non-fatal): {e}")
+    else:
+        print("[Step 4.7] No uncertain findings — skipping depth pass")
+
+    # ── Step 4.8: Chain Analysis ──────────────────────────
+    # Link findings by matching postconditions → preconditions_missing
+    if len(findings) >= 2:
+        print("[Step 4.8] Running chain analysis...")
+        try:
+            from src.agents.chain_analyzer import run_chain_analysis
+            chain_hypotheses = run_chain_analysis(findings)
+            # Store chains on state for report consumption
+            state["chain_hypotheses"] = chain_hypotheses
+            print(f"[Step 4.8] Chain analysis complete: {len(chain_hypotheses)} chain(s) found")
+        except Exception as e:
+            print(f"[Step 4.8] Chain analysis failed (non-fatal): {e}")
+            state["chain_hypotheses"] = []
+    else:
+        print("[Step 4.8] Not enough findings for chain analysis")
+        state["chain_hypotheses"] = []
+
     # ── Step 5: Coordinator LLM Synthesis ─────────────────
     # The programmatic pipeline (Recon → Hotspots → Attack → TestWriter) has
     # already run above. The LLM's ONLY job here is to produce the final JSON
@@ -961,9 +1007,14 @@ async def coordinator_node(state: AgentState):
                     print(f"  TestWriter error on {finding.hotspot_node_id}: {output}")
                     continue
 
-                if not getattr(output, "validation_passed", False):
-                    print(f"  [x] {finding.hotspot_node_id} — Validation FAILED")
-                    finding.status = FindingStatus.REJECTED
+                raw_result = getattr(output, "raw_output", {}) or {}
+                if not raw_result.get("exploit_success", False):
+                    compiled = raw_result.get("compiled", False)
+                    print(f"  [x] {finding.hotspot_node_id} — PoC {'compiled but failed' if compiled else 'did not compile'}")
+                    # Don't override Jury-confirmed findings to REJECTED — 
+                    # a failed PoC doesn't mean the vulnerability is a false positive
+                    if finding.verdict != "CONFIRMED":
+                        finding.status = FindingStatus.REJECTED
                     setattr(finding, "confidence", getattr(output, "confidence", getattr(finding, "confidence", 0)))
                     
                     # Keep the false-positive in the list, just update status
@@ -998,17 +1049,17 @@ async def coordinator_node(state: AgentState):
                     finding_id = normalize_node_id(finding.hotspot_node_id)
 
                     if lead_id == finding_id:
-                        raw = getattr(output, "raw_output", {}) or {} # Use getattr for raw_output
+                        raw = getattr(output, "raw_output", {}) or {}
                         lead.update({
                             "confidence": finding.confidence,
-                            "test_code": getattr(output, "test_code", None), # Use getattr
-                            "exploit_success": getattr(output, "exploit_success", False), # Use getattr
+                            "test_code": raw.get("test_code"),
+                            "exploit_success": raw.get("exploit_success", False),
                             "compiled": raw.get("compiled"),
                             "attempts": raw.get("attempts"),
                             "evidence_tag": raw.get("evidence_tag", ""),
                             "variant_success": raw.get("variant_success", False),
                         })
-                        if getattr(output, "exploit_success", False) and not lead.get("title", "").startswith("[PROVEN]"): # Use getattr
+                        if raw.get("exploit_success", False) and not lead.get("title", "").startswith("[PROVEN]"):
                             lead["title"] = f"[PROVEN] {lead.get('title', '')}"
                         break
 

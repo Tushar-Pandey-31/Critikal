@@ -1865,8 +1865,7 @@ Nothing else matters. Just write the test."""
                     vuln_class = finding.vulnerability_class or ""
                     _template_fn = get_template_for_vuln(vuln_class)
                     if _template_fn:
-                        # Resolve real path instead of hardcoding src/
-                        from src.agents.workers.bridge_interface_generator import resolve_deploy_code_path
+                        # resolve_deploy_code_path is already imported at module level (line 21)
                         deploy_path_for_template = deploy_paths.get(
                             finding.affected_contract,
                             resolve_deploy_code_path(finding.affected_contract, repo_manifest, real_sources_full)

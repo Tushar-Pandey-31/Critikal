@@ -10,7 +10,7 @@ Critikal is an advanced, human-in-the-loop multi-agent system designed for autom
 - **Multi-Agent Orchestration**: Specialized AI agents (Recon, Attack, TestWriter) orchestrated by LangGraph to analyze specific risk hotspots.
 - **Automated Exploit Generation (Phoenix Loop)**: Automatically writes Foundry test files (`.t.sol`) to prove vulnerabilities via live execution, including smart retry variant exploration (adjusting timing, amounts, and ordering).
 - **RAG Validation**: Queries historical exploit data to boost or penalize finding confidence based on established precedent.
-- **Jury System**: Optional adversarial validation phase to filter out false positives.
+- **Jury System**: Optional multi-model adversarial debate (3 Jurors + 1 Judge) to rigorously filter out false positives and synthesize concrete exploit briefs.
 - **Professional Reporting**: Outputs stunning HTML and Markdown reports complete with attack paths, root cause grouping, token usage metrics, evidence badges, and Foundry repro commands.
 
 ## Architecture

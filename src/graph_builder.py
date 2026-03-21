@@ -6,7 +6,6 @@ from slither.slither import Slither
 from slither.core.cfg.node import NodeType
 from typing import Dict, Any, List
 from src.economic_analyzer import EconomicAnalyzer
-from src.pattern_scanner import scan_all_sources, get_pattern_summary, PatternHit
 
 ENABLE_CROSS_CONTRACT_EDGES = True
 
@@ -154,9 +153,6 @@ class GraphBuilder:
 
         # Dev Story 1: Precision upgrade — negative safety evidence
         self._compute_negative_safety_signals()
-
-        # Titan Pattern Engine: broad-spectrum regex hits validated by graph
-        self._integrate_pattern_hits()
 
         # Story 4.2: Compute final risk scores
         self._compute_global_risk_scores()
@@ -5671,135 +5667,6 @@ class GraphBuilder:
                 cats = list(self.graph.nodes[node_id].get("risk_categories", []))
                 self.graph.nodes[node_id]["risk_score"] = current + 100
                 self.graph.nodes[node_id]["risk_categories"] = cats + ["signature_replay"]
-
-    # ════════════════════════════════════════════════════════════
-    #  Titan Pattern Engine — Graph-validated pattern integration
-    # ════════════════════════════════════════════════════════════
-
-    def _integrate_pattern_hits(self):
-        """
-        Run the Titan Pattern Engine over cached .sol sources and attach
-        validated hits to function nodes.
-
-        For each PatternHit:
-          1. Resolve the file + line to a function node in the graph.
-          2. Validate against graph context (modifiers, taint, protection).
-          3. Attach validated hits as node metadata and boost structural_score.
-        """
-        if not self._file_cache:
-            return
-
-        raw_hits = scan_all_sources(self._file_cache)
-        if not raw_hits:
-            return
-
-        summary = get_pattern_summary(raw_hits)
-        total = sum(summary.values())
-        print(f"  [Titan] Raw pattern scan: {total} hits "
-              f"(C={summary['CRITICAL']}, H={summary['HIGH']}, "
-              f"M={summary['MEDIUM']}, L={summary.get('LOW', 0)})")
-
-        # Build a reverse index: (normalized_file, line_range) -> node_id
-        # Each function node has source_start_line / source_end_line / source_file
-        func_index: list[tuple[str, int, int, str]] = []
-        for node_id, data in self.graph.nodes(data=True):
-            if data.get("type") != "function":
-                continue
-            src_file = data.get("source_file", "")
-            start_line = data.get("source_start_line", 0)
-            end_line = data.get("source_end_line", 0)
-            if src_file and start_line and end_line:
-                func_index.append((src_file, start_line, end_line, node_id))
-
-        validated = 0
-        discarded = 0
-
-        for hit in raw_hits:
-            # 1. Resolve to function node
-            matched_node = None
-            for src_file, start, end, node_id in func_index:
-                # Normalize paths for comparison
-                if hit.file.endswith(src_file) or src_file.endswith(hit.file) or \
-                   hit.file == src_file:
-                    if start <= hit.line <= end:
-                        matched_node = node_id
-                        break
-
-            if not matched_node:
-                # Can't resolve to a function — skip
-                discarded += 1
-                continue
-
-            node_data = self.graph.nodes[matched_node]
-
-            # 2. Graph-context validation — discard false positives
-            skip = False
-
-            # Reentrancy hit but function has nonReentrant guard
-            if hit.category == "reentrancy":
-                modifiers = node_data.get("ac_modifiers", [])
-                if any("reentr" in str(m).lower() for m in modifiers):
-                    skip = True
-                if node_data.get("has_reentrancy_guard"):
-                    skip = True
-
-            # Access control hit but function has protection
-            if hit.category == "access-control" and hit.pattern_id in ("ETH-006", "ETH-009"):
-                if node_data.get("is_protected") or node_data.get("has_access_control"):
-                    skip = True
-
-            if skip:
-                discarded += 1
-                continue
-
-            # 3. Attach validated hit to node
-            existing_hits = node_data.get("pattern_hits", [])
-            existing_hits.append(hit.pattern_id)
-            node_data["pattern_hits"] = existing_hits
-
-            existing_cats = node_data.get("pattern_categories", [])
-            if hit.category not in existing_cats:
-                existing_cats.append(hit.category)
-            node_data["pattern_categories"] = existing_cats
-
-            # Store full hit details for reporting
-            hit_details = node_data.get("pattern_hit_details", [])
-            hit_details.append({
-                "id": hit.pattern_id,
-                "title": hit.title,
-                "severity": hit.severity,
-                "confidence": hit.confidence,
-                "line": hit.line,
-                "description": hit.description,
-                "recommendation": hit.recommendation,
-                "category": hit.category,
-                "swc": hit.swc,
-            })
-            node_data["pattern_hit_details"] = hit_details
-
-            # 4. Boost structural_score for validated hits
-            sev_boost = {"CRITICAL": 15, "HIGH": 10, "MEDIUM": 5, "LOW": 2, "INFORMATIONAL": 0}
-            current_structural = node_data.get("structural_score", 0)
-            boost = sev_boost.get(hit.severity, 0)
-            node_data["structural_score"] = min(100, current_structural + boost)
-
-            # Add to risk_categories if not already present
-            risk_cats = node_data.get("risk_categories", [])
-            cat_tag = f"PATTERN_{hit.category.upper().replace('-', '_')}"
-            if cat_tag not in risk_cats:
-                risk_cats.append(cat_tag)
-                node_data["risk_categories"] = risk_cats
-
-            validated += 1
-
-        print(f"  [Titan] Graph-validated: {validated} hits attached, "
-              f"{discarded} discarded (no match or false positive)")
-
-        # Store summary on graph for reporting
-        self.graph.graph.setdefault("report_metadata", {})
-        self.graph.graph["report_metadata"]["titan_raw_hits"] = total
-        self.graph.graph["report_metadata"]["titan_validated_hits"] = validated
-        self.graph.graph["report_metadata"]["titan_discarded_hits"] = discarded
 
     def export_json(self, output_path: str):
         """
