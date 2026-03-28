@@ -1,76 +1,117 @@
 # Critikal v2
 **AI-Powered Smart Contract Security System**
 
-Critikal is an advanced, human-in-the-loop multi-agent system designed for automated smart contract security analysis and bug bounty hunting. It combines the deterministic power of static analysis (Slither) and pattern scanning with the reasoning capabilities of Large Language Models (LLMs) to detect, validate, and prove smart contract vulnerabilities.
+Critikal is a multi-agent smart contract security system with two independent discovery tracks: **static analysis** (Slither-based graph signals) and **semantic discovery** (LLM-native 0-day agents reading raw source). Both tracks feed into a shared validation pipeline (Jury → RAG → Depth → Chain Analysis → TestWriter) to eliminate false positives and produce proven exploits.
 
-## Features
+## Dual-Track Discovery Architecture
 
-- **Deterministic Graph Engine**: Uses Slither to build a rich NetworkX graph representing the smart contract's structure, call paths, data flows, and state transitions.
-- **Titan Pattern Engine**: A robust regex-based pattern scanner that feeds high-signal leads into the graph.
-- **Multi-Agent Orchestration**: Specialized AI agents (Recon, Attack, TestWriter) orchestrated by LangGraph to analyze specific risk hotspots.
-- **Automated Exploit Generation (Phoenix Loop)**: Automatically writes Foundry test files (`.t.sol`) to prove vulnerabilities via live execution, including smart retry variant exploration (adjusting timing, amounts, and ordering).
-- **RAG Validation**: Queries historical exploit data to boost or penalize finding confidence based on established precedent.
-- **Jury System**: Optional multi-model adversarial debate (3 Jurors + 1 Judge) to rigorously filter out false positives and synthesize concrete exploit briefs.
-- **Professional Reporting**: Outputs stunning HTML and Markdown reports complete with attack paths, root cause grouping, token usage metrics, evidence badges, and Foundry repro commands.
+### Track A: Static Analysis (Slither)
+Compiles contracts via Slither → builds a NetworkX knowledge graph → deterministic hotspot scoring → Attack + Assumption workers analyze hotspots.
 
-## Architecture
+### Track B: Semantic Discovery (LLM-Native, No Slither)
+Four parallel agents read raw `.sol` files and discover vulnerabilities from first principles:
 
-For a comprehensive dive into Critikal's pipeline, Agent models, and execution flow, see [architecture.md](architecture.md).
+| Agent | Focus | Unique Signal |
+|-------|-------|---------------|
+| **InvariantHunter** | Protocol invariant violations | Derives invariants from code, checks every function |
+| **EconomicAttacker** | Flash loan / sandwich / price manipulation | Value flow mapping, ratio manipulation analysis |
+| **TrustBoundaryAnalyzer** | Privilege escalation / proxy / delegatecall | msg.sender bypass, ownership races, initializer replay |
+| **CrossContractStateChecker** | Cross-contract reentrancy / stale state | Read-after-external-call, callback exploitation |
+
+Track B runs when `SEMANTIC_DISCOVERY_ENABLED=true` or `AUDIT_MODE=deep|semantic_only`.
+
+### Shared Validation Pipeline
+Both tracks produce `Finding` objects that flow through:
+
+1. **4-Gate Pre-Filter** — cheap fast model kills obvious false positives
+2. **Jury System** — 3 jurors (Skeptic/Attacker/Auditor) + 1 Judge adversarial debate
+3. **RAG Sweep** — ChromaDB historical exploit matching (boost/penalize confidence)
+4. **Mechanical Scoring** — evidence-tag-weighted composite confidence
+5. **Depth Workers** — domain-specific re-analysis (StateTrace, EdgeCase, External)
+6. **Chain Analysis** — links findings into multi-step exploit chains
+7. **TestWriter (Phoenix Loop)** — auto-generates Foundry `.t.sol` exploit PoCs
+8. **FuzzGenerator** — invariant fuzz tests for proven CRITICAL findings
+
+## Pipeline Modes
+
+| Mode | Static | Semantic | Jury | Depth | TestWriter | Fuzz |
+|------|--------|----------|------|-------|------------|------|
+| `fast` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `standard` | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| `deep` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `semantic_only` | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
+
+Set via `AUDIT_MODE=<mode>`. Individual flags always override the preset.
+
+## Model Routing
+
+Critikal uses a "Mixture of Experts" approach. Different models handle different tasks:
+
+| Role | Default Model | Env Var |
+|------|---------------|---------|
+| Coordinator | `gemini-2.5-pro` | `MODEL_NAME` |
+| Recon | `gemini-2.5-flash` | `RECON_MODEL_NAME` |
+| Attack Worker | `grok-3` | `ATTACK_MODEL_NAME` |
+| Assumption Worker | `claude-sonnet-4-5` | `ASSUMPTION_MODEL_NAME` |
+| Semantic Agents | `gemini-2.5-flash` | `SEMANTIC_MODEL_NAME` |
+| TestWriter | `claude-sonnet-4-6` | `TEST_WRITER_MODEL_NAME` |
+| Depth Workers | `gemini-2.5-flash` | `DEPTH_MODEL_NAME` |
+| 4-Gate Filter | `gemini-2.0-flash` | `GATE_MODEL_NAME` |
+| Jury Skeptic | `claude-sonnet-4-6` | `JURY_SKEPTIC_MODEL` |
+| Jury Attacker | `grok-3` | `JURY_ATTACKER_MODEL` |
+| Jury Auditor | `gpt-4o` | `JURY_AUDITOR_MODEL` |
+| Jury Judge | `gemini-2.5-pro` | `JURY_JUDGE_MODEL` |
+
+Thread-safe API key pooling with automatic rotation, 429 backoff, and cooldown.
 
 ## Quick Start
 
-### 1. Installation
-
+### 1. Install
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/Critikal.git
-cd Critikal
-
-# Install dependencies
+git clone https://github.com/yourusername/Critikal.git && cd Critikal
 pip install -e .
 ```
 
-### 2. Configuration
-
-Critikal requires API keys for the LLMs and Foundry for exploit testing.
-
+### 2. Configure
 ```bash
-# Add your API keys to .env
 cp .env.example .env
-
-GOOGLE_API_KEY="AIzaSy..."       # Primary Coordinator & Recon
-XAI_API_KEY="xnd_..."            # Attack Hypothesis Worker
-ANTHROPIC_API_KEY="sk-ant-..."   # TestWriter Worker (Exploit Generation)
+# Add API keys: GOOGLE_API_KEY, XAI_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY
 ```
 
-You can customize the models used in `.env`:
-```env
-RECON_MODEL_NAME=gemini-2.5-flash
-ATTACK_MODEL_NAME=grok-3
-TEST_WRITER_MODEL_NAME=claude-3.5-sonnet
-```
-
-### 3. Usage
-
-Run Critikal against a repository URL or local directory:
-
+### 3. Run
 ```bash
-# Analyze a local project
-python -m src.main --repo /path/to/local/project
+# Local project
+python -m src.main --repo /path/to/project
 
-# Analyze a remote repository
+# Remote repo
 python -m src.main --repo https://github.com/theredguild/damn-vulnerable-defi
+
+# Semantic-only (no Slither)
+AUDIT_MODE=semantic_only python -m src.main --repo /path/to/project
+
+# Full deep scan
+AUDIT_MODE=deep python -m src.main --repo /path/to/project
 ```
 
 ## Output
 
-Once the pipeline completes, Critikal generates a comprehensive report package in the `data/reports/` directory:
+Reports generated in `data/reports/`:
+- `report.html` — interactive dark-mode report with evidence badges, RAG matches, chain analysis, jury verdicts
+- `report.md` — HackerOne/Immunefi submission-ready markdown
+- `graph.html` — knowledge graph visualization
+- `exploits/` — proven `.t.sol` Foundry PoC scripts
 
-- `report.html`: An interactive, dark-mode report with sidebars, evidence tags, RAG references, and token usage metrics.
-- `report.md`: A HackerOne/Immunefi ready markdown export.
-- `graph.html`: A visual representation of the contract's knowledge graph.
-- `exploits/`: A folder containing all successfully generated `.t.sol` Proof of Concept scripts.
+## Finding Taxonomy
+
+Each `Finding` is a structured object containing:
+- **Verdict**: `CONFIRMED` | `PARTIAL` | `CONTESTED` | `REFUTED` | `UNASSESSED`
+- **Evidence Tags**: `[POC-PASS]`, `[POC-FAIL]`, `[CODE]`, `[GRAPH-SIGNAL]`, `[RAG-MATCH]`, `[INFERRED]`, `[LLM-ONLY]`
+- **Confidence Decomposition**: evidence × 0.35 + consensus × 0.25 + RAG × 0.2 + LLM × 0.2
+- **Chain Metadata**: chain_ids, chain_role (enabler/blocked), severity upgrades
+- **Depth History**: which depth worker re-analyzed, verdict, reasoning
+- **Jury Record**: full deliberation (vote summary, reasoning, rejection reason)
+- **Gate Record**: which of 4 gates passed/refuted/demoted
 
 ## Disclaimer
 
-Critikal is an automated analysis tool designed to aid security researchers and developers. It is not a substitute for professional, manual security audits. Always verify the findings and exploit scripts generated by this tool in a safe, isolated environment.
+Critikal is an automated analysis tool designed to aid security researchers. It is not a substitute for professional manual audits. Always verify findings in a safe, isolated environment.

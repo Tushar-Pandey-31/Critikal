@@ -13,6 +13,7 @@ from src.agents.chain_analyzer import (
     _compute_match_strength,
     _chain_severity,
     _classify_match_type,
+    _classify_actor,
 )
 from src.models.finding import Finding, FindingVerdict
 
@@ -95,6 +96,30 @@ class TestMatchClassification:
     def test_state_default(self):
         result = _classify_match_type("supply updated", "total supply zero")
         assert result == "STATE"
+
+
+class TestActorClassification:
+    """Tests for 5-Actor Enabler classification."""
+
+    def test_admin_actor(self):
+        f = _make_finding(function="setFee", preconditions=["Caller must be owner"])
+        assert _classify_actor(f) == "Admin"
+
+    def test_keeper_actor(self):
+        f = _make_finding(function="liquidate", preconditions=["Position is unhealthy"])
+        assert _classify_actor(f) == "Keeper"
+
+    def test_victim_actor(self):
+        f = _make_finding(function="deposit", preconditions=["User approves tokens"])
+        assert _classify_actor(f) == "Victim"
+
+    def test_protocol_actor(self):
+        f = _make_finding(function="distributeRewards", preconditions=["Epoch ended"])
+        assert _classify_actor(f) == "Protocol"
+
+    def test_attacker_default(self):
+        f = _make_finding(function="exploit", preconditions=["Flash loan successful"])
+        assert _classify_actor(f) == "Attacker"
 
 
 class TestMatchStrength:

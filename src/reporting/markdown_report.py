@@ -229,9 +229,27 @@ def _render_finding(finding, leads: list[dict]) -> list[str]:
         "",
         "### Description",
         "",
-        finding.hypothesis or "No hypothesis available.",
-        "",
     ]
+    
+    # Story 6.1: Render assumption/violation/proof for first-principles findings
+    if getattr(finding, "vulnerability_class", "") == "first_principles":
+        raw = getattr(finding, "raw_output", {}) or {}
+        lines += [
+            "**Assumption violated:**",
+            raw.get("assumption", "Unknown"),
+            "",
+            "**Violation mechanism:**",
+            raw.get("violation", "Unknown"),
+            "",
+            "**Proof / Trace:**",
+            raw.get("proof", "Unknown"),
+            "",
+        ]
+    else:
+        lines += [
+            finding.hypothesis or "No hypothesis available.",
+            "",
+        ]
 
     # v2: Preconditions / postconditions
     preconditions = getattr(finding, "preconditions", []) or []

@@ -33,6 +33,7 @@ class ChainHypothesis:
     matched_precondition: str       # What A needs
     combined_attack_steps: List[str] = field(default_factory=list)
     chain_severity: str = ""        # Upgraded severity
+    enabler_actor: str = ""         # Admin / Keeper / Victim / Protocol / Attacker
 
 
 # ── Matching keywords by type ────────────────────────────────────
@@ -60,6 +61,29 @@ _BALANCE_KEYWORDS = [
     "value", "deposit", "withdraw", "transfer", "flash",
 ]
 
+# ── Actor Classification Keywords ────────────────────────────────
+
+_ADMIN_KEYWORDS = ["admin", "owner", "governance", "manager", "set", "update", "upgrade", "pause"]
+_KEEPER_KEYWORDS = ["keeper", "bot", "liquidat", "oracle", "price", "sync", "harvest", "upkeep"]
+_VICTIM_KEYWORDS = ["user", "victim", "deposit", "approve", "transfer", "mint", "stake", "swap"]
+_PROTOCOL_KEYWORDS = ["epoch", "period", "time", "block", "reward", "distribution", "tick"]
+
+
+def _classify_actor(enabler: Finding) -> str:
+    """Classify the actor who triggers the enabler step."""
+    text = f"{enabler.affected_function} " + " ".join(enabler.preconditions or []).lower()
+    
+    scores = {
+        "Admin": sum(1 for kw in _ADMIN_KEYWORDS if kw in text),
+        "Keeper": sum(1 for kw in _KEEPER_KEYWORDS if kw in text),
+        "Victim": sum(1 for kw in _VICTIM_KEYWORDS if kw in text),
+        "Protocol": sum(1 for kw in _PROTOCOL_KEYWORDS if kw in text),
+    }
+    
+    best_match = max(scores.items(), key=lambda x: x[1])[0]
+    if scores[best_match] > 0:
+        return best_match
+    return "Attacker"
 
 def _classify_match_type(postcondition: str, precondition: str) -> str:
     """Classify the type of match based on keyword analysis."""
@@ -71,7 +95,7 @@ def _classify_match_type(postcondition: str, precondition: str) -> str:
         "BALANCE": sum(1 for kw in _BALANCE_KEYWORDS if kw in combined),
         "STATE": sum(1 for kw in _STATE_KEYWORDS if kw in combined),
     }
-    return max(scores, key=scores.get) if max(scores.values()) > 0 else "STATE"
+    return max(scores.items(), key=lambda x: x[1])[0] if max(scores.values()) > 0 else "STATE"
 
 
 def _compute_match_strength(
@@ -230,6 +254,8 @@ def run_chain_analysis(findings: list[Finding]) -> list[ChainHypothesis]:
                         blocked_finding.severity_estimate,
                         strength,
                     )
+                    
+                    enabler_actor = _classify_actor(enabler_finding)
 
                     chain = ChainHypothesis(
                         chain_id=chain_id,
@@ -241,6 +267,7 @@ def run_chain_analysis(findings: list[Finding]) -> list[ChainHypothesis]:
                         matched_precondition=missing_pre,
                         combined_attack_steps=combined_steps,
                         chain_severity=severity,
+                        enabler_actor=enabler_actor,
                     )
                     chains.append(chain)
 

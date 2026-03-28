@@ -1,3 +1,15 @@
+"""
+RAG System — exploit-first retrieval for Critikal findings.
+
+Queries ChromaDB for historical exploit precedent. Returns structured
+matches with protocol, vulnerability class, and attack details.
+
+Confidence scoring:
+- High-quality match (same vuln class + similar protocol): +15 confidence
+- Moderate match (same vuln class, different protocol): +5 confidence
+- No precedent found: -10 confidence (penalize unsubstantiated claims)
+"""
+
 from typing import List, Dict, Any
 from pathlib import Path
 from langchain_chroma import Chroma
@@ -11,111 +23,184 @@ try:
     if Path(DB_PATH).exists():
         _embedding_function = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
         vector_db = Chroma(persist_directory=DB_PATH, embedding_function=_embedding_function)
-        HAS_RAG = True
+        _collection_count = vector_db._collection.count()
+        HAS_RAG = _collection_count > 0
+        if HAS_RAG:
+            print(f"[RAG] Loaded {_collection_count} chunks from ChromaDB")
+        else:
+            print(f"[RAG] ChromaDB is empty. Run: poetry run python src/knowledge/ingest.py")
     else:
-        print(f"Warning: RAG DB not found at {DB_PATH}. Running without RAG results.")
+        print(f"[RAG] DB not found at {DB_PATH}. Run: poetry run python src/knowledge/ingest.py")
         vector_db = None
         HAS_RAG = False
 except Exception as e:
-    print(f"Warning: RAG system not initialized: {e}")
+    print(f"[RAG] Init error: {e}")
     vector_db = None
     HAS_RAG = False
 
-def search_security_knowledge(query: str, k: int = 3) -> List[Dict[str, Any]]:
+
+def search_security_knowledge(query: str, k: int = 5) -> List[Dict[str, Any]]:
     """
-    Query the vector database for security knowledge.
-    Returns a list of dictionaries containing content and source metadata.
+    Query the vector database for exploit precedent.
+    Returns list of dicts with content, source, and metadata.
     """
     if not HAS_RAG or not vector_db:
         return []
 
     try:
-        docs = vector_db.similarity_search(query, k=k)
-        results = []
-        for doc in docs:
-            results.append({
+        results = vector_db.similarity_search_with_relevance_scores(query, k=k)
+        matches = []
+        for doc, score in results:
+            # Filter out noise — MiniLM scores on exploit data range ~0.15-0.5
+            if score < 0.15:
+                continue
+            matches.append({
                 "content": doc.page_content,
-                "source": doc.metadata.get("source", "Unknown")
+                "source": doc.metadata.get("source", "Unknown"),
+                "protocol": doc.metadata.get("protocol", ""),
+                "vulnerability_class": doc.metadata.get("vulnerability_class", ""),
+                "relevance_score": round(score, 3),
             })
-        return results
+        return matches
     except Exception as e:
-        print(f"Error searching RAG: {e}")
+        print(f"[RAG] Search error: {e}")
         return []
 
 
-def rag_batch_validate(findings: list, boost: int = 5, penalty: int = -10) -> list:
+def _build_exploit_query(finding) -> str:
+    """Build an exploit-focused query from a Finding object."""
+    parts = []
+    
+    vuln_class = getattr(finding, "vulnerability_class", "") or ""
+    hypothesis = getattr(finding, "hypothesis", "") or ""
+    contract = getattr(finding, "affected_contract", "") or ""
+    function = getattr(finding, "affected_function", "") or ""
+    
+    # Lead with vulnerability class — most important for exploit matching
+    if vuln_class:
+        # Expand common abbreviated classes
+        expanded = vuln_class.replace("_", " ")
+        parts.append(f"{expanded} exploit vulnerability")
+    
+    # Add function-level context
+    if function:
+        parts.append(f"in function {function}")
+    
+    # Add hypothesis (truncated — embedding models have limits)
+    if hypothesis:
+        # Extract the key action/bug from hypothesis
+        parts.append(hypothesis[:150])
+    
+    # Add contract type hint
+    if contract:
+        parts.append(f"contract {contract}")
+    
+    return " ".join(parts) if parts else f"{contract} {function} exploit"
+
+
+def _compute_rag_confidence(matches: list, finding) -> int:
     """
-    v2 Epic 5: Batch-validate findings against RAG knowledge base.
+    Compute RAG confidence based on match QUALITY, not just quantity.
+    
+    Returns:
+        0-100 confidence score for the RAG dimension
+    """
+    if not matches:
+        return 0
+    
+    finding_vuln = (getattr(finding, "vulnerability_class", "") or "").lower().replace("_", " ")
+    
+    high_quality = 0
+    moderate = 0
+    
+    for match in matches:
+        match_vuln = (match.get("vulnerability_class", "") or "").lower().replace("_", " ")
+        relevance = match.get("relevance_score", 0)
+        
+        # MiniLM scores on exploit data range ~0.15-0.5
+        if relevance >= 0.35 and match_vuln and finding_vuln:
+            # Check if same vuln class
+            if match_vuln == finding_vuln or match_vuln in finding_vuln or finding_vuln in match_vuln:
+                high_quality += 1
+            else:
+                moderate += 1
+        elif relevance >= 0.2:
+            moderate += 1
+    
+    if high_quality >= 2:
+        return 100  # Strong precedent — this vuln class is well-known
+    elif high_quality == 1:
+        return 80   # Single strong match
+    elif moderate >= 3:
+        return 60   # Several moderate matches
+    elif moderate >= 1:
+        return 40   # Weak precedent
+    else:
+        return 0    # No relevant matches
 
-    For each finding, queries the RAG DB using vulnerability class + hypothesis.
-    Enriches findings with:
-      - rag_matches: list of matched historical vulns
-      - confidence_rag_match: 0-100 based on match quality
-      - confidence adjustment: boost per strong match, penalty for zero matches
 
-    Returns the same list of findings, mutated in-place.
+async def rag_mandatory_sweep(findings: list) -> list:
+    """
+    Mandatory RAG sweep over all findings.
+    Enriches each finding with rag_matches and confidence_rag_match.
+    Applies confidence boost for precedent, penalty for no precedent.
     """
     if not HAS_RAG or not vector_db:
-        print("[Step 4.6] RAG not available — skipping batch validation")
+        print("[Step 4.6] RAG not available — skipping mandatory sweep")
         return findings
 
-    validated = 0
-    boosted = 0
-    penalized = 0
-
-    for finding in findings:
-        vuln_class = getattr(finding, "vulnerability_class", "") or ""
-        hypothesis = getattr(finding, "hypothesis", "") or ""
-        contract = getattr(finding, "affected_contract", "") or ""
-        function = getattr(finding, "affected_function", "") or ""
-
-        # Build a targeted query combining vulnerability class + hypothesis
-        query_parts = []
-        if vuln_class:
-            query_parts.append(f"vulnerability: {vuln_class}")
-        if hypothesis:
-            query_parts.append(hypothesis[:200])
-        if contract and function:
-            query_parts.append(f"in {contract}.{function}")
-
-        query = " ".join(query_parts) if query_parts else f"{contract} {function} exploit"
-
-        matches = search_security_knowledge(query, k=3)
-
-        # Score match quality (rough heuristic: more matches + longer content = higher)
-        match_score = 0
-        if matches:
-            for m in matches:
-                content_len = len(m.get("content", ""))
-                if content_len > 200:
-                    match_score += 40  # Strong match
-                elif content_len > 50:
-                    match_score += 20  # Moderate match
-                else:
-                    match_score += 5   # Weak match
-            match_score = min(100, match_score)
-
-        # Enrich the finding
+    import asyncio
+    
+    async def process_finding(finding):
+        query = _build_exploit_query(finding)
+        
+        # RAG search is sync, wrap in to_thread
+        matches = await asyncio.to_thread(search_security_knowledge, query, 5)
+        
+        # Store matches on finding
         finding.rag_matches = [
-            {"source": m["source"], "snippet": m["content"][:150]}
+            {"source": m["source"], "snippet": m["content"][:200],
+             "protocol": m.get("protocol", ""), "relevance": m.get("relevance_score", 0)}
             for m in matches
         ]
-        finding.confidence_rag_match = match_score
+        
+        # Compute quality-weighted confidence
+        finding.confidence_rag_match = _compute_rag_confidence(matches, finding)
+        
+        # Apply confidence adjustment
+        if matches:
+            best_relevance = max(m.get("relevance_score", 0) for m in matches)
+            if best_relevance >= 0.6:
+                # Strong historical precedent — boost
+                old_conf = getattr(finding, "confidence", 50)
+                finding.confidence = min(100, old_conf + 15)
+                if not hasattr(finding, "evidence_tags"):
+                    finding.evidence_tags = []
+                if "[RAG-MATCH]" not in finding.evidence_tags:
+                    finding.evidence_tags.append("[RAG-MATCH]")
+                return "strong"
+            elif best_relevance >= 0.4:
+                old_conf = getattr(finding, "confidence", 50)
+                finding.confidence = min(100, old_conf + 5)
+                if not hasattr(finding, "evidence_tags"):
+                    finding.evidence_tags = []
+                if "[RAG-MATCH]" not in finding.evidence_tags:
+                    finding.evidence_tags.append("[RAG-MATCH]")
+                return "moderate"
+        else:
+            # No precedent — penalize (novel claim needs stronger proof)
+            old_conf = getattr(finding, "confidence", 50)
+            finding.confidence = max(0, old_conf - 10)
+            return "none"
+        return "weak"
 
-        # Adjust confidence
-        old_conf = finding.confidence
-        if match_score >= 60:
-            finding.confidence = min(100, finding.confidence + boost)
-            boosted += 1
-        elif match_score == 0:
-            finding.confidence = max(10, finding.confidence + penalty)
-            penalized += 1
-
-        validated += 1
-
-    print(
-        f"[Step 4.6] RAG validation: {validated} finding(s) checked, "
-        f"{boosted} boosted, {penalized} penalized"
-    )
+    results = await asyncio.gather(*[process_finding(f) for f in findings])
+    
+    strong = sum(1 for r in results if r == "strong")
+    moderate = sum(1 for r in results if r == "moderate")
+    none_count = sum(1 for r in results if r == "none")
+    
+    print(f"[Step 4.6] RAG sweep: {len(findings)} findings — "
+          f"{strong} strong precedent, {moderate} moderate, {none_count} no match (-10 penalty)")
+    
     return findings
-

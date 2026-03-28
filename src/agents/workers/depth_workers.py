@@ -192,6 +192,7 @@ class _DepthWorkerBase:
         finding: Finding,
         graph: nx.DiGraph,
         source_code: str,
+        is_da_pass: bool = False,
     ) -> str:
         """Build the user prompt with finding context and graph signals."""
         gq = get_graph_queries(graph)
@@ -204,13 +205,29 @@ class _DepthWorkerBase:
             function_id=finding.hotspot_node_id
         )
 
-        lines = [
+        lines = []
+        if is_da_pass:
+            lines += [
+                "🔥 DEVIL'S ADVOCATE MODE ACTIVE 🔥",
+                "Your objective is to find a way to make this finding EXPLOITABLE.",
+                "Disregard previous dismissals. Act as an attacker trying to prove this works.",
+                "",
+            ]
+
+        lines += [
             "## Finding Under Review",
             f"Contract: {finding.affected_contract}",
             f"Function: {finding.affected_function}",
             f"Vulnerability Class: {finding.vulnerability_class}",
-            f"Current Verdict: {finding.verdict}",
-            f"Current Confidence: {finding.confidence}",
+        ]
+
+        if not is_da_pass:
+            lines += [
+                f"Current Verdict: {finding.verdict}",
+                f"Current Confidence: {finding.confidence}",
+            ]
+
+        lines += [
             "",
             "## Original Hypothesis",
             finding.hypothesis or "No hypothesis available.",
@@ -286,9 +303,10 @@ class _DepthWorkerBase:
         finding: Finding,
         graph: nx.DiGraph,
         source_code: str,
+        is_da_pass: bool = False,
     ) -> DepthResult:
         """Run depth analysis on a single finding."""
-        user_content = self._build_user_content(finding, graph, source_code)
+        user_content = self._build_user_content(finding, graph, source_code, is_da_pass)
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": user_content},
@@ -428,14 +446,14 @@ async def run_depth_workers(
             "PARTIAL",
             "UNASSESSED",
         )
-        and f.depth_pass_count < max_depth_passes
+        and f.depth_pass_count == 0
     ]
 
     if not uncertain:
         print("[Depth] No uncertain findings to analyze.")
         return []
 
-    print(f"[Depth] Analyzing {len(uncertain)} uncertain finding(s)...")
+    print(f"[Depth] Analyzing {len(uncertain)} uncertain finding(s) (up to {max_depth_passes} passes)...")
 
     # Instantiate workers
     workers = {
@@ -444,39 +462,61 @@ async def run_depth_workers(
         "external": ExternalDepthWorker(llm_client, model_name),
     }
 
-    # Build tasks
-    async def _analyze_one(finding: Finding) -> tuple[Finding, DepthResult]:
-        worker_type = _route_to_depth_worker(finding)
-        worker = workers[worker_type]
-
-        # Get source code for the contract
-        source = source_cache.get(finding.affected_contract, "")
-        if not source:
-            # Try node data
-            node_data = graph.nodes.get(finding.hotspot_node_id, {})
-            source = node_data.get("source_code", "")
-
-        print(f"  [Depth] {worker_type} → {finding.affected_contract}::{finding.affected_function}")
-        result = await worker.analyze(finding, graph, source)
-        print(
-            f"  [Depth] {worker_type} verdict: {result.verdict} "
-            f"(confidence: {result.refined_confidence})"
-        )
-        return (finding, result)
-
-    # Run all depth analyses concurrently
-    tasks = [_analyze_one(f) for f in uncertain]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    # Process results and update findings
     processed: list[tuple[Finding, DepthResult]] = []
-    for r in results:
-        if isinstance(r, Exception):
-            logger.warning(f"[Depth] Worker exception: {r}")
-            continue
-        finding, depth_result = r
-        _apply_depth_result(finding, depth_result)
-        processed.append((finding, depth_result))
+    
+    for pass_idx in range(max_depth_passes):
+        is_da_pass = (pass_idx > 0)
+        
+        if not uncertain:
+            break
+            
+        pass_name = f"Pass {pass_idx+1}" + (" (Devil's Advocate)" if is_da_pass else "")
+        print(f"[Depth] Starting {pass_name} on {len(uncertain)} finding(s)...")
+
+        async def _analyze_one(finding: Finding, is_da: bool) -> tuple[Finding, DepthResult]:
+            worker_type = _route_to_depth_worker(finding)
+            worker = workers.get(worker_type, workers["state_trace"])
+
+            # Get source code for the contract
+            source = source_cache.get(finding.affected_contract, "")
+            if not source:
+                # Try node data
+                node_data = graph.nodes.get(finding.hotspot_node_id, {})
+                source = node_data.get("source_code", "")
+
+            print(f"  [Depth] {worker_type} → {finding.affected_contract}::{finding.affected_function}")
+            result = await worker.analyze(finding, graph, source, is_da_pass=is_da)
+            print(
+                f"  [Depth] {worker_type} verdict: {result.verdict} "
+                f"(confidence: {result.refined_confidence})"
+            )
+            return (finding, result)
+
+        tasks = [_analyze_one(f, is_da_pass) for f in uncertain]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        next_uncertain = []
+        for r in results:
+            if isinstance(r, Exception):
+                logger.warning(f"[Depth] Worker exception: {r}")
+                continue
+            finding, depth_result = r
+            _apply_depth_result(finding, depth_result)
+            
+            # Use finding.verdict since _apply_depth_result updates it,
+            # wait, _apply_depth_result currently DOES NOT update finding.verdict immediately.
+            # I must update finding.verdict = depth_result.verdict if we don't already do that.
+            # Actually _apply_depth_result is right below. Let me assume finding.verdict gets updated
+            # or depth_result.verdict is the authority.
+            finding.verdict = depth_result.verdict
+            finding.confidence = depth_result.refined_confidence
+            
+            if pass_idx == max_depth_passes - 1 or depth_result.verdict not in ("CONTESTED", "PARTIAL", "UNASSESSED"):
+                processed.append((finding, depth_result))
+            else:
+                next_uncertain.append(finding)
+                
+        uncertain = next_uncertain
 
     confirmed = sum(1 for _, r in processed if r.verdict == "CONFIRMED")
     refined = sum(1 for _, r in processed if r.verdict == "REFINED")
