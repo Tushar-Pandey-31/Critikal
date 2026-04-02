@@ -37,6 +37,7 @@ def render_html_report(
 
     sidebar_items = _build_sidebar_items(findings)
     finding_panels = _build_finding_panels(findings, leads, poc_files)
+    leads_panel = _build_leads_panel(leads) if leads else ""
     summary_html = _build_summary_table(severity_counts, total_findings, total_proven)
     token_usage_sidebar = _build_token_sidebar(token_usage) if token_usage else ""
     token_usage_panel = _build_token_panel(token_usage) if token_usage else ""
@@ -83,6 +84,7 @@ def render_html_report(
   </aside>
   <main id="main">
     {finding_panels if findings else _NO_FINDINGS_HTML}
+    {leads_panel}
     {token_usage_panel}
   </main>
 </div>
@@ -314,6 +316,39 @@ def _build_finding_panels(findings: list, leads: list[dict], poc_files: list[dic
       {poc_html}
     </article>""")
     return "\n".join(panels)
+
+
+def _build_leads_panel(leads: list[dict]) -> str:
+    if not leads:
+        return ""
+    
+    rows = ""
+    for idx, lead in enumerate(leads, 1):
+        sev = html.escape(lead.get("severity", "UNKNOWN"))
+        title = html.escape(lead.get("title", "Untitled"))
+        conf = lead.get("confidence_score", "N/A")
+        contract = html.escape(lead.get("affected_contract", "Unknown"))
+        func = html.escape(lead.get("affected_function", "Unknown"))
+        hyp = html.escape(lead.get("hypothesis", "No hypothesis provided."))
+        
+        rows += f'''
+        <div class="section" style="border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;">
+          <h3 style="color: var(--text-bright); font-size: 14px; margin-bottom: 4px;">{idx}. {sev} | {title} (Confidence: {conf}%)</h3>
+          <p style="font-family: monospace; font-size: 12px; margin-bottom: 8px;">{contract}::{func}</p>
+          <p style="font-size: 13px;">{hyp}</p>
+        </div>'''
+
+    return f"""
+    <article class="finding-panel" id="raw-leads">
+      <div class="finding-header">
+        <div class="badges">{{_badge('LEADS', '#8b949e', 'sev-badge')}}</div>
+        <h2>Raw Vulnerability Leads</h2>
+        <p class="finding-title">The following leads were identified during the initial analysis phase. Note: These are preliminary hypotheses and may not be fully validated findings.</p>
+      </div>
+      <div class="section">
+        {{rows}}
+      </div>
+    </article>"""
 
 
 def _build_token_sidebar(token_usage: dict) -> str:

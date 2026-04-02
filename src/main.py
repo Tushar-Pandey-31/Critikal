@@ -22,6 +22,7 @@ from src.agents.tools import create_coordinator_tools, create_graph_tools
 from src.repo_manager import RepoManager
 from src.analysis_engine import AnalysisEngine
 from src.graph_builder import GraphBuilder
+from src.pipeline_config import get_config
 
 
 def _parse_contract_addresses(raw: str | None) -> dict[str, str]:
@@ -140,32 +141,37 @@ async def async_main():
         sys.exit(1)
 
     # 3. Analyze with Slither (cluster-based pipeline)
-    print("Running Static Analysis (Slither)...")
-    engine = AnalysisEngine()
-    
-    # Optional: logic to detect specific targets could go here
-    targets = None
-    
-    slither_obj, ingestion_report = engine.run_analysis_v2(repo_path, targets=targets)
-    if not slither_obj:
-        print("Error: Slither analysis failed. Exiting.")
-        if ingestion_report and ingestion_report.warnings:
-            print("  Diagnostics:")
-            for w in ingestion_report.warnings:
-                print(f"    - {w}")
-        sys.exit(1)
-    
-    if ingestion_report:
-        print(f"  {ingestion_report.summary()}")
+    config = get_config()
+    if config.slither_enabled:
+        print("Running Static Analysis (Slither)...")
+        engine = AnalysisEngine()
+        
+        # Optional: logic to detect specific targets could go here
+        targets = None
+        
+        slither_obj, ingestion_report = engine.run_analysis_v2(repo_path, targets=targets)
+        if not slither_obj:
+            print("Error: Slither analysis failed. Exiting.")
+            if ingestion_report and ingestion_report.warnings:
+                print("  Diagnostics:")
+                for w in ingestion_report.warnings:
+                    print(f"    - {w}")
+            sys.exit(1)
+        
+        if ingestion_report:
+            print(f"  {ingestion_report.summary()}")
 
-    # 4. Build Knowledge Graph
-    print("Building Knowledge Graph...")
-    builder = GraphBuilder()
-    builder.build_graph(slither_obj)
-    graph = builder.graph
-    
-    builder.export_json("./data/graph_debug.json")
-    print(f"Graph built with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges.")
+        # 4. Build Knowledge Graph
+        print("Building Knowledge Graph...")
+        builder = GraphBuilder()
+        builder.build_graph(slither_obj)
+        graph = builder.graph
+        
+        builder.export_json("./data/graph_debug.json")
+        print(f"Graph built with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges.")
+    else:
+        print("[Config] Slither disabled — using empty graph")
+        graph = nx.DiGraph()
 
     # 5. Create Tools — Coordinator gets summary tools only
     print("Creating Coordinator Tools...")
@@ -196,7 +202,7 @@ The Knowledge Graph contains {len(functions)} function nodes across {len(contrac
 Use get_high_risk_hotspots() to identify the highest-priority targets, then formulate your analysis strategy.
 """)
     
-    config = {"configurable": {"thread_id": "live_run_1"}}
+    langgraph_config = {"configurable": {"thread_id": "live_run_1"}}
     
     # Run the graph
     initial_state = {
@@ -216,7 +222,7 @@ Use get_high_risk_hotspots() to identify the highest-priority targets, then form
         "escalate": False,
     }
     
-    events = app.astream(initial_state, config, stream_mode="values")
+    events = app.astream(initial_state, langgraph_config, stream_mode="values")
     
     final_state = None
     async for event in events:

@@ -1,17 +1,3 @@
-"""
-Jury System — Adversarial multi-model validation for vulnerability hypotheses.
-
-Three independent jurors review each finding from different adversarial angles.
-A Judge arbitrates and produces a TestWriter Brief for confirmed findings.
-
-Juror roles:
-- Claude Sonnet (Skeptic): finds reasons the hypothesis is wrong
-- Grok (Attacker): finds the most realistic attack scenario
-- GPT-4o (Auditor): applies professional audit standards
-
-Judge: Gemini Pro — arbitrates, writes TestWriter Brief
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -23,7 +9,153 @@ from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
+# ── Story 6.2: 4-Gate Pre-Filter ────────────────────────────────────
+#
+# Runs BEFORE the full jury debate. Uses a cheap/fast model to apply
+# 4 sequential gates adapted from pashov/skills judging.md.
+# Fail any gate → immediate verdict, no jury call = saves 3 LLM invocations.
+
+@dataclass
+class GateResult:
+    verdict: str      # PASS | GATE_REFUTED | GATE_DEMOTED
+    gate: int         # 1-4: which gate triggered the verdict (0 = all passed)
+    quote: str        # exact code line that triggered verdict (or "" if PASS)
+
+
+_GATE_SYSTEM_PROMPT = """\
+You are a security finding validation agent. Apply 4 sequential gates, in order.
+Stop at the first gate that fails. Return the verdict for only the first failing gate.
+
+## Gate 1 — Refutation
+Build the STRONGEST argument that this finding is WRONG.
+Find the exact guard, check, constraint, or modifier that kills this attack. Quote the exact code line.
+- Concrete refutation (specific line blocks exact claimed step) → verdict: GATE_REFUTED
+- Speculative refutation ("probably wouldn't", "unlikely", "protocol would") → CLEARS (continue to Gate 2)
+
+## Gate 2 — Reachability
+Can the vulnerable state exist in a live deployment?
+- Structurally impossible: an enforced invariant or constructor requirement prevents it → GATE_REFUTED
+- Requires privileged action outside normal operation AND only an admin can trigger → GATE_DEMOTED
+- Achievable through normal usage or common token behaviors → CLEARS (continue to Gate 3)
+
+## Gate 3 — Trigger
+Can an UNPRIVILEGED actor execute this attack profitably?
+- Only trusted/admin roles can trigger → GATE_DEMOTED
+- Gas cost or capital required exceeds maximum realistic extraction → GATE_REFUTED
+- Unprivileged actor can trigger at a profit → CLEARS (continue to Gate 4)
+
+## Gate 4 — Impact
+Prove material harm to an identifiable external victim.
+- Self-harm only (attacker harms themselves) → GATE_REFUTED
+- Dust-level impact with no realistic compounding → GATE_DEMOTED
+- Material, quantifiable loss to an identifiable victim → PASS
+
+## Output
+Return ONLY valid JSON, no markdown, no preamble:
+{
+  "verdict": "PASS" | "GATE_REFUTED" | "GATE_DEMOTED",
+  "gate": <integer 1-4, 0 if PASS>,
+  "quote": "<exact code line or function signature that decided this gate, or empty string if PASS>"
+}
+
+## Important rules
+- GATE_REFUTED requires a CONCRETE code quote. "By design" is NOT a concrete refutation.
+- GATE_DEMOTED is for findings that are real but restricted to privileged actors or have bounded impact.
+- If uncertain about a gate, it CLEARS — only gates with compelling code evidence fail.
+- If you somehow pass all 4 gates, return {"verdict": "PASS", "gate": 0, "quote": ""}
+"""
+
+_GATE_TIMEOUT = int(os.getenv("GATE_EVALUATE_TIMEOUT", "60"))
+_GATE_MODEL = os.getenv("GATE_MODEL_NAME", "gemini-3.1-pro-preview")
+
+
+async def gate_evaluate(finding: Any, source_code: str, llm_client: Any) -> GateResult:
+    """
+    Apply 4-gate pre-filter to a finding before the full jury debate.
+    Uses a cheap/fast model. Returns GateResult with verdict, gate, quote.
+
+    Args:
+        finding: Finding object (needs .hypothesis, .affected_contract, .affected_function,
+                  .vulnerability_class, .confidence, .attack_path)
+        source_code: Raw source code of the affected function
+        llm_client: Cheap LLM client (gemini-2.0-flash or equivalent)
+    """
+    hypothesis_text = finding.hypothesis or ""
+    attack_path_text = " → ".join(finding.attack_path) if finding.attack_path else ""
+
+    user_content = f"""## Finding Under Review
+Contract: {finding.affected_contract}
+Function: {finding.affected_function}
+Vulnerability class: {finding.vulnerability_class}
+Confidence reported by analysis: {finding.confidence}
+Attack path: {attack_path_text}
+Hypothesis: {hypothesis_text}
+
+## Source Code
+```solidity
+{source_code or "// Source code not available"}
+```
+
+Apply the 4-gate protocol. Return JSON only."""
+
+    messages = [
+        {"role": "system", "content": _GATE_SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ]
+
+    try:
+        response = await asyncio.wait_for(
+            llm_client.ainvoke(messages),
+            timeout=_GATE_TIMEOUT,
+        )
+        content = response.content if hasattr(response, "content") else str(response)
+        if isinstance(content, list):
+            content = "".join(
+                c.get("text", "") if isinstance(c, dict) else str(c) for c in content
+            )
+
+        # Token tracking (non-fatal)
+        try:
+            from src.utils.token_counter import get_token_counter
+            input_text = "\n".join(
+                m.get("content", "") if isinstance(m, dict) else str(m)
+                for m in messages
+            )
+            get_token_counter().record(
+                "GateEvaluate", _GATE_MODEL,
+                input_text, str(content),
+                getattr(response, "response_metadata", None),
+            )
+        except Exception:
+            pass
+
+        cleaned = str(content).strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.split("\n")
+            cleaned = "\n".join(lines[1:-1]).strip()
+
+        parsed = json.loads(cleaned)
+        verdict = parsed.get("verdict", "PASS")
+        if verdict not in ("PASS", "GATE_REFUTED", "GATE_DEMOTED"):
+            verdict = "PASS"  # fail open — never incorrectly suppress a real finding
+
+        return GateResult(
+            verdict=verdict,
+            gate=int(parsed.get("gate", 0)),
+            quote=str(parsed.get("quote", "")),
+        )
+
+    except asyncio.TimeoutError:
+        logger.warning(f"[Gate] Timeout evaluating {getattr(finding, 'hotspot_node_id', '?')} — failing open (PASS)")
+        return GateResult(verdict="PASS", gate=0, quote="timeout")
+    except Exception as e:
+        logger.warning(f"[Gate] Error evaluating {getattr(finding, 'hotspot_node_id', '?')}: {str(e)[:100]} — failing open")
+        return GateResult(verdict="PASS", gate=0, quote=f"error: {str(e)[:50]}")
+
+
 # ── Verdict types ────────────────────────────────────────────────────
+
+
 
 JuryVerdict = Literal["CONFIRM", "REJECT", "UNCERTAIN"]
 

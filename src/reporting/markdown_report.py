@@ -82,7 +82,7 @@ def render_markdown_report(
         "",
         "## Executive Summary",
         "",
-        f"{total_findings} vulnerability lead(s) identified. "
+        f"{total_findings} vulnerability finding(s) identified. "
         f"{total_proven} proven with working Foundry PoC.",
         "",
         "| Severity | Count | Proven |",
@@ -171,6 +171,25 @@ def render_markdown_report(
             lines.append(f"**Votes:** {getattr(finding, 'jury_vote_summary', '')}\n")
             lines.append(f"**Rejection reason:** {getattr(finding, 'jury_rejection_reason', '')}\n")
 
+    # ── Vulnerability Leads ───────────────────────────────
+    if leads:
+        lines.append("\n---\n")
+        lines.append("## Raw Vulnerability Leads\n")
+        lines.append(
+            "The following leads were identified during the initial analysis phase. "
+            "Note: These are preliminary hypotheses and may not be fully validated findings.\n"
+        )
+        for lead in leads:
+            sev = lead.get("severity", "UNKNOWN")
+            title = lead.get("title", "Untitled")
+            conf = lead.get("confidence_score", "N/A")
+            contract = lead.get("affected_contract", "Unknown")
+            func = lead.get("affected_function", "Unknown")
+            lines.append(f"### {sev} | {title} (Confidence: {conf}%)\n")
+            lines.append(f"**Contract:** {contract} | **Function:** {func}\n")
+            hyp = lead.get("hypothesis", "No hypothesis provided.")
+            lines.append(f"{hyp}\n")
+
     # ── Token Usage & Cost Section ──
     if token_usage:
         lines += _render_token_usage_md(token_usage)
@@ -229,9 +248,27 @@ def _render_finding(finding, leads: list[dict]) -> list[str]:
         "",
         "### Description",
         "",
-        finding.hypothesis or "No hypothesis available.",
-        "",
     ]
+    
+    # Story 6.1: Render assumption/violation/proof for first-principles findings
+    if getattr(finding, "vulnerability_class", "") == "first_principles":
+        raw = getattr(finding, "raw_output", {}) or {}
+        lines += [
+            "**Assumption violated:**",
+            raw.get("assumption", "Unknown"),
+            "",
+            "**Violation mechanism:**",
+            raw.get("violation", "Unknown"),
+            "",
+            "**Proof / Trace:**",
+            raw.get("proof", "Unknown"),
+            "",
+        ]
+    else:
+        lines += [
+            finding.hypothesis or "No hypothesis available.",
+            "",
+        ]
 
     # v2: Preconditions / postconditions
     preconditions = getattr(finding, "preconditions", []) or []

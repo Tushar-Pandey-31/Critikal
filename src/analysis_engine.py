@@ -37,23 +37,34 @@ logger = logging.getLogger(__name__)
 
 def _ensure_framework_deps(fw_dir: str) -> None:
     """Ensure git submodules and forge libs are populated for a framework directory."""
+
+    # Skip git submodule init if lib/ already has populated entries.
+    # Pre-installing via `forge install` before running is the recommended path;
+    # the submodule approach often hangs on network-heavy repos.
+    lib_dir = os.path.join(fw_dir, "lib")
+    lib_already_populated = os.path.isdir(lib_dir) and bool(os.listdir(lib_dir))
+
     gitmodules = os.path.join(fw_dir, ".gitmodules")
-    if os.path.exists(gitmodules):
+    if os.path.exists(gitmodules) and not lib_already_populated:
         try:
             subprocess.run(
                 ["git", "submodule", "update", "--init", "--recursive"],
-                cwd=fw_dir, check=True, capture_output=True, timeout=300,
+                cwd=fw_dir, check=True, capture_output=True, timeout=30,
             )
             logger.info(f"  [deps] submodules initialized in {fw_dir}")
+        except subprocess.TimeoutExpired:
+            logger.warning(f"  [deps] submodule init timed out in {fw_dir} — run `forge install` manually")
         except Exception as e:
             logger.warning(f"  [deps] submodule init failed in {fw_dir}: {e}")
+    elif lib_already_populated:
+        logger.info(f"  [deps] lib/ already populated in {fw_dir} — skipping submodule init")
 
     foundry_toml = os.path.join(fw_dir, "foundry.toml")
-    if os.path.exists(foundry_toml):
+    if os.path.exists(foundry_toml) and not lib_already_populated:
         try:
             subprocess.run(
-                ["forge", "install", "--shallow", "--no-commit"],
-                cwd=fw_dir, capture_output=True, text=True, timeout=300,
+                ["forge", "install"],
+                cwd=fw_dir, capture_output=True, text=True, timeout=120,
             )
             logger.info(f"  [deps] forge install done in {fw_dir}")
         except FileNotFoundError:

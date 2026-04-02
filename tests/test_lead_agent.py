@@ -57,12 +57,15 @@ async def test_coordinator_node_json_output(mock_get_llm):
     mock_llm_instance.invoke.return_value.tool_calls = []
     mock_get_llm.return_value = mock_llm_instance
     
+    mock_graph = MagicMock()
+    mock_graph.number_of_nodes.return_value = 5
+    mock_graph.number_of_edges.return_value = 3
     state = {
         "messages": [],
         "vulnerability_leads": [],
         "target_nodes": [],
         "worker_outputs": [],
-        "graph": MagicMock()
+        "graph": mock_graph
     }
     
     result = await coordinator_node(state)

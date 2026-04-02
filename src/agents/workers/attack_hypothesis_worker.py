@@ -119,6 +119,15 @@ Return ONLY valid JSON. No markdown fences, no preamble, no explanation.
   "too much capital", check if a flash loan removes the capital barrier.
   If flash-loaned capital could fund the attack → precondition is NOT missing.
 
+**R16 — Design Intent Check**: Before classifying a function as vulnerable, check the Design Context:
+  1. Does the natspec say this behaviour is intentional? (e.g. "anyone can call", "permissionless")
+  2. Does the protocol design summary indicate this is a permissionless protocol?
+  3. Is Solidity >= 0.8.0? If yes, integer overflow/underflow is NOT exploitable unless `unchecked {}` is used.
+  4. Does the caller PAY their own tokens to execute the "attack"? If the "attacker" must transfer their own
+     assets and the "victim" only benefits, this is NOT a vulnerability — it's an intentional feature.
+  If ALL signals suggest the pattern is intentional AND no fund loss is possible, set verdict to CONTESTED
+  with confidence <= 40 and note "Design intent indicates this is intentional" in reasoning.
+
 ## Common Vulnerability Patterns (trust graph signals heavily)
 
 **REENTRANCY** (state_write_after_external_call=True OR reentrancy_risk=True):
@@ -242,6 +251,12 @@ class AttackHypothesisWorker(WorkerAgent):
                 }
             )
 
+        evidence_tags = []
+        if strong_signal:
+            evidence_tags.append("[GRAPH-SIGNAL]")
+        # This worker almost always has source code via context
+        evidence_tags.append("[CODE]")
+
         return WorkerOutput(
             worker_type="attack_hypothesis",
             task_id=task.task_id,
@@ -261,6 +276,7 @@ class AttackHypothesisWorker(WorkerAgent):
                 "affected_contract": hotspot.contract,
                 "affected_function": hotspot.function,
                 "severity_estimate": hotspot.priority,
+                "evidence_tags": evidence_tags,
             }
         )
 
@@ -573,14 +589,39 @@ The following known vulnerability patterns were matched by structural analysis:
 ## Protocol Context (from Recon)
 Protocol Type: {recon_context.get("protocol_type", "unknown")}
 Known Attack Patterns: {recon_context.get("known_attack_patterns", [])}
+"""
 
+        # NEW: Design context section from enhanced ReconWorker
+        design_ctx = recon_context.get("design_context", {})
+        compiler_info = design_ctx.get("compiler_info", {})
+        intentional_patterns = design_ctx.get("intentional_patterns", [])
+        natspec_all = design_ctx.get("natspec_intent", {})
+        design_summary = design_ctx.get("design_summary", "")
+
+        # Find natspec for the specific target function
+        fn_natspec = natspec_all.get(hotspot.function, [])
+
+        if design_summary or compiler_info or intentional_patterns or fn_natspec:
+            user_content += f"""
+## Design Context (from Recon — trust this for design intent)
+Design Summary: {design_summary if design_summary else 'N/A'}
+Solidity Version: {compiler_info.get('solidity_version', 'unknown')}
+Safe Math (overflow/underflow protection): {compiler_info.get('has_safe_math', 'unknown')}
+Has Unchecked Blocks: {compiler_info.get('has_unchecked_blocks', False)}
+Intentional Design Patterns Found: {intentional_patterns if intentional_patterns else 'None detected'}
+Natspec for {hotspot.function}(): {fn_natspec if fn_natspec else 'No natspec found'}
+"""
+
+        user_content += f"""
 ## Instructions
 1. The graph signals above are from deterministic static analysis — treat them as ground truth.
 2. If state_write_after_external_call=True, assume CEI violation is real.
 3. If is_unprotected_mutator=True, assume access control is missing.
 4. Generate the strongest exploit hypothesis you can based on available evidence.
 5. attack_path must use "ContractName::functionName" (double colon)
-6. Return ONLY the JSON object, no markdown, no prose."""
+6. Return ONLY the JSON object, no markdown, no prose.
+7. CHECK DESIGN CONTEXT: If natspec says behaviour is intentional AND caller pays own tokens → downgrade confidence.
+8. CHECK COMPILER: If Solidity >= 0.8 and no unchecked blocks, overflow/underflow is NOT exploitable."""
 
         return [
             {"role": "system", "content": ATTACK_WORKER_SYSTEM_PROMPT},

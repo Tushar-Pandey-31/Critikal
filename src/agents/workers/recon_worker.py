@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import re
+from pathlib import Path
 from src.agents.base_worker import WorkerAgent, WorkerOutput, WorkerTask
 
 logger = logging.getLogger(__name__)
@@ -8,6 +10,28 @@ from src.utils.graph_queries import (
     get_external_entry_points,
     get_privileged_roles,
 )
+
+# Keywords that indicate deliberate design choices — NOT vulnerabilities
+DESIGN_INTENT_KEYWORDS = [
+    "permissionless", "anyone can", "no access control", "by design",
+    "intentionally", "trusted", "not supported", "known limitation",
+    "on behalf of", "on behalf", "delegated", "authorized caller",
+    "fee-on-transfer tokens are not supported",
+    "rebasing tokens are not supported",
+]
+
+# Doc files to scan in any repo (case-insensitive)
+DOC_FILE_PATTERNS = [
+    "README.md", "readme.md", "README.rst",
+    "WHITEPAPER.md", "whitepaper.md", "WHITEPAPER.pdf",
+    "SECURITY.md", "security.md",
+    "SPECIFICATION.md", "specification.md",
+    "DESIGN.md", "design.md",
+    "ARCHITECTURE.md", "architecture.md",
+]
+
+# Directories to scan for docs
+DOC_DIR_PATTERNS = ["docs", "doc", "documentation", "audits", "audit-reports"]
 
 
 # Known protocol type signatures — extend as needed
@@ -96,12 +120,17 @@ class ReconWorker(WorkerAgent):
         contract_names: list[str] = input_data.get("contract_names", [])
         contract_addresses: dict = input_data.get("contract_addresses", {})
         repo_url: str | None = input_data.get("repo_url")
+        repo_path: str | None = input_data.get("repo_path")
 
-        # Run all three intel sources in parallel
-        graph_intel, rag_intel, onchain_intel = await asyncio.gather(
+        # Run all SEVEN intel sources in parallel
+        graph_intel, rag_intel, onchain_intel, docs_intel, natspec_intel, compiler_intel, test_intel = await asyncio.gather(
             self._gather_graph_intel(contract_names),
             self._gather_rag_intel(contract_names),
             self._gather_onchain_intel(contract_addresses),
+            self._gather_repo_docs_intel(repo_path),
+            self._gather_natspec_intel(repo_path),
+            self._gather_compiler_intel(repo_path),
+            self._gather_test_intent_intel(repo_path),
         )
 
         # Classify protocol type from graph intel
@@ -117,6 +146,20 @@ class ReconWorker(WorkerAgent):
 
         # Upgradeability: detected from graph (proxy patterns) or Etherscan
         upgradeability = self._detect_upgradeability(graph_intel, onchain_intel)
+
+        # Build design context from new intel sources
+        design_context = {
+            "design_summary": docs_intel.get("design_summary", ""),
+            "doc_files_read": docs_intel.get("files_read", []),
+            "natspec_intent": natspec_intel.get("function_natspec", {}),
+            "intentional_patterns": natspec_intel.get("intentional_patterns", []),
+            "compiler_info": compiler_intel,
+            "tested_areas": test_intel,
+        }
+        print(f"  [Recon] Design context: {len(design_context['doc_files_read'])} docs, "
+              f"{len(design_context['intentional_patterns'])} intentional patterns, "
+              f"solidity={compiler_intel.get('solidity_version', '?')}, "
+              f"safe_math={compiler_intel.get('has_safe_math', '?')}")
 
         raw_output = {
             "protocol_summary": self._generate_summary(
@@ -139,6 +182,7 @@ class ReconWorker(WorkerAgent):
                 "is_proxy": onchain_intel.get("is_proxy", False),
                 "data_source": onchain_intel.get("data_source", "stub"),
             },
+            "design_context": design_context,
         }
 
         return WorkerOutput(
@@ -179,16 +223,22 @@ class ReconWorker(WorkerAgent):
         """
         Query the RAG system with protocol-relevant queries.
         Returns additional attack patterns from historical audits.
+        Uses contract names for targeted queries instead of generic strings.
         """
-        from src.knowledge.rag_system import search_security_knowledge  # adjust import
+        from src.knowledge.rag_system import search_security_knowledge
 
-        # We don't know the protocol type yet, so query broadly
-        queries = [
-            "reentrancy vulnerability DeFi protocol exploit",
-            "access control privilege escalation smart contract",
-            "flash loan attack oracle manipulation",
-            "common DeFi audit findings critical vulnerabilities",
-        ]
+        # Build protocol-specific queries from contract names
+        queries = []
+        for name in contract_names[:5]:  # cap at 5 to avoid overloading RAG
+            queries.append(f"{name} vulnerability exploit audit finding")
+            queries.append(f"{name} security issue known bug")
+
+        # Add broad queries only if we have few contracts
+        if len(contract_names) <= 2:
+            queries.extend([
+                "lending protocol liquidation vulnerability exploit",
+                "DeFi callback reentrancy CEI violation",
+            ])
 
         all_results = []
         sources_used = []
@@ -205,7 +255,6 @@ class ReconWorker(WorkerAgent):
         additional_patterns = []
         for result in all_results:
             content = result.get("content", "")
-            # Basic extraction — LLM synthesis could replace this later
             if "reentrancy" in content.lower():
                 additional_patterns.append("reentrancy pattern detected in historical reports")
             if "flash loan" in content.lower():
@@ -374,3 +423,290 @@ class ReconWorker(WorkerAgent):
             focus.append(f"Contract is only {age} days old — higher risk, less battle-tested")
 
         return focus
+
+    # ------------------------------------------------------------------ #
+    #  NEW: Design-Intent Intelligence Sources (generalised)              #
+    # ------------------------------------------------------------------ #
+
+    async def _gather_repo_docs_intel(self, repo_path: str | None) -> dict:
+        """
+        Scans the repo for README, docs/, whitepaper, audits/, SECURITY.md.
+        Reads first 3000 chars of each and summarises with LLM.
+        Fully generalised — works on any repo structure.
+        """
+        if not repo_path:
+            return {"design_summary": "", "files_read": []}
+
+        root = Path(repo_path)
+        if not root.exists():
+            return {"design_summary": "", "files_read": []}
+
+        collected_text = []
+        files_read = []
+
+        # Scan for doc files in root
+        for pattern in DOC_FILE_PATTERNS:
+            for f in root.rglob(pattern):
+                if "node_modules" in str(f) or "/lib/" in str(f):
+                    continue
+                try:
+                    text = f.read_text(encoding="utf-8", errors="replace")[:3000]
+                    collected_text.append(f"--- {f.relative_to(root)} ---\n{text}")
+                    files_read.append(str(f.relative_to(root)))
+                except Exception:
+                    pass
+                if len(files_read) >= 10:  # cap to avoid overloading
+                    break
+
+        # Scan doc directories
+        for dir_name in DOC_DIR_PATTERNS:
+            for doc_dir in root.rglob(dir_name):
+                if not doc_dir.is_dir():
+                    continue
+                if "node_modules" in str(doc_dir) or "/lib/" in str(doc_dir):
+                    continue
+                for f in sorted(doc_dir.rglob("*.md"))[:5]:  # max 5 docs per dir
+                    try:
+                        text = f.read_text(encoding="utf-8", errors="replace")[:2000]
+                        collected_text.append(f"--- {f.relative_to(root)} ---\n{text}")
+                        files_read.append(str(f.relative_to(root)))
+                    except Exception:
+                        pass
+
+        if not collected_text:
+            return {"design_summary": "", "files_read": []}
+
+        # Use LLM to summarise docs
+        all_docs = "\n\n".join(collected_text)[:12000]  # cap total input
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(self.llm.invoke, [
+                    {"role": "system", "content": (
+                        "You are a security auditor pre-reading protocol documentation. "
+                        "Summarise in 3-5 bullet points:\n"
+                        "1. What is this protocol? (1 sentence)\n"
+                        "2. What functions are INTENTIONALLY permissionless? (list them)\n"
+                        "3. What token types are NOT supported? (e.g. fee-on-transfer, rebasing)\n"
+                        "4. What security assumptions does the protocol make?\n"
+                        "5. Any known limitations or prior audit findings mentioned?\n"
+                        "Be concise. Output only the bullet points."
+                    )},
+                    {"role": "user", "content": all_docs}
+                ]),
+                timeout=60
+            )
+            summary = response.content if hasattr(response, "content") else str(response)
+        except Exception as e:
+            logger.warning(f"[Recon] LLM doc summary failed: {e}")
+            summary = ""
+
+        print(f"  [Recon] Read {len(files_read)} doc file(s): {files_read}")
+        return {"design_summary": summary, "files_read": files_read}
+
+    async def _gather_natspec_intel(self, repo_path: str | None) -> dict:
+        """
+        Extracts natspec comments (/// @notice, /// @dev, /// @custom:) from
+        all .sol files in src/ or contracts/. Detects design-intent keywords.
+        Fully generalised — no protocol-specific code.
+        """
+        if not repo_path:
+            return {"function_natspec": {}, "intentional_patterns": []}
+
+        root = Path(repo_path)
+        src_dirs = []
+        for d in ["src", "contracts"]:
+            for candidate in root.rglob(d):
+                if candidate.is_dir() and "node_modules" not in str(candidate) and "/lib/" not in str(candidate):
+                    src_dirs.append(candidate)
+
+        if not src_dirs:
+            src_dirs = [root]  # fallback: scan from root
+
+        natspec_re = re.compile(r'///\s*(@\w+)?\s*(.*)', re.MULTILINE)
+        function_re = re.compile(r'function\s+(\w+)\s*\(')
+
+        function_natspec: dict[str, list[str]] = {}
+        intentional_patterns: list[str] = []
+        seen_patterns: set[str] = set()
+
+        for src_dir in src_dirs:
+            for sol_file in src_dir.rglob("*.sol"):
+                if "test" in str(sol_file).lower() or "mock" in str(sol_file).lower():
+                    continue
+                try:
+                    content = sol_file.read_text(encoding="utf-8", errors="replace")
+                except Exception:
+                    continue
+
+                lines = content.split("\n")
+                current_natspec: list[str] = []
+
+                for line in lines:
+                    stripped = line.strip()
+
+                    # Collect natspec lines
+                    ns_match = natspec_re.match(stripped)
+                    if ns_match:
+                        ns_text = ns_match.group(2).strip()
+                        if ns_text:
+                            current_natspec.append(ns_text)
+
+                            # Check for design-intent keywords
+                            lower = ns_text.lower()
+                            for keyword in DESIGN_INTENT_KEYWORDS:
+                                if keyword in lower and keyword not in seen_patterns:
+                                    pattern_desc = f"{sol_file.name}: '{ns_text.strip()}'"
+                                    intentional_patterns.append(pattern_desc)
+                                    seen_patterns.add(keyword)
+                        continue
+
+                    # If we hit a function declaration, assign collected natspec
+                    fn_match = function_re.search(stripped)
+                    if fn_match and current_natspec:
+                        fn_name = fn_match.group(1)
+                        function_natspec[fn_name] = list(current_natspec)
+                        current_natspec = []
+                    elif not stripped.startswith("//"):
+                        # Non-comment, non-function line resets natspec buffer
+                        if stripped and not stripped.startswith("*") and not stripped.startswith("/*"):
+                            current_natspec = []
+
+        print(f"  [Recon] Natspec: {len(function_natspec)} functions documented, "
+              f"{len(intentional_patterns)} intentional pattern(s)")
+        return {
+            "function_natspec": function_natspec,
+            "intentional_patterns": intentional_patterns,
+        }
+
+    async def _gather_compiler_intel(self, repo_path: str | None) -> dict:
+        """
+        Detects the Solidity compiler version from pragma directives or foundry.toml.
+        Determines if safe math (0.8+), unchecked blocks, etc. are relevant.
+        Fully generalised — works on any Solidity project.
+        """
+        result = {
+            "solidity_version": "unknown",
+            "has_safe_math": False,
+            "has_unchecked_blocks": False,
+            "multiple_versions": False,
+        }
+
+        if not repo_path:
+            return result
+
+        root = Path(repo_path)
+        pragma_re = re.compile(r'pragma\s+solidity\s+[\^~>=<]*\s*(0\.\d+\.\d+)')
+        unchecked_re = re.compile(r'unchecked\s*\{')
+
+        versions: set[str] = set()
+        has_unchecked = False
+
+        src_dirs = []
+        for d in ["src", "contracts"]:
+            for candidate in root.rglob(d):
+                if candidate.is_dir() and "node_modules" not in str(candidate) and "/lib/" not in str(candidate):
+                    src_dirs.append(candidate)
+        if not src_dirs:
+            src_dirs = [root]
+
+        for src_dir in src_dirs:
+            for sol_file in src_dir.rglob("*.sol"):
+                if "test" in str(sol_file).lower() or "mock" in str(sol_file).lower():
+                    continue
+                try:
+                    content = sol_file.read_text(encoding="utf-8", errors="replace")[:2000]
+                except Exception:
+                    continue
+
+                m = pragma_re.search(content)
+                if m:
+                    versions.add(m.group(1))
+
+                if unchecked_re.search(content):
+                    has_unchecked = True
+
+        if versions:
+            sorted_versions = sorted(versions)
+            primary = sorted_versions[-1]  # use highest version
+            result["solidity_version"] = primary
+            result["multiple_versions"] = len(versions) > 1
+
+            # 0.8.0+ has built-in overflow/underflow protection
+            parts = primary.split(".")
+            if len(parts) == 3:
+                try:
+                    minor = int(parts[1])
+                    result["has_safe_math"] = minor >= 8
+                except ValueError:
+                    pass
+
+        result["has_unchecked_blocks"] = has_unchecked
+
+        print(f"  [Recon] Compiler: solidity={result['solidity_version']}, "
+              f"safe_math={result['has_safe_math']}, "
+              f"unchecked={result['has_unchecked_blocks']}")
+        return result
+
+    async def _gather_test_intent_intel(self, repo_path: str | None) -> dict:
+        """
+        Scans test/ directory for test file names and function patterns.
+        Identifies what the developers already test (fuzz, invariant, unit).
+        Fully generalised — works on any Foundry/Hardhat project.
+        """
+        result = {
+            "test_file_count": 0,
+            "tested_functions": [],
+            "fuzz_targets": [],
+            "invariant_targets": [],
+            "has_fork_tests": False,
+        }
+
+        if not repo_path:
+            return result
+
+        root = Path(repo_path)
+        test_dirs = list(root.rglob("test"))
+        test_dirs = [d for d in test_dirs if d.is_dir()
+                     and "node_modules" not in str(d)
+                     and "/lib/" not in str(d)]
+
+        if not test_dirs:
+            return result
+
+        test_fn_re = re.compile(r'function\s+(test\w+|invariant_\w+|testFuzz_\w+|testFail_\w+)\s*\(')
+        fork_re = re.compile(r'vm\.createFork|vm\.selectFork|fork', re.IGNORECASE)
+
+        tested = set()
+        fuzz = set()
+        invariant = set()
+        has_fork = False
+        file_count = 0
+
+        for test_dir in test_dirs:
+            for sol_file in test_dir.rglob("*.sol"):
+                file_count += 1
+                try:
+                    content = sol_file.read_text(encoding="utf-8", errors="replace")
+                except Exception:
+                    continue
+
+                for m in test_fn_re.finditer(content):
+                    fn_name = m.group(1)
+                    tested.add(fn_name)
+                    if fn_name.startswith("testFuzz_") or fn_name.startswith("testFuzz"):
+                        fuzz.add(fn_name)
+                    elif fn_name.startswith("invariant_"):
+                        invariant.add(fn_name)
+
+                if fork_re.search(content):
+                    has_fork = True
+
+        result["test_file_count"] = file_count
+        result["tested_functions"] = sorted(tested)[:50]  # cap
+        result["fuzz_targets"] = sorted(fuzz)[:20]
+        result["invariant_targets"] = sorted(invariant)[:20]
+        result["has_fork_tests"] = has_fork
+
+        print(f"  [Recon] Tests: {file_count} file(s), {len(tested)} test fn(s), "
+              f"{len(fuzz)} fuzz, {len(invariant)} invariant")
+        return result

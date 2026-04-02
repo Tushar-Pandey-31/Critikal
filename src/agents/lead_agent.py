@@ -29,19 +29,21 @@ from src.agents.base_worker import WorkerOutput, WorkerTask
 from src.agents.workers.recon_worker import ReconWorker
 from src.agents.workers.attack_hypothesis_worker import AttackHypothesisWorker
 from src.agents.workers.test_writer_worker import TestWriterWorker
-from src.models.finding import Finding, FindingStatus
+from src.models.finding import Finding, FindingStatus, FindingVerdict
 from src.utils.graph_queries import get_high_risk_hotspots, get_function_context, get_contract_signatures
 from src.utils.node_ids import normalize_node_id
 from src.tools.etherscan_client import EtherscanClient
+from src.pipeline_config import get_config, PipelineConfig
 import asyncio
 
-# Jury system
-JURY_ENABLED = os.getenv("JURY_ENABLED", "false").lower() == "true"
+# Jury system — config is authoritative, env var kept for backward compat
+def _jury_enabled() -> bool:
+    return get_config().jury_enabled
 JURY_CONCURRENCY = int(os.getenv("JURY_CONCURRENCY", "5"))
-JURY_SKEPTIC_MODEL = os.getenv("JURY_SKEPTIC_MODEL", "claude-sonnet-4-6")
-JURY_ATTACKER_MODEL = os.getenv("JURY_ATTACKER_MODEL", "grok-3")
-JURY_AUDITOR_MODEL = os.getenv("JURY_AUDITOR_MODEL", "gpt-4o")
-JURY_JUDGE_MODEL = os.getenv("JURY_JUDGE_MODEL", "gemini-2.5-pro")
+JURY_SKEPTIC_MODEL = os.getenv("JURY_SKEPTIC_MODEL", "gemini-3.1-pro-preview")
+JURY_ATTACKER_MODEL = os.getenv("JURY_ATTACKER_MODEL", "claude-sonnet-4-6")
+JURY_AUDITOR_MODEL = os.getenv("JURY_AUDITOR_MODEL", "gpt-5.4")
+JURY_JUDGE_MODEL = os.getenv("JURY_JUDGE_MODEL", "grok-4-1-fast-non-reasoning")
 
 try:
     from langchain_google_genai import ChatGoogleGenerativeAI
@@ -340,12 +342,25 @@ def deduplicate_leads(worker_outputs: List[Any]) -> List[dict]:
 
         lead_id = f"LEAD-{i + 1:03d}"
         evidence = wo_dict.get("evidence_node_ids", [])
-        # LOGIC-006 fix: use the hotspot function node_id as dedup key.
-        # evidence_node_ids is almost always empty (attack workers don't populate it),
-        # so falling back to task_id made dedup useless.
         raw = wo_dict.get("raw_output", {})
         func_key = f"{raw.get('affected_contract', '')}::{raw.get('affected_function', '')}"
-        key = "|".join(sorted(evidence)) if evidence else (func_key if func_key != "::" else wo_dict.get("task_id", f"__worker_{i}"))
+        vuln_class = raw.get("vulnerability_class", "unknown")
+
+        # Story 6.7: ALWAYS use contract::function as primary dedup key.
+        # evidence_node_ids can be shared across DIFFERENT hotspots (e.g., both
+        # reference a shared internal helper) causing silent collision — one valid
+        # finding would be overwritten. Identity = what function is being attacked,
+        # not what evidence was cited.
+        #
+        # Story 6.8: first_principles findings are a SEPARATE identity dimension.
+        # An assumption-violation finding and a reentrancy finding on the same
+        # function are NOT duplicates — they describe different attacks.
+        if vuln_class == "first_principles":
+            key = f"fp_{func_key}_{i}"   # always unique — never collapse FP findings
+        elif func_key != "::":
+            key = func_key
+        else:
+            key = wo_dict.get("task_id", f"__worker_{i}")
 
         wo_confidence = wo_dict.get("confidence", 0)
         if wo_confidence == 0:
@@ -418,19 +433,33 @@ def should_escalate_to_human(
 # ════════════════════════════════════════════════════════════
 
 async def coordinator_node(state: AgentState):
+    config = get_config()
     messages = state.get("messages", [])
     worker_outputs = state.get("worker_outputs", [])
 
     # Per-worker model routing
-    recon_model = os.getenv("RECON_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"))
-    attack_model = os.getenv("ATTACK_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "grok-3"))
+    recon_model = os.getenv("RECON_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-3-flash-preview"))
+    attack_model = os.getenv("ATTACK_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "claude-sonnet-4-6"))
     test_writer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "claude-sonnet-4-6"))
 
     recon_llm = get_worker_llm(model_name=recon_model)
     attack_llm = get_worker_llm(model_name=attack_model)
 
     # ── Step 1: Recon ──────────────────────────────────────
-    etherscan = EtherscanClient()
+    etherscan = EtherscanClient() if config.etherscan_enabled else None
+
+    # Resolve repo_path BEFORE recon so it can read docs/natspec/compiler info
+    repo_url = state.get("repo_url", "")
+    repo_name = _repo_name_from_url(repo_url)
+    repo_path = None
+    if repo_name:
+        candidate = Path("data/scratch") / repo_name
+        if candidate.exists():
+            repo_path = str(candidate)
+    # Also check if repo_url is itself a local path (e.g. --repo data/morpho-workspace)
+    if not repo_path and repo_url and Path(repo_url).exists():
+        repo_path = str(Path(repo_url))
+
     recon_worker = ReconWorker(
         graph=state["graph"],
         llm_client=recon_llm,
@@ -443,17 +472,12 @@ async def coordinator_node(state: AgentState):
             "contract_names": state.get("contract_names", []),
             "contract_addresses": state.get("contract_addresses", {}),
             "repo_url": state.get("repo_url"),
+            "repo_path": repo_path,
         }
     )
     recon_output = await recon_worker.run(recon_task)
-    repo_url = state.get("repo_url", "")
-    repo_name = _repo_name_from_url(repo_url)
-    repo_path = None
-    if repo_name:
-        candidate = Path("data/scratch") / repo_name
-        if candidate.exists():
-            repo_path = str(candidate)
-            print(f"[Step 1] Recon complete. Repo path: {repo_path}")
+    if repo_path:
+        print(f"[Step 1] Recon complete. Repo path: {repo_path}")
 
     recon_context = recon_output.raw_output
     # BUG-008 fix: don't directly mutate state["recon_context"] here.
@@ -462,30 +486,105 @@ async def coordinator_node(state: AgentState):
     if recon_context.get("onchain_risk_signals", {}).get("previous_exploits_detected"):
         print("[Step 1] Prior exploit detected by Recon. Escalating priority.")
 
+    # ── Step 1.5: Semantic Discovery (Slither-independent) ──
+    _semantic_findings: list[Finding] = []
+    if config.semantic_discovery_enabled and repo_path:
+        print("[Step 1.5] Semantic discovery enabled — launching LLM-native agents...")
+        try:
+            from src.agents.workers.semantic_discovery import run_semantic_discovery
+            semantic_model = os.getenv("SEMANTIC_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "grok-4-1-fast-non-reasoning"))
+            semantic_llm = get_worker_llm(model_name=semantic_model)
+            semantic_outputs = await run_semantic_discovery(
+                repo_path=repo_path,
+                llm_client=semantic_llm,
+                model_name=semantic_model,
+                recon_context=recon_context,
+            )
+            print(f"[Step 1.5] Semantic discovery complete: {len(semantic_outputs)} agent output(s)")
+            # Convert semantic outputs to Finding objects (no Hotspot required)
+            for so in semantic_outputs:
+                primary = Finding.from_semantic_output(so)
+                _semantic_findings.append(primary)
+                # Also include multi-finding output from agents that return all_findings
+                all_raw = so.raw_output.get("all_findings", [])
+                if len(all_raw) > 1:
+                    for extra in all_raw:
+                        if extra == so.raw_output.get("best_finding"):
+                            continue  # already handled above
+                        extra_conf = int(extra.get("confidence", 0))
+                        if extra_conf > 0:
+                            extra_output = WorkerOutput(
+                                worker_type=so.worker_type,
+                                task_id=so.task_id,
+                                hypothesis=extra.get("hypothesis", ""),
+                                confidence=min(100, max(0, extra_conf)),
+                                attack_path=extra.get("attack_path", []),
+                                raw_output={
+                                    "vulnerability_class": extra.get("vulnerability_class", "semantic_discovery"),
+                                    "affected_contract": extra.get("affected_contract", ""),
+                                    "affected_function": extra.get("affected_function", ""),
+                                    "title": extra.get("title", ""),
+                                    "impact": extra.get("impact", ""),
+                                    "severity_estimate": extra.get("severity_estimate", "MEDIUM"),
+                                    "evidence": extra.get("evidence", ""),
+                                },
+                            )
+                            _semantic_findings.append(Finding.from_semantic_output(extra_output))
+            print(f"[Step 1.5] Total semantic findings: {len(_semantic_findings)}")
+        except Exception as e:
+            print(f"[Step 1.5] Semantic discovery failed (non-fatal): {e}")
+    elif not config.semantic_discovery_enabled:
+        print("[Step 1.5] Semantic discovery disabled (SEMANTIC_DISCOVERY_ENABLED=false)")
+    else:
+        print("[Step 1.5] No repo path — skipping semantic discovery")
+
     # ── Step 2: Hotspots ───────────────────────────────────
-    hotspots = get_high_risk_hotspots(state["graph"], min_score=70)
-    # v2 E2E TESTING: fallback to relaxed gate if no hotspots found (single-contract repos)
-    if not hotspots:
-        from src.utils.graph_queries import get_graph_queries as _gq
-        hotspots = _gq(state["graph"]).get_high_risk_hotspots(min_score=70, require_exploit_target=False)
-    print(f"[Step 2] Found {len(hotspots)} high-risk hotspot(s)")
-    findings = []
+    findings: list[Finding] = list(_semantic_findings)  # seed with semantic findings
+    hotspots = []
+
+    if _semantic_findings:
+        print(f"[Step 2] Seeded findings with {len(_semantic_findings)} semantic finding(s)")
+
+    if config.slither_enabled and state["graph"].number_of_nodes() > 0:
+        hotspots = get_high_risk_hotspots(state["graph"], min_score=70)
+        # v2 E2E TESTING: fallback to relaxed gate if no hotspots found (single-contract repos)
+        if not hotspots:
+            from src.utils.graph_queries import get_graph_queries as _gq
+            hotspots = _gq(state["graph"]).get_high_risk_hotspots(min_score=70, require_exploit_target=False)
+        print(f"[Step 2] Found {len(hotspots)} high-risk hotspot(s)")
+    else:
+        print("[Step 2] Slither disabled or empty graph — skipping hotspot-based workers")
 
     if not hotspots:
         print("[Step 2] No hotspots above threshold — skipping attack workers")
         state["findings"] = []
         state["escalate"] = False
     else:
-        # ── Step 3: Attack Workers ─────────────────────────
+        # ── Step 3: Attack Workers + Assumption Workers ────
         attack_worker = AttackHypothesisWorker(
             graph=state["graph"],
             llm_client=attack_llm,
         )
 
+        # Story 6.1: AssumptionWorker runs in parallel with AttackHypothesisWorker.
+        # It receives NO graph signals or pattern hints — only raw source + call graph.
+        # Separate model recommended: claude-sonnet for lateral/creative reasoning.
+        assumption_worker = None
+        if config.assumption_worker_enabled:
+            from src.agents.workers.assumption_worker import AssumptionWorker
+            assumption_model = os.getenv("ASSUMPTION_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-3.1-flash-lite-preview"))
+            assumption_llm = get_worker_llm(model_name=assumption_model)
+            assumption_worker = AssumptionWorker(
+                graph=state["graph"],
+                llm_client=assumption_llm,
+            )
+        else:
+            print("[Step 3] Assumption worker disabled (ASSUMPTION_WORKER_ENABLED=false)")
+
         def _budget_for_priority(priority: str) -> int:
             return {"CRITICAL": 8000, "HIGH": 5000, "MEDIUM": 3000}.get(priority, 3000)
 
-        tasks = [
+        attack_tasks = [
             WorkerTask(
                 task_id=f"attack_{hotspot.node_id}",
                 task_type="attack_analysis",
@@ -495,14 +594,29 @@ async def coordinator_node(state: AgentState):
             )
             for hotspot in hotspots
         ]
-        print(f"[Step 3] Launching {len(tasks)} attack worker(s) in parallel (timeout=300s each)...")
-        for t in tasks:
-            print(f"  - {t.task_id}")
+        assumption_tasks = [
+            WorkerTask(
+                task_id=f"assumption_{hotspot.node_id}",
+                task_type="assumption_analysis",
+                hotspot=hotspot,
+                context={},   # deliberately empty — no hints
+                budget_tokens=_budget_for_priority(hotspot.priority),
+            )
+            for hotspot in hotspots
+        ] if assumption_worker else []
+
+        total_tasks = len(attack_tasks) + len(assumption_tasks)
+        print(f"[Step 3] Launching {len(attack_tasks)} attack + {len(assumption_tasks)} assumption worker(s) in parallel ({total_tasks} total)...")
+        for t in attack_tasks:
+            print(f"  [attack]      - {t.task_id}")
+        for t in assumption_tasks:
+            print(f"  [assumption]  - {t.task_id}")
 
         _attack_concurrency = int(os.getenv("ATTACK_WORKER_CONCURRENCY", "15"))
         _attack_sem = asyncio.Semaphore(_attack_concurrency)
+        _assumption_sem = asyncio.Semaphore(_attack_concurrency)
 
-        async def _run_with_timeout(task, timeout=300):
+        async def _run_attack_with_timeout(task, timeout=300):
             async with _attack_sem:
                 try:
                     return await asyncio.wait_for(attack_worker.run(task), timeout=timeout)
@@ -510,28 +624,50 @@ async def coordinator_node(state: AgentState):
                     print(f"  TIMEOUT: {task.task_id} (>{timeout}s)")
                     return None
 
-        worker_outputs_parallel = await asyncio.gather(
-            *[_run_with_timeout(task) for task in tasks],
-            return_exceptions=True
+        async def _run_assumption_with_timeout(task, timeout=300):
+            async with _assumption_sem:
+                try:
+                    return await asyncio.wait_for(assumption_worker.run(task), timeout=timeout)
+                except asyncio.TimeoutError:
+                    print(f"  TIMEOUT: {task.task_id} (>{timeout}s)")
+                    return None
+
+        # Gather ALL workers in parallel — attack and assumption run simultaneously
+        all_outputs = await asyncio.gather(
+            *[_run_attack_with_timeout(t) for t in attack_tasks],
+            *[_run_assumption_with_timeout(t) for t in assumption_tasks],
+            return_exceptions=True,
         )
+        worker_outputs_parallel = all_outputs[:len(attack_tasks)]
+        assumption_outputs_parallel = all_outputs[len(attack_tasks):]
 
         print(f"[Step 3] Attack workers complete: {len(worker_outputs_parallel)} result(s)")
+        print(f"[Step 3] Assumption workers complete: {len(assumption_outputs_parallel)} result(s)")
         for i, o in enumerate(worker_outputs_parallel):
             if isinstance(o, Exception):
-                print(f"  [{i}] EXCEPTION: {o}")
+                print(f"  [attack][{i}] EXCEPTION: {o}")
             elif o is None:
-                print(f"  [{i}] TIMEOUT (no result)")
+                print(f"  [attack][{i}] TIMEOUT (no result)")
             else:
                 o_conf = getattr(o, "confidence", 0)
                 o_hyp = str(getattr(o, "hypothesis", "")) or None
-                print(f"  [{i}] confidence={o_conf} hypothesis={o_hyp}")
+                print(f"  [attack][{i}] confidence={o_conf} hypothesis={o_hyp}")
+
+        for i, o in enumerate(assumption_outputs_parallel):
+            if isinstance(o, Exception):
+                print(f"  [assumption][{i}] EXCEPTION: {o}")
+            elif o is None:
+                print(f"  [assumption][{i}] TIMEOUT (no result)")
+            else:
+                o_conf = getattr(o, "confidence", 0)
+                print(f"  [assumption][{i}] confidence={o_conf}")
 
         # ── Step 4: Build Findings ─────────────────────────
         for output, hotspot in zip(worker_outputs_parallel, hotspots):
             if output is None or isinstance(output, Exception):
                 print(f"  Skipping {hotspot.node_id} — no output")
                 continue
-            
+
             out_conf = getattr(output, "confidence", 0)
             if out_conf >= 65:
                 finding = Finding.from_worker_output(output, hotspot)
@@ -542,73 +678,170 @@ async def coordinator_node(state: AgentState):
                 wo_dict = model_dump_func() if callable(model_dump_func) else output
                 worker_outputs.append(wo_dict)
 
-        print(f"[Step 4] Findings that passed filter: {len(findings)}")
+        # Story 6.1: Assumption findings use a lower confidence threshold (25).
+        # First-principles findings are inherently more speculative but can surface
+        # bugs that the pattern-based attack worker completely misses. They go
+        # through the same jury + depth pipeline as regular findings.
+        assumption_conf_threshold = int(os.getenv("ASSUMPTION_CONFIDENCE_THRESHOLD", "25"))
+        assumption_finding_count = 0
+        for output, hotspot in zip(assumption_outputs_parallel, hotspots):
+            if output is None or isinstance(output, Exception):
+                continue
+            out_conf = getattr(output, "confidence", 0)
+            if out_conf >= assumption_conf_threshold:
+                finding = Finding.from_worker_output(output, hotspot)
+                findings.append(finding)
+                assumption_finding_count += 1
 
-    # ── Step 4.5: Jury Validation (gated by JURY_ENABLED) ─────────
+            if not isinstance(output, Exception):
+                model_dump_func = getattr(output, "model_dump", None)
+                wo_dict = model_dump_func() if callable(model_dump_func) else output
+                worker_outputs.append(wo_dict)
+
+        print(f"[Step 4] Findings that passed filter: {len(findings)} ({assumption_finding_count} from assumption workers)")
+
+
+    # ── Step 4.45: 4-Gate Pre-Filter (gated by config.gate_enabled) ──────
+    # ── Step 4.5: Jury Validation (gated by config.jury_enabled) ─────────
     jury_briefs: dict[str, dict] = {}
+    confirmed_findings: list = []   # BUG FIX: defined before gate block to prevent NameError
 
-    if JURY_ENABLED and findings:
-        print(f"[Step 4.5] Jury enabled — evaluating {len(findings)} finding(s)...")
+    if (config.gate_enabled or config.jury_enabled) and findings:
+        print(f"[Step 4.5] Gate/Jury enabled — evaluating {len(findings)} finding(s)...")
 
-        from src.agents.workers.jury_worker import JuryCoordinator
+        from src.agents.workers.jury_worker import JuryCoordinator, gate_evaluate
         from src.agents.workers.jury_context import build_jury_context_package
 
-        skeptic_llm = get_worker_llm(model_name=JURY_SKEPTIC_MODEL)
-        attacker_llm = get_worker_llm(model_name=JURY_ATTACKER_MODEL)
-        auditor_llm = get_worker_llm(model_name=JURY_AUDITOR_MODEL)
-        judge_llm = get_worker_llm(model_name=JURY_JUDGE_MODEL)
+        # ── Story 6.2: 4-Gate Pre-Filter (only if gate_enabled) ───────
+        state.setdefault("jury_rejected_findings", [])
 
-        jury = JuryCoordinator(
-            skeptic_llm=skeptic_llm,
-            attacker_llm=attacker_llm,
-            auditor_llm=auditor_llm,
-            judge_llm=judge_llm,
-            skeptic_model=JURY_SKEPTIC_MODEL,
-            attacker_model=JURY_ATTACKER_MODEL,
-            auditor_model=JURY_AUDITOR_MODEL,
-            judge_model=JURY_JUDGE_MODEL,
-        )
-
-        _jury_sem = asyncio.Semaphore(JURY_CONCURRENCY)
-
-        async def _run_jury_for_finding(finding, hotspot):
-            async with _jury_sem:
-                raw_source = ""
+        if config.gate_enabled:
+            gate_model = os.getenv("GATE_MODEL_NAME", "gemini-3.1-pro-preview")
+            gate_llm = get_worker_llm(model_name=gate_model)
+            
+            print(f"[Step 4.45] Running fast 4-gate pre-filter on {len(findings)} finding(s)...")
+            
+            async def _run_gate(finding):
                 try:
-                    ctx = get_function_context(state["graph"], finding.hotspot_node_id)
-                    raw_source = ctx.get("source_code") or ctx.get("code") or ""
-                except Exception:
-                    pass
-
-                context_package = build_jury_context_package(
-                    finding=finding,
-                    hotspot=hotspot,
-                    graph=state["graph"],
-                    raw_source_code=raw_source,
-                )
-
-                try:
-                    return finding, await asyncio.wait_for(
-                        jury.evaluate(context_package),
-                        timeout=150,
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(f"[Jury] Timeout (150s) for {finding.hotspot_node_id} — skipping jury")
-                    return finding, None
+                    raw_source = ""
+                    try:
+                        ctx = get_function_context(state["graph"], finding.hotspot_node_id)
+                        raw_source = ctx.get("source_code") or ctx.get("code") or ""
+                    except Exception:
+                        pass
+                    return finding, await gate_evaluate(finding, raw_source, gate_llm)
                 except Exception as e:
-                    logger.warning(f"[Jury] Failed for {finding.hotspot_node_id}: {e}")
-                    return finding, None
+                    logger.warning(f"[Gate] Failed for {finding.hotspot_node_id}: {e}")
+                    from src.agents.workers.jury_worker import GateResult
+                    return finding, GateResult(verdict="PASS", gate=0, quote="error")
+
+            gate_results = await asyncio.gather(*[_run_gate(f) for f in findings])
+            
+            pre_filtered_findings = []
+
+            for finding, gate_res in gate_results:
+                finding.gate_verdict = gate_res.verdict
+                finding.gate_failed = gate_res.gate
+                finding.gate_quote = gate_res.quote
+                
+                if gate_res.verdict == "GATE_REFUTED":
+                    finding.jury_decision = "GATE_REFUTED"
+                    finding.jury_rejection_reason = f"Failed Gate {gate_res.gate}: {gate_res.quote}"
+                    finding.status = FindingStatus.REJECTED
+                    state["jury_rejected_findings"].append(finding)
+                    print(f"  [Gate] ✗ REFUTED Gate {gate_res.gate}: {finding.hotspot_node_id} ({gate_res.quote[:60]}...)")
+                elif gate_res.verdict == "GATE_DEMOTED":
+                    finding.verdict = FindingVerdict.PARTIAL
+                    finding.jury_decision = "GATE_DEMOTED"
+                    finding.jury_reasoning = f"Demoted at Gate {gate_res.gate}: {gate_res.quote}"
+                    pre_filtered_findings.append(finding)
+                    print(f"  [Gate] ↓ DEMOTED Gate {gate_res.gate}: {finding.hotspot_node_id} (bypassing jury, sent to depth)")
+                else:
+                    pre_filtered_findings.append(finding)
+                    print(f"  [Gate] ✓ PASSED: {finding.hotspot_node_id}")
+
+            findings = pre_filtered_findings
+            jury_candidates = [f for f in findings if f.gate_verdict == "PASS"]
+        else:
+            # Gate disabled — all findings pass through unfiltered
+            print(f"[Step 4.45] Gate disabled — all {len(findings)} finding(s) pass to jury unfiltered")
+            for f in findings:
+                f.gate_verdict = "PASS"
+            jury_candidates = list(findings)
+
+        if not jury_candidates:
+            print(f"[Step 4.5] No findings passed the gate pre-filter. Skipping full jury.")
+            for f in findings:
+                # the ones left in findings are GATE_DEMOTED (PARTIAL)
+                confirmed_findings.append(f)
+        elif not config.jury_enabled:
+            # Gate ran but jury is disabled (e.g. standard mode) — pass gate-survived findings through
+            print(f"[Step 4.5] Jury disabled — {len(jury_candidates)} finding(s) passed gate, skipping debate")
+            for f in findings:
+                confirmed_findings.append(f)
+        else:
+            print(f"[Step 4.5] Full jury evaluating {len(jury_candidates)} finding(s) that passed gates...")
+
+            skeptic_llm = get_worker_llm(model_name=JURY_SKEPTIC_MODEL)
+            attacker_llm = get_worker_llm(model_name=JURY_ATTACKER_MODEL)
+            auditor_llm = get_worker_llm(model_name=JURY_AUDITOR_MODEL)
+            judge_llm = get_worker_llm(model_name=JURY_JUDGE_MODEL)
+
+            jury = JuryCoordinator(
+                skeptic_llm=skeptic_llm,
+                attacker_llm=attacker_llm,
+                auditor_llm=auditor_llm,
+                judge_llm=judge_llm,
+                skeptic_model=JURY_SKEPTIC_MODEL,
+                attacker_model=JURY_ATTACKER_MODEL,
+                auditor_model=JURY_AUDITOR_MODEL,
+                judge_model=JURY_JUDGE_MODEL,
+            )
+
+            _jury_sem = asyncio.Semaphore(JURY_CONCURRENCY)
+
+            async def _run_jury_for_finding(finding, hotspot):
+                async with _jury_sem:
+                    raw_source = ""
+                    try:
+                        ctx = get_function_context(state["graph"], finding.hotspot_node_id)
+                        raw_source = ctx.get("source_code") or ctx.get("code") or ""
+                    except Exception:
+                        pass
+
+                    context_package = build_jury_context_package(
+                        finding=finding,
+                        hotspot=hotspot,
+                        graph=state["graph"],
+                        raw_source_code=raw_source,
+                    )
+
+                    try:
+                        return finding, await asyncio.wait_for(
+                            jury.evaluate(context_package),
+                            timeout=150,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(f"[Jury] Timeout (150s) for {finding.hotspot_node_id} — skipping jury")
+                        return finding, None
+                    except Exception as e:
+                        logger.warning(f"[Jury] Failed for {finding.hotspot_node_id}: {e}")
+                        return finding, None
 
         hotspot_map = {h.node_id: h for h in hotspots}
         jury_tasks = []
-        for finding in findings:
+        confirmed_findings = []
+        
+        for finding in jury_candidates:
             hotspot = hotspot_map.get(finding.hotspot_node_id)
             if hotspot:
                 jury_tasks.append(_run_jury_for_finding(finding, hotspot))
 
-        jury_results = await asyncio.gather(*jury_tasks, return_exceptions=True)
+        if jury_tasks:
+            jury_results = await asyncio.gather(*jury_tasks, return_exceptions=True)
+        else:
+            jury_results = []
 
-        confirmed_findings = []
         for result in jury_results:
             if isinstance(result, Exception):
                 continue
@@ -626,6 +859,7 @@ async def coordinator_node(state: AgentState):
                 finding.jury_decision = "CONFIRMED"
                 finding.jury_vote_summary = judge_output.vote_summary
                 finding.jury_reasoning = judge_output.reasoning
+                finding.confidence_consensus = 100  # Full jury consensus
                 print(f"  [Jury] ✓ CONFIRMED: {finding.hotspot_node_id}")
 
             elif decision == "CONFIRMED_UNPROVABLE":
@@ -635,6 +869,7 @@ async def coordinator_node(state: AgentState):
                 finding.jury_decision = "CONFIRMED_UNPROVABLE"
                 finding.jury_vote_summary = judge_output.vote_summary
                 finding.jury_reasoning = judge_output.reasoning
+                finding.confidence_consensus = 75   # Confirmed but not provable
                 print(f"  [Jury] ~ CONFIRMED_UNPROVABLE: {finding.hotspot_node_id} — {judge_output.unprovable_reason[:80]}")
 
             elif decision == "ESCALATE":
@@ -643,6 +878,7 @@ async def coordinator_node(state: AgentState):
                 finding.jury_decision = "ESCALATE"
                 finding.jury_vote_summary = judge_output.vote_summary
                 finding.jury_reasoning = judge_output.reasoning
+                finding.confidence_consensus = 50   # Mixed jury — escalated to human
                 print(f"  [Jury] ? ESCALATE: {finding.hotspot_node_id}")
 
             else:  # REJECTED
@@ -651,10 +887,10 @@ async def coordinator_node(state: AgentState):
                 finding.jury_vote_summary = judge_output.vote_summary
                 finding.jury_reasoning = judge_output.reasoning
                 finding.jury_rejection_reason = judge_output.rejection_reason
+                finding.confidence_consensus = 10   # Jury rejected — very low consensus
                 print(f"  [Jury] ✗ REJECTED: {finding.hotspot_node_id} — {judge_output.rejection_reason[:80]}")
                 # Add to rejected list for report — don't add to confirmed_findings
-                if not hasattr(state, "_jury_rejected"):
-                    state["jury_rejected_findings"] = []
+                state.setdefault("jury_rejected_findings", [])  # BUG FIX: hasattr on dict is always False
                 state["jury_rejected_findings"].append(finding)
 
         rejected_count = len(findings) - len(confirmed_findings)
@@ -662,13 +898,19 @@ async def coordinator_node(state: AgentState):
         findings = confirmed_findings
 
     else:
-        if not JURY_ENABLED:
-            print(f"[Step 4.5] Jury disabled (set JURY_ENABLED=true to enable)")
+        if not config.jury_enabled:
+            print(f"[Step 4.5] Jury disabled (set JURY_ENABLED=true or AUDIT_MODE=deep to enable)")
 
-    # ── Step 4.6: RAG Batch Validation ────────────────────
-    if findings:
-        from src.knowledge.rag_system import rag_batch_validate
-        findings = rag_batch_validate(findings)
+    # ── Step 4.6: RAG Batch Validation & Scoring ──────────
+    if config.rag_enabled and findings:
+        from src.knowledge.rag_system import rag_mandatory_sweep
+        findings = await rag_mandatory_sweep(findings)
+        
+        # Apply Mechanical Confidence Scoring
+        for f in findings:
+            f.confidence = f.compute_mechanical_confidence()
+    elif not config.rag_enabled:
+        print("[Step 4.6] RAG disabled (RAG_ENABLED=false)")
 
     # ── Step 4.7: Depth Worker Pass ──────────────────────
     # Re-analyze uncertain findings from specialized angles
@@ -676,32 +918,33 @@ async def coordinator_node(state: AgentState):
         1 for f in findings
         if f.verdict in ("CONTESTED", "PARTIAL", "UNASSESSED")
     )
-    if uncertain_count > 0:
+    if config.depth_workers_enabled and uncertain_count > 0:
         print(f"[Step 4.7] Running depth workers on {uncertain_count} uncertain finding(s)...")
         try:
             from src.agents.workers.depth_workers import run_depth_workers
-            depth_llm = get_llm(bind_tools=False)
-            depth_model = os.getenv("DEPTH_MODEL_NAME", os.getenv("MODEL_NAME", "gemini-2.5-flash"))
-            import asyncio as _aio
-            loop = _aio.get_event_loop()
-            depth_results = loop.run_until_complete(
-                run_depth_workers(
-                    findings=findings,
-                    graph=state["graph"],
-                    source_cache={},  # depth workers extract source from graph nodes
-                    llm_client=depth_llm,
-                    model_name=depth_model,
-                )
+            depth_model = os.getenv("DEPTH_MODEL_NAME", os.getenv("MODEL_NAME", "gemini-3.1-pro-preview"))
+            depth_llm = get_worker_llm(model_name=depth_model)
+            # BUG FIX: was loop.run_until_complete() inside async — RuntimeError.
+            # We're already in an async context, so just await directly.
+            depth_results = await run_depth_workers(
+                findings=findings,
+                graph=state["graph"],
+                source_cache={},  # depth workers extract source from graph nodes
+                llm_client=depth_llm,
+                model_name=depth_model,
+                max_depth_passes=2,  # Story 6.3: Pass 2 is Devil's Advocate
             )
             print(f"[Step 4.7] Depth pass complete: {len(depth_results)} finding(s) re-analyzed")
         except Exception as e:
             print(f"[Step 4.7] Depth workers failed (non-fatal): {e}")
+    elif not config.depth_workers_enabled:
+        print("[Step 4.7] Depth workers disabled (DEPTH_WORKERS_ENABLED=false)")
     else:
         print("[Step 4.7] No uncertain findings — skipping depth pass")
 
     # ── Step 4.8: Chain Analysis ──────────────────────────
     # Link findings by matching postconditions → preconditions_missing
-    if len(findings) >= 2:
+    if config.chain_analysis_enabled and len(findings) >= 2:
         print("[Step 4.8] Running chain analysis...")
         try:
             from src.agents.chain_analyzer import run_chain_analysis
@@ -712,6 +955,9 @@ async def coordinator_node(state: AgentState):
         except Exception as e:
             print(f"[Step 4.8] Chain analysis failed (non-fatal): {e}")
             state["chain_hypotheses"] = []
+    elif not config.chain_analysis_enabled:
+        print("[Step 4.8] Chain analysis disabled (CHAIN_ANALYSIS_ENABLED=false)")
+        state["chain_hypotheses"] = []
     else:
         print("[Step 4.8] Not enough findings for chain analysis")
         state["chain_hypotheses"] = []
@@ -780,7 +1026,7 @@ async def coordinator_node(state: AgentState):
         # ── Token tracking for Coordinator synthesis ──
         try:
             from src.utils.token_counter import get_token_counter
-            _model = os.getenv("MODEL_NAME", "gemini-2.5-flash")
+            _model = os.getenv("MODEL_NAME", "gemini-3.1-pro-preview")
             _input_text = "\n".join(
                 m.content if hasattr(m, "content") else str(m) for m in prompt
             )
@@ -860,9 +1106,12 @@ async def coordinator_node(state: AgentState):
               f"Only Attack Worker findings are accepted.")
 
     # ── Step 6: TestWriter ─────────────────────────────────
-    print(f"[Step 6] Preparing TestWriter: {len(findings)} finding(s) to process")
     test_tasks = []
     target_findings = []
+    if not config.testwriter_enabled:
+        print("[Step 6] TestWriter disabled (TESTWRITER_ENABLED=false)")
+    else:
+        print(f"[Step 6] Preparing TestWriter: {len(findings)} finding(s) to process")
 
     # ── Copy repo to Linux fs ONCE before spawning all TestWriters ──
     # This avoids N parallel copies of the repo (one per finding).
@@ -878,13 +1127,11 @@ async def coordinator_node(state: AgentState):
                 shutil.copytree(repo_path, repo_copy_root, symlinks=False)
                 print(f"[Step 6] Repo copy complete.")
 
-                # KEY FIX: resolve the actual Foundry project root within the copy.
-                # Many repos have foundry.toml in a subdirectory (e.g. ethernaut/contracts/).
-                # Passing the repo root causes SandboxManager to look for lib/ in the wrong place.
+                # Default fallback root
                 foundry_root = _get_foundry_project_root(Path(repo_copy_root))
                 linux_repo_path = str(foundry_root)
                 if str(foundry_root) != repo_copy_root:
-                    print(f"[Step 6] Foundry project root resolved: {linux_repo_path}")
+                    print(f"[Step 6] Global Foundry project root resolved: {linux_repo_path} (will be overriden per finding if multi-repo)")
             except Exception as e:
                 print(f"[Step 6] Failed to copy repo to Linux fs: {e}, falling back to original path")
                 linux_repo_path = repo_path
@@ -955,6 +1202,24 @@ async def coordinator_node(state: AgentState):
             _node_data = state["graph"].nodes.get(finding.hotspot_node_id, {}) if finding.hotspot_node_id and state.get("graph") else {}
             exploit_seq = _node_data.get("exploit_sequence", [])
 
+            # Multi-repo fix: resolve the specific foundry.toml root for THIS finding's file
+            finding_repo_path = linux_repo_path
+            if _src_file and tmp_base and repo_path:
+                workspace_name = Path(repo_path).name
+                if workspace_name in Path(_src_file).parts:
+                    try:
+                        idx = Path(_src_file).parts.index(workspace_name)
+                        sub_parts = Path(_src_file).parts[idx+1:]
+                        current_check = Path(repo_copy_root)
+                        best_root = current_check if (current_check / "foundry.toml").exists() else Path(linux_repo_path)
+                        for part in sub_parts:
+                            current_check = current_check / part
+                            if (current_check / "foundry.toml").exists():
+                                best_root = current_check
+                        finding_repo_path = str(best_root)
+                    except ValueError:
+                        pass
+
             task = WorkerTask(
                 task_id=f"test_{finding.id}",
                 task_type="test_writer",
@@ -962,7 +1227,7 @@ async def coordinator_node(state: AgentState):
                     "finding": finding,
                     "relevant_code": relevant_code,
                     "recon_context": state.get("recon_context", {}),
-                    "repo_path": linux_repo_path,  # shared Linux-fs copy
+                    "repo_path": finding_repo_path,  # Use the finding-specific linux repo path!
                     "contract_signatures": contract_signatures,
                     "exploit_sequence": exploit_seq,
                     "jury_brief": jury_briefs.get(finding.hotspot_node_id, {}),
@@ -980,7 +1245,7 @@ async def coordinator_node(state: AgentState):
                 f"[Step 6] Spawning TestWriter for {len(test_tasks)} finding(s) "
                 f"(parallel, concurrency={_tw_concurrency}, highest confidence first)..."
             )
-            test_writer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"))
+            test_writer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "claude-sonnet-4-6"))
             test_writer_llm = get_worker_llm(model_name=test_writer_model)
             test_writer = TestWriterWorker(llm_client=test_writer_llm, graph=state["graph"])
 
@@ -1015,7 +1280,12 @@ async def coordinator_node(state: AgentState):
                     # a failed PoC doesn't mean the vulnerability is a false positive
                     if finding.verdict != "CONFIRMED":
                         finding.status = FindingStatus.REJECTED
-                    setattr(finding, "confidence", getattr(output, "confidence", getattr(finding, "confidence", 0)))
+                    # For jury-confirmed findings, don't let a failed PoC lower confidence
+                    tw_conf = getattr(output, "confidence", getattr(finding, "confidence", 0))
+                    if finding.verdict == "CONFIRMED" or finding.jury_decision == "CONFIRMED":
+                        finding.confidence = max(finding.confidence, tw_conf)
+                    else:
+                        finding.confidence = tw_conf
                     
                     # Keep the false-positive in the list, just update status
                     # finding is passed by reference inside `findings`
@@ -1066,53 +1336,53 @@ async def coordinator_node(state: AgentState):
         if not test_tasks:
             print(f"[Step 6] No findings qualified for TestWriter.")
 
-        # ── Step 6.5: Fuzz Generator (Medusa Layer) ───────────────
-        fuzz_targets = []
-        fuzz_tasks = []
-        for finding, output in zip(sorted_findings, test_outputs):
-            if finding.status == FindingStatus.PROVEN and finding.severity_estimate == "CRITICAL" and not isinstance(output, Exception):
-                fuzz_targets.append(finding)
-                fuzz_tasks.append(
-                    WorkerTask(
-                        task_id=f"fuzz_{finding.id}",
-                        task_type="fuzz_generator",
-                        context={
-                            "finding": finding,
-                            "poc_code": getattr(output, "test_code", ""),
-                            "repo_path": linux_repo_path,
-                        }
+        if config.fuzz_generator_enabled:
+            fuzz_targets = []
+            fuzz_tasks = []
+            for finding, output in zip(sorted_findings, test_outputs):
+                if finding.status == FindingStatus.PROVEN and finding.severity_estimate == "CRITICAL" and not isinstance(output, Exception):
+                    fuzz_targets.append(finding)
+                    fuzz_tasks.append(
+                        WorkerTask(
+                            task_id=f"fuzz_{finding.id}",
+                            task_type="fuzz_generator",
+                            context={
+                                "finding": finding,
+                                "poc_code": getattr(output, "test_code", ""),
+                                "repo_path": linux_repo_path,
+                            }
+                        )
                     )
+                    
+            if fuzz_tasks:
+                print(f"[Step 6.5] Spawning FuzzGenerator for {len(fuzz_tasks)} CRITICAL finding(s)...")
+                from src.agents.workers.fuzz_generator import FuzzGeneratorWorker
+                fuzzer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "claude-sonnet-4-6"))
+                fuzzer_llm = get_worker_llm(model_name=fuzzer_model)
+                fuzzer = FuzzGeneratorWorker(llm_client=fuzzer_llm, graph=state["graph"])
+                
+                fuzz_outputs = await asyncio.gather(
+                    *[fuzzer.run(task) for task in fuzz_tasks],
+                    return_exceptions=True
                 )
                 
-        if fuzz_tasks:
-            print(f"[Step 6.5] Spawning FuzzGenerator for {len(fuzz_tasks)} CRITICAL finding(s)...")
-            from src.agents.workers.fuzz_generator import FuzzGeneratorWorker
-            fuzzer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"))
-            fuzzer_llm = get_worker_llm(model_name=fuzzer_model)
-            fuzzer = FuzzGeneratorWorker(llm_client=fuzzer_llm, graph=state["graph"])
-            
-            fuzz_outputs = await asyncio.gather(
-                *[fuzzer.run(task) for task in fuzz_tasks],
-                return_exceptions=True
-            )
-            
-            for finding, output in zip(fuzz_targets, fuzz_outputs):
-                if isinstance(output, Exception):
-                    print(f"  Fuzzer error on {finding.hotspot_node_id}: {output}")
-                    continue
-                    
-                raw = getattr(output, "raw_output", {}) or {}
-                if raw.get("violation_found"):
-                    print(f"  [!] {finding.hotspot_node_id} — INVARIANT BROKEN (Fuzzing successful)")
-                    finding.confidence = getattr(output, "confidence", finding.confidence)
-                    for lead in leads:
-                        lead_id = normalize_node_id(lead.get("affected_function_node_id", ""))
-                        if lead_id == normalize_node_id(finding.hotspot_node_id):
-                            lead["fuzz_code"] = raw.get("fuzz_code")
-                            lead["fuzz_logs"] = raw.get("logs")
-                            if not lead.get("title", "").endswith("[FUZZED]"):
-                                lead["title"] = f"{lead.get('title', '')} [FUZZED]"
-                            break
+                for finding, output in zip(fuzz_targets, fuzz_outputs):
+                    if isinstance(output, Exception):
+                        print(f"  Fuzzer error on {finding.hotspot_node_id}: {output}")
+                        continue
+                        
+                    raw = getattr(output, "raw_output", {}) or {}
+                    if raw.get("violation_found"):
+                        print(f"  [!] {finding.hotspot_node_id} — INVARIANT BROKEN (Fuzzing successful)")
+                        finding.confidence = getattr(output, "confidence", finding.confidence)
+                        for lead in leads:
+                            lead_id = normalize_node_id(lead.get("affected_function_node_id", ""))
+                            if lead_id == normalize_node_id(finding.hotspot_node_id):
+                                lead["fuzz_code"] = raw.get("fuzz_code")
+                                lead["fuzz_logs"] = raw.get("logs")
+                                if not lead.get("title", "").endswith("[FUZZED]"):
+                                    lead["title"] = f"{lead.get('title', '')} [FUZZED]"
+                                break
 
     finally:
         # Cleanup shared Linux-fs repo copy — always runs even on exception
