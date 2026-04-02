@@ -142,10 +142,11 @@ def ingest_knowledge():
     
     # 4. Nuke old DB and rebuild
     print("[4/4] Building embeddings & ChromaDB...")
-    if DB_PATH.exists():
-        import shutil
-        shutil.rmtree(DB_PATH)
-        print("       Cleared old ChromaDB")
+    # if DB_PATH.exists():
+    #     import shutil
+    #     shutil.rmtree(DB_PATH)
+    #     print("       Cleared old ChromaDB")
+    # DB_PATH.mkdir(parents=True, exist_ok=True)
     
     embedding_function = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     

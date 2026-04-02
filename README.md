@@ -23,13 +23,13 @@ Track B runs when `SEMANTIC_DISCOVERY_ENABLED=true` or `AUDIT_MODE=deep|semantic
 ### Shared Validation Pipeline
 Both tracks produce `Finding` objects that flow through:
 
-1. **4-Gate Pre-Filter** — cheap fast model kills obvious false positives
-2. **Jury System** — 3 jurors (Skeptic/Attacker/Auditor) + 1 Judge adversarial debate
+1. **4-Gate Pre-Filter** (`gate_enabled`) — cheap fast model kills obvious false positives. Runs independently of the jury.
+2. **Jury System** (`jury_enabled`) — 3 jurors (Skeptic/Attacker/Auditor) + 1 Judge adversarial debate. Only findings that pass the gate proceed to jury.
 3. **RAG Sweep** — ChromaDB historical exploit matching (boost/penalize confidence)
-4. **Mechanical Scoring** — evidence-tag-weighted composite confidence
+4. **Mechanical Scoring** — evidence-tag-weighted composite confidence (evidence × 0.35 + consensus × 0.25 + RAG × 0.2 + LLM × 0.2). Consensus is derived from jury verdict when jury is enabled.
 5. **Depth Workers** — domain-specific re-analysis (StateTrace, EdgeCase, External)
 6. **Chain Analysis** — links findings into multi-step exploit chains
-7. **TestWriter (Phoenix Loop)** — auto-generates Foundry `.t.sol` exploit PoCs
+7. **TestWriter (Phoenix Loop)** — auto-generates Foundry `.t.sol` exploit PoCs. Jury-confirmed findings are protected from TestWriter confidence downgrade.
 8. **FuzzGenerator** — invariant fuzz tests for proven CRITICAL findings
 
 ## Pipeline Modes

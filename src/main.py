@@ -202,7 +202,7 @@ The Knowledge Graph contains {len(functions)} function nodes across {len(contrac
 Use get_high_risk_hotspots() to identify the highest-priority targets, then formulate your analysis strategy.
 """)
     
-    config = {"configurable": {"thread_id": "live_run_1"}}
+    langgraph_config = {"configurable": {"thread_id": "live_run_1"}}
     
     # Run the graph
     initial_state = {
@@ -222,7 +222,7 @@ Use get_high_risk_hotspots() to identify the highest-priority targets, then form
         "escalate": False,
     }
     
-    events = app.astream(initial_state, config, stream_mode="values")
+    events = app.astream(initial_state, langgraph_config, stream_mode="values")
     
     final_state = None
     async for event in events:

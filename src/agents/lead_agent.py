@@ -29,7 +29,7 @@ from src.agents.base_worker import WorkerOutput, WorkerTask
 from src.agents.workers.recon_worker import ReconWorker
 from src.agents.workers.attack_hypothesis_worker import AttackHypothesisWorker
 from src.agents.workers.test_writer_worker import TestWriterWorker
-from src.models.finding import Finding, FindingStatus
+from src.models.finding import Finding, FindingStatus, FindingVerdict
 from src.utils.graph_queries import get_high_risk_hotspots, get_function_context, get_contract_signatures
 from src.utils.node_ids import normalize_node_id
 from src.tools.etherscan_client import EtherscanClient
@@ -40,10 +40,10 @@ import asyncio
 def _jury_enabled() -> bool:
     return get_config().jury_enabled
 JURY_CONCURRENCY = int(os.getenv("JURY_CONCURRENCY", "5"))
-JURY_SKEPTIC_MODEL = os.getenv("JURY_SKEPTIC_MODEL", "claude-sonnet-4-6")
-JURY_ATTACKER_MODEL = os.getenv("JURY_ATTACKER_MODEL", "grok-3")
-JURY_AUDITOR_MODEL = os.getenv("JURY_AUDITOR_MODEL", "gpt-4o")
-JURY_JUDGE_MODEL = os.getenv("JURY_JUDGE_MODEL", "gemini-2.5-pro")
+JURY_SKEPTIC_MODEL = os.getenv("JURY_SKEPTIC_MODEL", "gemini-3.1-pro-preview")
+JURY_ATTACKER_MODEL = os.getenv("JURY_ATTACKER_MODEL", "claude-sonnet-4-6")
+JURY_AUDITOR_MODEL = os.getenv("JURY_AUDITOR_MODEL", "gpt-5.4")
+JURY_JUDGE_MODEL = os.getenv("JURY_JUDGE_MODEL", "grok-4-1-fast-non-reasoning")
 
 try:
     from langchain_google_genai import ChatGoogleGenerativeAI
@@ -438,8 +438,8 @@ async def coordinator_node(state: AgentState):
     worker_outputs = state.get("worker_outputs", [])
 
     # Per-worker model routing
-    recon_model = os.getenv("RECON_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"))
-    attack_model = os.getenv("ATTACK_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "grok-3"))
+    recon_model = os.getenv("RECON_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-3-flash-preview"))
+    attack_model = os.getenv("ATTACK_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "claude-sonnet-4-6"))
     test_writer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "claude-sonnet-4-6"))
 
     recon_llm = get_worker_llm(model_name=recon_model)
@@ -492,7 +492,7 @@ async def coordinator_node(state: AgentState):
         print("[Step 1.5] Semantic discovery enabled — launching LLM-native agents...")
         try:
             from src.agents.workers.semantic_discovery import run_semantic_discovery
-            semantic_model = os.getenv("SEMANTIC_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"))
+            semantic_model = os.getenv("SEMANTIC_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "grok-4-1-fast-non-reasoning"))
             semantic_llm = get_worker_llm(model_name=semantic_model)
             semantic_outputs = await run_semantic_discovery(
                 repo_path=repo_path,
@@ -572,7 +572,7 @@ async def coordinator_node(state: AgentState):
         assumption_worker = None
         if config.assumption_worker_enabled:
             from src.agents.workers.assumption_worker import AssumptionWorker
-            assumption_model = os.getenv("ASSUMPTION_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "claude-sonnet-4-5"))
+            assumption_model = os.getenv("ASSUMPTION_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-3.1-flash-lite-preview"))
             assumption_llm = get_worker_llm(model_name=assumption_model)
             assumption_worker = AssumptionWorker(
                 graph=state["graph"],
@@ -614,6 +614,7 @@ async def coordinator_node(state: AgentState):
 
         _attack_concurrency = int(os.getenv("ATTACK_WORKER_CONCURRENCY", "15"))
         _attack_sem = asyncio.Semaphore(_attack_concurrency)
+        _assumption_sem = asyncio.Semaphore(_attack_concurrency)
 
         async def _run_attack_with_timeout(task, timeout=300):
             async with _attack_sem:
@@ -624,7 +625,7 @@ async def coordinator_node(state: AgentState):
                     return None
 
         async def _run_assumption_with_timeout(task, timeout=300):
-            async with _attack_sem:   # share concurrency semaphore
+            async with _assumption_sem:
                 try:
                     return await asyncio.wait_for(assumption_worker.run(task), timeout=timeout)
                 except asyncio.TimeoutError:
@@ -700,69 +701,83 @@ async def coordinator_node(state: AgentState):
         print(f"[Step 4] Findings that passed filter: {len(findings)} ({assumption_finding_count} from assumption workers)")
 
 
+    # ── Step 4.45: 4-Gate Pre-Filter (gated by config.gate_enabled) ──────
     # ── Step 4.5: Jury Validation (gated by config.jury_enabled) ─────────
     jury_briefs: dict[str, dict] = {}
     confirmed_findings: list = []   # BUG FIX: defined before gate block to prevent NameError
 
-    if config.jury_enabled and findings:
-        print(f"[Step 4.5] Jury enabled — evaluating {len(findings)} finding(s)...")
+    if (config.gate_enabled or config.jury_enabled) and findings:
+        print(f"[Step 4.5] Gate/Jury enabled — evaluating {len(findings)} finding(s)...")
 
         from src.agents.workers.jury_worker import JuryCoordinator, gate_evaluate
         from src.agents.workers.jury_context import build_jury_context_package
 
-        # ── Story 6.2: 4-Gate Pre-Filter ──────────────────────────────
-        gate_model = os.getenv("GATE_MODEL_NAME", "gemini-2.0-flash")
-        gate_llm = get_worker_llm(model_name=gate_model)
-        
-        print(f"[Step 4.45] Running fast 4-gate pre-filter on {len(findings)} finding(s)...")
-        
-        async def _run_gate(finding):
-            try:
-                raw_source = ""
-                try:
-                    ctx = get_function_context(state["graph"], finding.hotspot_node_id)
-                    raw_source = ctx.get("source_code") or ctx.get("code") or ""
-                except Exception:
-                    pass
-                return finding, await gate_evaluate(finding, raw_source, gate_llm)
-            except Exception as e:
-                logger.warning(f"[Gate] Failed for {finding.hotspot_node_id}: {e}")
-                from src.agents.workers.jury_worker import GateResult
-                return finding, GateResult(verdict="PASS", gate=0, quote="error")
+        # ── Story 6.2: 4-Gate Pre-Filter (only if gate_enabled) ───────
+        state.setdefault("jury_rejected_findings", [])
 
-        gate_results = await asyncio.gather(*[_run_gate(f) for f in findings])
-        
-        pre_filtered_findings = []
-        state.setdefault("jury_rejected_findings", [])  # BUG FIX: hasattr on dict is always False
-
-        for finding, gate_res in gate_results:
-            finding.gate_verdict = gate_res.verdict
-            finding.gate_failed = gate_res.gate
-            finding.gate_quote = gate_res.quote
+        if config.gate_enabled:
+            gate_model = os.getenv("GATE_MODEL_NAME", "gemini-3.1-pro-preview")
+            gate_llm = get_worker_llm(model_name=gate_model)
             
-            if gate_res.verdict == "GATE_REFUTED":
-                finding.jury_decision = "GATE_REFUTED"
-                finding.jury_rejection_reason = f"Failed Gate {gate_res.gate}: {gate_res.quote}"
-                finding.status = FindingStatus.REJECTED
-                state["jury_rejected_findings"].append(finding)
-                print(f"  [Gate] ✗ REFUTED Gate {gate_res.gate}: {finding.hotspot_node_id} ({gate_res.quote[:60]}...)")
-            elif gate_res.verdict == "GATE_DEMOTED":
-                finding.verdict = FindingVerdict.PARTIAL
-                finding.jury_decision = "GATE_DEMOTED"
-                finding.jury_reasoning = f"Demoted at Gate {gate_res.gate}: {gate_res.quote}"
-                pre_filtered_findings.append(finding)
-                print(f"  [Gate] ↓ DEMOTED Gate {gate_res.gate}: {finding.hotspot_node_id} (bypassing jury, sent to depth)")
-            else:
-                pre_filtered_findings.append(finding)
-                print(f"  [Gate] ✓ PASSED: {finding.hotspot_node_id}")
+            print(f"[Step 4.45] Running fast 4-gate pre-filter on {len(findings)} finding(s)...")
+            
+            async def _run_gate(finding):
+                try:
+                    raw_source = ""
+                    try:
+                        ctx = get_function_context(state["graph"], finding.hotspot_node_id)
+                        raw_source = ctx.get("source_code") or ctx.get("code") or ""
+                    except Exception:
+                        pass
+                    return finding, await gate_evaluate(finding, raw_source, gate_llm)
+                except Exception as e:
+                    logger.warning(f"[Gate] Failed for {finding.hotspot_node_id}: {e}")
+                    from src.agents.workers.jury_worker import GateResult
+                    return finding, GateResult(verdict="PASS", gate=0, quote="error")
 
-        findings = pre_filtered_findings
-        jury_candidates = [f for f in findings if f.gate_verdict == "PASS"]
+            gate_results = await asyncio.gather(*[_run_gate(f) for f in findings])
+            
+            pre_filtered_findings = []
+
+            for finding, gate_res in gate_results:
+                finding.gate_verdict = gate_res.verdict
+                finding.gate_failed = gate_res.gate
+                finding.gate_quote = gate_res.quote
+                
+                if gate_res.verdict == "GATE_REFUTED":
+                    finding.jury_decision = "GATE_REFUTED"
+                    finding.jury_rejection_reason = f"Failed Gate {gate_res.gate}: {gate_res.quote}"
+                    finding.status = FindingStatus.REJECTED
+                    state["jury_rejected_findings"].append(finding)
+                    print(f"  [Gate] ✗ REFUTED Gate {gate_res.gate}: {finding.hotspot_node_id} ({gate_res.quote[:60]}...)")
+                elif gate_res.verdict == "GATE_DEMOTED":
+                    finding.verdict = FindingVerdict.PARTIAL
+                    finding.jury_decision = "GATE_DEMOTED"
+                    finding.jury_reasoning = f"Demoted at Gate {gate_res.gate}: {gate_res.quote}"
+                    pre_filtered_findings.append(finding)
+                    print(f"  [Gate] ↓ DEMOTED Gate {gate_res.gate}: {finding.hotspot_node_id} (bypassing jury, sent to depth)")
+                else:
+                    pre_filtered_findings.append(finding)
+                    print(f"  [Gate] ✓ PASSED: {finding.hotspot_node_id}")
+
+            findings = pre_filtered_findings
+            jury_candidates = [f for f in findings if f.gate_verdict == "PASS"]
+        else:
+            # Gate disabled — all findings pass through unfiltered
+            print(f"[Step 4.45] Gate disabled — all {len(findings)} finding(s) pass to jury unfiltered")
+            for f in findings:
+                f.gate_verdict = "PASS"
+            jury_candidates = list(findings)
 
         if not jury_candidates:
             print(f"[Step 4.5] No findings passed the gate pre-filter. Skipping full jury.")
             for f in findings:
                 # the ones left in findings are GATE_DEMOTED (PARTIAL)
+                confirmed_findings.append(f)
+        elif not config.jury_enabled:
+            # Gate ran but jury is disabled (e.g. standard mode) — pass gate-survived findings through
+            print(f"[Step 4.5] Jury disabled — {len(jury_candidates)} finding(s) passed gate, skipping debate")
+            for f in findings:
                 confirmed_findings.append(f)
         else:
             print(f"[Step 4.5] Full jury evaluating {len(jury_candidates)} finding(s) that passed gates...")
@@ -844,6 +859,7 @@ async def coordinator_node(state: AgentState):
                 finding.jury_decision = "CONFIRMED"
                 finding.jury_vote_summary = judge_output.vote_summary
                 finding.jury_reasoning = judge_output.reasoning
+                finding.confidence_consensus = 100  # Full jury consensus
                 print(f"  [Jury] ✓ CONFIRMED: {finding.hotspot_node_id}")
 
             elif decision == "CONFIRMED_UNPROVABLE":
@@ -853,6 +869,7 @@ async def coordinator_node(state: AgentState):
                 finding.jury_decision = "CONFIRMED_UNPROVABLE"
                 finding.jury_vote_summary = judge_output.vote_summary
                 finding.jury_reasoning = judge_output.reasoning
+                finding.confidence_consensus = 75   # Confirmed but not provable
                 print(f"  [Jury] ~ CONFIRMED_UNPROVABLE: {finding.hotspot_node_id} — {judge_output.unprovable_reason[:80]}")
 
             elif decision == "ESCALATE":
@@ -861,6 +878,7 @@ async def coordinator_node(state: AgentState):
                 finding.jury_decision = "ESCALATE"
                 finding.jury_vote_summary = judge_output.vote_summary
                 finding.jury_reasoning = judge_output.reasoning
+                finding.confidence_consensus = 50   # Mixed jury — escalated to human
                 print(f"  [Jury] ? ESCALATE: {finding.hotspot_node_id}")
 
             else:  # REJECTED
@@ -869,6 +887,7 @@ async def coordinator_node(state: AgentState):
                 finding.jury_vote_summary = judge_output.vote_summary
                 finding.jury_reasoning = judge_output.reasoning
                 finding.jury_rejection_reason = judge_output.rejection_reason
+                finding.confidence_consensus = 10   # Jury rejected — very low consensus
                 print(f"  [Jury] ✗ REJECTED: {finding.hotspot_node_id} — {judge_output.rejection_reason[:80]}")
                 # Add to rejected list for report — don't add to confirmed_findings
                 state.setdefault("jury_rejected_findings", [])  # BUG FIX: hasattr on dict is always False
@@ -903,8 +922,8 @@ async def coordinator_node(state: AgentState):
         print(f"[Step 4.7] Running depth workers on {uncertain_count} uncertain finding(s)...")
         try:
             from src.agents.workers.depth_workers import run_depth_workers
-            depth_llm = get_llm(bind_tools=False)
-            depth_model = os.getenv("DEPTH_MODEL_NAME", os.getenv("MODEL_NAME", "gemini-2.5-flash"))
+            depth_model = os.getenv("DEPTH_MODEL_NAME", os.getenv("MODEL_NAME", "gemini-3.1-pro-preview"))
+            depth_llm = get_worker_llm(model_name=depth_model)
             # BUG FIX: was loop.run_until_complete() inside async — RuntimeError.
             # We're already in an async context, so just await directly.
             depth_results = await run_depth_workers(
@@ -1007,7 +1026,7 @@ async def coordinator_node(state: AgentState):
         # ── Token tracking for Coordinator synthesis ──
         try:
             from src.utils.token_counter import get_token_counter
-            _model = os.getenv("MODEL_NAME", "gemini-2.5-flash")
+            _model = os.getenv("MODEL_NAME", "gemini-3.1-pro-preview")
             _input_text = "\n".join(
                 m.content if hasattr(m, "content") else str(m) for m in prompt
             )
@@ -1226,7 +1245,7 @@ async def coordinator_node(state: AgentState):
                 f"[Step 6] Spawning TestWriter for {len(test_tasks)} finding(s) "
                 f"(parallel, concurrency={_tw_concurrency}, highest confidence first)..."
             )
-            test_writer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"))
+            test_writer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "claude-sonnet-4-6"))
             test_writer_llm = get_worker_llm(model_name=test_writer_model)
             test_writer = TestWriterWorker(llm_client=test_writer_llm, graph=state["graph"])
 
@@ -1261,7 +1280,12 @@ async def coordinator_node(state: AgentState):
                     # a failed PoC doesn't mean the vulnerability is a false positive
                     if finding.verdict != "CONFIRMED":
                         finding.status = FindingStatus.REJECTED
-                    setattr(finding, "confidence", getattr(output, "confidence", getattr(finding, "confidence", 0)))
+                    # For jury-confirmed findings, don't let a failed PoC lower confidence
+                    tw_conf = getattr(output, "confidence", getattr(finding, "confidence", 0))
+                    if finding.verdict == "CONFIRMED" or finding.jury_decision == "CONFIRMED":
+                        finding.confidence = max(finding.confidence, tw_conf)
+                    else:
+                        finding.confidence = tw_conf
                     
                     # Keep the false-positive in the list, just update status
                     # finding is passed by reference inside `findings`
@@ -1333,7 +1357,7 @@ async def coordinator_node(state: AgentState):
             if fuzz_tasks:
                 print(f"[Step 6.5] Spawning FuzzGenerator for {len(fuzz_tasks)} CRITICAL finding(s)...")
                 from src.agents.workers.fuzz_generator import FuzzGeneratorWorker
-                fuzzer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"))
+                fuzzer_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "claude-sonnet-4-6"))
                 fuzzer_llm = get_worker_llm(model_name=fuzzer_model)
                 fuzzer = FuzzGeneratorWorker(llm_client=fuzzer_llm, graph=state["graph"])
                 

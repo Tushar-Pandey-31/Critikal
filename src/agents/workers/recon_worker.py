@@ -122,7 +122,7 @@ class ReconWorker(WorkerAgent):
         repo_url: str | None = input_data.get("repo_url")
         repo_path: str | None = input_data.get("repo_path")
 
-        # Run all SIX intel sources in parallel
+        # Run all SEVEN intel sources in parallel
         graph_intel, rag_intel, onchain_intel, docs_intel, natspec_intel, compiler_intel, test_intel = await asyncio.gather(
             self._gather_graph_intel(contract_names),
             self._gather_rag_intel(contract_names),

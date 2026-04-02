@@ -33,7 +33,7 @@ Ingestion → Recon ──┤                    ├─ Findings ─→ Gate →
   - Economic amplification multipliers
   - Accounting invariant detection
   - Flash loan attack surface analysis
-- **`hotspot_engine.py`**: Deterministic gate. Computes `structural_score`, `exploitability_score`, `final_score`. Functions pass if `final_score >= 70`. Bypasses view/pure/constructor and test-file nodes. Budget cap of 15 hotspots.
+- **`hotspot_engine.py`**: Defines the `Hotspot` dataclass. Actual scoring logic lives in `graph_queries.py::get_high_risk_hotspots()`. Multi-dimensional gate: `structural_score >= 40`, `exploitability_score >= 30`, `final_score >= 70`. Excludes view/pure/constructor, test/mock contracts, and library-tier contracts. Budget cap of 15 hotspots.
 
 ### Phase 3: Discovery Workers
 
@@ -44,7 +44,7 @@ Ingestion → Recon ──┤                    ├─ Findings ─→ Gate →
 | **AttackHypothesisWorker** | Pattern-aware vulnerability analysis | Reentrancy risk, unprotected mutators, external calls |
 | **AssumptionWorker** | First-principles assumption violation | Raw source + call graph only (zero pattern hints) |
 
-Both run in parallel via `asyncio.gather()` with configurable concurrency (`ATTACK_WORKER_CONCURRENCY`). AssumptionWorker has a lower confidence threshold (25 vs 65) and uses a disk-based source fallback when the graph is empty.
+Both run in parallel via `asyncio.gather()` with independent concurrency semaphores (`ATTACK_WORKER_CONCURRENCY`, default 15 each). AssumptionWorker has a lower confidence threshold (25 vs 65) and uses a disk-based source fallback when the graph is empty.
 
 **Output**: `WorkerOutput` → `Finding.from_worker_output(output, hotspot)`.
 
@@ -70,6 +70,8 @@ All findings from both tracks flow through the same pipeline:
 #### Step 4.45 — 4-Gate Pre-Filter (`jury_worker.py::gate_evaluate`)
 Cheap fast model (default: `gemini-2.0-flash`) runs 4 sequential gates. Verdicts: `PASS` (proceed to jury), `GATE_REFUTED` (dropped), `GATE_DEMOTED` (bypass jury, go to depth).
 
+**Gating**: Controlled by `GATE_ENABLED` (independent of `JURY_ENABLED`). In `standard` mode, the gate runs without the full jury. In `deep` mode, both gate and jury run.
+
 #### Step 4.5 — Jury System (`jury_worker.py`)
 Optional multi-model adversarial debate. Enable with `JURY_ENABLED=true`.
 
@@ -87,6 +89,7 @@ ChromaDB vector search against historical exploits. Match: +5 confidence. No pre
 ```
 Composite = Evidence×0.35 + Consensus×0.25 + RAG×0.2 + LLM_raw×0.2
 Evidence = max(EVIDENCE_TAG_WEIGHTS for each tag present)
+Consensus = derived from jury verdict (CONFIRMED=100, CONFIRMED_UNPROVABLE=75, ESCALATE=50, REJECTED=10, no jury=0)
 ```
 
 Evidence tag weights: `[POC-PASS]` = 1.0, `[CODE]` = 0.8, `[GRAPH-SIGNAL]` = 0.7, `[RAG-MATCH]` = 0.6, `[POC-FAIL]` = 0.4, `[INFERRED]` = 0.3, `[LLM-ONLY]` = 0.2.
@@ -121,6 +124,7 @@ For every finding with confidence ≥ 65 and severity ∈ {CRITICAL, HIGH, MEDIU
 - Iterative self-correction from compiler errors
 - Variant exploration if assertion fails
 - Evidence badges: `[POC-PASS]`, `[POC-PASS-VARIANT]`, `[POC-FAIL]`, `[CODE-TRACE]`
+- **Jury-confirmed findings are protected**: TestWriter confidence can only raise (not lower) their score
 
 #### FuzzGenerator
 For CRITICAL findings that pass TestWriter (when `FUZZ_GENERATOR_ENABLED=true`):

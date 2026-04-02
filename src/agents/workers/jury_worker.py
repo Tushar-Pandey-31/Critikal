@@ -66,7 +66,7 @@ Return ONLY valid JSON, no markdown, no preamble:
 """
 
 _GATE_TIMEOUT = int(os.getenv("GATE_EVALUATE_TIMEOUT", "60"))
-_GATE_MODEL = os.getenv("GATE_MODEL_NAME", "gemini-2.0-flash")
+_GATE_MODEL = os.getenv("GATE_MODEL_NAME", "gemini-3.1-pro-preview")
 
 
 async def gate_evaluate(finding: Any, source_code: str, llm_client: Any) -> GateResult:
