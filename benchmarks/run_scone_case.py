@@ -50,30 +50,39 @@ def load_cases():
 
 
 def fetch_etherscan_source(address: str, chain: str, api_key: str | None) -> dict[str, str]:
-    """Fetch verified source code from Etherscan / BSCscan.
+    """Fetch verified source code using Etherscan API V2 (works for ETH, BSC, Base, etc.)
+
+    Etherscan V2 uses a single key + chain ID:
+      mainnet  → chainid=1
+      bsc      → chainid=56
+      base     → chainid=8453
 
     Returns a {filename: source_code} dict. Empty if unverified.
     """
-    base_urls = {
-        "mainnet": "https://api.etherscan.io/api",
-        "bsc":     "https://api.bscscan.com/api",
-        "base":    "https://api.basescan.org/api",
+    chain_ids = {
+        "mainnet": "1",
+        "bsc":     "56",
+        "base":    "8453",
     }
-    base_url = base_urls.get(chain, base_urls["mainnet"])
+    chain_id = chain_ids.get(chain, "1")
+
     params = {
-        "module": "contract",
-        "action": "getsourcecode",
+        "chainid": chain_id,
+        "module":  "contract",
+        "action":  "getsourcecode",
         "address": address,
-        "apikey": api_key or "",
+        "apikey":  api_key or "",
     }
     try:
         import urllib.request
         import urllib.parse
-        url = f"{base_url}?{urllib.parse.urlencode(params)}"
+        # Etherscan V2 unified endpoint
+        url = f"https://api.etherscan.io/v2/api?{urllib.parse.urlencode(params)}"
+        print(f"  [SCONE] Fetching source: chain={chain} (id={chain_id}) addr={address}")
         with urllib.request.urlopen(url, timeout=30) as r:
             data = json.loads(r.read())
     except Exception as e:
-        print(f"  [SCONE] Etherscan fetch failed: {e}")
+        print(f"  [SCONE] Etherscan V2 fetch failed: {e}")
         return {}
 
     result = data.get("result", [{}])
@@ -85,6 +94,7 @@ def fetch_etherscan_source(address: str, chain: str, api_key: str | None) -> dic
     contract_name = entry.get("ContractName", "Contract")
 
     if not source_code:
+        print(f"  [SCONE] No verified source (unverified contract?)")
         return {}
 
     # Etherscan returns JSON-wrapped multi-file sources or single file
@@ -108,6 +118,7 @@ def fetch_etherscan_source(address: str, chain: str, api_key: str | None) -> dic
 
     # Single file
     return {f"{contract_name}.sol": source_code}
+
 
 
 def run_critikal_on_dir(src_dir: Path, case: dict, extra_env: dict | None = None) -> dict:
@@ -198,7 +209,7 @@ def run_critikal_on_dir(src_dir: Path, case: dict, extra_env: dict | None = None
         }
 
 
-def run_case(case: dict, api_key_eth: str | None, api_key_bsc: str | None) -> dict:
+def run_case(case: dict, api_key: str | None) -> dict:
     chain   = case["chain"]
     address = case["target_contract_address"]
     name    = case["case_name"]
@@ -207,8 +218,7 @@ def run_case(case: dict, api_key_eth: str | None, api_key_bsc: str | None) -> di
     print(f"  SCONE case: {name}  |  chain={chain}  |  {address}")
     print(f"{'='*60}")
 
-    # 1. Fetch source
-    api_key = api_key_bsc if chain == "bsc" else api_key_eth
+    # 1. Fetch source via Etherscan V2 (single key for all chains)
     sources = fetch_etherscan_source(address, chain, api_key)
 
     if not sources:
@@ -313,22 +323,28 @@ def main():
 
     print(f"[SCONE] Running {len(target_cases)} case(s)")
 
-    api_key_eth = os.environ.get("ETHERSCAN_API_KEY") or os.environ.get("ETHEREUM_API_KEY")
-    api_key_bsc = os.environ.get("BSCSCAN_API_KEY")
+    # Etherscan V2 — one key works for mainnet + BSC + Base
+    api_key = (
+        os.environ.get("ETHERSCAN_API_KEY")
+        or os.environ.get("BSCSCAN_API_KEY")
+        or os.environ.get("ETHEREUM_API_KEY")
+    )
 
-    if not api_key_eth:
-        print("[SCONE] WARNING: ETHERSCAN_API_KEY not set — source fetching may be rate-limited")
-    if not api_key_bsc:
-        print("[SCONE] WARNING: BSCSCAN_API_KEY not set — BSC cases will be limited")
+    if not api_key:
+        print("[SCONE] WARNING: No API key found — set ETHERSCAN_API_KEY in .env")
+    else:
+        print(f"[SCONE] Using Etherscan V2 API key: {api_key[:8]}...  (covers ETH + BSC + Base)")
 
     results = []
     for case in target_cases:
-        result = run_case(case, api_key_eth, api_key_bsc)
+        result = run_case(case, api_key)
         results.append(result)
-        # small pause between cases to avoid rate limiting
-        time.sleep(2)
+        # pause between cases to respect rate limits (5 req/s free tier)
+        time.sleep(1)
 
     print_summary(results)
+
+
 
 
 if __name__ == "__main__":
