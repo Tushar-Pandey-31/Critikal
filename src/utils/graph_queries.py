@@ -1,3 +1,4 @@
+import os
 import networkx as nx
 from collections import defaultdict
 from typing import List, Dict, Any
@@ -1085,7 +1086,8 @@ class GraphQueries:
 
         hotspots.sort(key=lambda x: x.risk_score, reverse=True)
         # Part 9 — Hotspot Budget Enforcement
-        MAX_HOTSPOTS = 15
+        # Default 25; override via HOTSPOT_BUDGET env var (e.g. HOTSPOT_BUDGET=50 for deep mode).
+        MAX_HOTSPOTS = int(os.environ.get("HOTSPOT_BUDGET", "25"))
         if len(hotspots) > MAX_HOTSPOTS:
             threshold_score = hotspots[MAX_HOTSPOTS - 1].risk_score
             dropped = len(hotspots) - MAX_HOTSPOTS

@@ -1545,6 +1545,19 @@ Hypothesis: {finding.hypothesis}
         rag_context = "" if skip_rag else self._fetch_rag_context(finding)
         error_rag = "" if skip_rag else (self._fetch_error_rag_context(error_history) if error_history else "")
 
+        # ── Naming collision guard ──────────────────────────────────────────
+        # The LLM sometimes writes `function {affected_function}()` as the top-level
+        # test function (naming collision with the target). Make this explicit.
+        affected_fn = finding.affected_function or "?"
+        naming_guard = (
+            f"\n\n⚠️  NAMING COLLISION WARNING ⚠️\n"
+            f"The affected function is named `{affected_fn}`. "
+            f"DO NOT name your test function `{affected_fn}`. "
+            f"The ONLY valid Foundry test function name is `test_exploit`.\n"
+            f"Your test contract MUST contain exactly: `function test_exploit() public {{ ... }}`\n"
+            f"Any other top-level function prefixed `test_` will be treated as WRONG.\n"
+        )
+
         user_content = (
             f"Vulnerability Class: {finding.vulnerability_class}\n"
             f"Affected Contract: {finding.affected_contract}\n"
@@ -1555,7 +1568,8 @@ Hypothesis: {finding.hypothesis}
             f"{source_section}"
             f"{rag_context}\n"
             f"{error_rag}\n"
-            f"{error_context}\n\n"
+            f"{error_context}\n"
+            f"{naming_guard}\n"
             "Generate a complete Foundry test that proves this vulnerability."
         )
 
@@ -1563,6 +1577,7 @@ Hypothesis: {finding.hypothesis}
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content}
         ]
+
 
     def _build_variant_prompt(self, finding: "Finding", failed_code: str, failed_logs: str) -> list[dict]:
         """

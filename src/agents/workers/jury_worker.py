@@ -65,7 +65,7 @@ Return ONLY valid JSON, no markdown, no preamble:
 - If you somehow pass all 4 gates, return {"verdict": "PASS", "gate": 0, "quote": ""}
 """
 
-_GATE_TIMEOUT = int(os.getenv("GATE_EVALUATE_TIMEOUT", "60"))
+_GATE_TIMEOUT = int(os.getenv("GATE_EVALUATE_TIMEOUT", "120"))  # was 60 — bumped to survive rate-limit backoff
 _GATE_MODEL = os.getenv("GATE_MODEL_NAME", "gemini-3.1-pro-preview")
 
 

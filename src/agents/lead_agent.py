@@ -36,6 +36,15 @@ from src.tools.etherscan_client import EtherscanClient
 from src.pipeline_config import get_config, PipelineConfig
 import asyncio
 
+# P0: Threat Intelligence
+try:
+    from src.intelligence.threat_profiler import ThreatProfiler
+    from src.intelligence.attack_vector_db import AttackVectorDB
+    _THREAT_INTEL_AVAILABLE = True
+except ImportError:
+    _THREAT_INTEL_AVAILABLE = False
+    logger.warning("Threat intelligence module not available")
+
 # Jury system — config is authoritative, env var kept for backward compat
 def _jury_enabled() -> bool:
     return get_config().jury_enabled
@@ -555,6 +564,51 @@ async def coordinator_node(state: AgentState):
     else:
         print("[Step 2] Slither disabled or empty graph — skipping hotspot-based workers")
 
+    # ── Step 2.5: Threat Intelligence ──────────────────────
+    _threat_context: dict = {}  # per-pipeline threat intel
+    _matched_vectors: list = []
+    _protocol_types: list = []
+    _profiler = None
+    _vector_db = None
+
+    if _THREAT_INTEL_AVAILABLE and config.threat_profiler_enabled and state["graph"].number_of_nodes() > 0:
+        try:
+            _profiler = ThreatProfiler()
+            _protocol_types = _profiler.classify(state["graph"])
+            _primary_type = _protocol_types[0].get("type", "unknown") if _protocol_types else "unknown"
+            _primary_confidence = _protocol_types[0].get("confidence", 0) if _protocol_types else 0
+            print(f"[Step 2.5] Protocol classified: {_primary_type} (confidence: {_primary_confidence})")
+            if len(_protocol_types) > 1:
+                _secondary = [p['type'] for p in _protocol_types[1:3]]
+                print(f"[Step 2.5] Secondary types: {_secondary}")
+
+            # Load threat profile for primary type
+            _threat_profile = _profiler.get_threat_profile(_primary_type)
+            _threat_context = {
+                "protocol_type": _primary_type,
+                "protocol_confidence": _primary_confidence,
+                "adversaries": [a.__dict__ for a in _threat_profile.adversaries],
+                "invariants": _threat_profile.invariants,
+                "composability_risks": _threat_profile.composability_risks,
+                "threat_prompt": _threat_profile.format_for_prompt(),
+            }
+            print(f"[Step 2.5] Loaded threat profile: {len(_threat_profile.adversaries)} adversaries, {len(_threat_profile.invariants)} invariants")
+        except Exception as e:
+            print(f"[Step 2.5] Threat profiler failed (non-fatal): {e}")
+    elif not config.threat_profiler_enabled:
+        print("[Step 2.5] Threat profiler disabled (THREAT_PROFILER_ENABLED=false)")
+
+    if _THREAT_INTEL_AVAILABLE and config.attack_vector_db_enabled:
+        try:
+            _vector_db = AttackVectorDB()
+            _proto_list = [p.get("type", "unknown") for p in _protocol_types] if _protocol_types else []
+            _matched_vectors = _vector_db.match_vectors(state["graph"], _proto_list)
+            print(f"[Step 2.5] Matched {len(_matched_vectors)} attack vectors for {_proto_list}")
+        except Exception as e:
+            print(f"[Step 2.5] Attack vector DB failed (non-fatal): {e}")
+    elif not config.attack_vector_db_enabled:
+        print("[Step 2.5] Attack vector DB disabled (ATTACK_VECTOR_DB_ENABLED=false)")
+
     if not hotspots:
         print("[Step 2] No hotspots above threshold — skipping attack workers")
         state["findings"] = []
@@ -584,12 +638,27 @@ async def coordinator_node(state: AgentState):
         def _budget_for_priority(priority: str) -> int:
             return {"CRITICAL": 8000, "HIGH": 5000, "MEDIUM": 3000}.get(priority, 3000)
 
+        # Build per-hotspot threat context bundles
+        def _build_attack_context(hotspot) -> dict:
+            ctx = {"recon_context": recon_context}
+            if _threat_context:
+                ctx["threat_context"] = _threat_context
+            if _vector_db and _matched_vectors:
+                # Get hotspot source code for vector relevance filtering
+                hs_source = ""
+                if state["graph"].has_node(hotspot.node_id):
+                    hs_source = state["graph"].nodes[hotspot.node_id].get("source_code", "")
+                vector_bundle = _vector_db.build_agent_bundle(_matched_vectors, hs_source)
+                ctx["vector_bundle"] = vector_bundle
+                ctx["matched_vector_count"] = len(_matched_vectors)
+            return ctx
+
         attack_tasks = [
             WorkerTask(
                 task_id=f"attack_{hotspot.node_id}",
                 task_type="attack_analysis",
                 hotspot=hotspot,
-                context={"recon_context": recon_context},
+                context=_build_attack_context(hotspot),
                 budget_tokens=_budget_for_priority(hotspot.priority),
             )
             for hotspot in hotspots
@@ -721,19 +790,25 @@ async def coordinator_node(state: AgentState):
             
             print(f"[Step 4.45] Running fast 4-gate pre-filter on {len(findings)} finding(s)...")
             
+            # Semaphore: max 5 concurrent gate calls — prevents thundering-herd
+            # rate-limit timeouts when evaluating 20+ findings at once.
+            _GATE_CONCURRENCY = int(os.getenv("GATE_CONCURRENCY", "5"))
+            _gate_sem = asyncio.Semaphore(_GATE_CONCURRENCY)
+
             async def _run_gate(finding):
-                try:
-                    raw_source = ""
+                async with _gate_sem:
                     try:
-                        ctx = get_function_context(state["graph"], finding.hotspot_node_id)
-                        raw_source = ctx.get("source_code") or ctx.get("code") or ""
-                    except Exception:
-                        pass
-                    return finding, await gate_evaluate(finding, raw_source, gate_llm)
-                except Exception as e:
-                    logger.warning(f"[Gate] Failed for {finding.hotspot_node_id}: {e}")
-                    from src.agents.workers.jury_worker import GateResult
-                    return finding, GateResult(verdict="PASS", gate=0, quote="error")
+                        raw_source = ""
+                        try:
+                            ctx = get_function_context(state["graph"], finding.hotspot_node_id)
+                            raw_source = ctx.get("source_code") or ctx.get("code") or ""
+                        except Exception:
+                            pass
+                        return finding, await gate_evaluate(finding, raw_source, gate_llm)
+                    except Exception as e:
+                        logger.warning(f"[Gate] Failed for {finding.hotspot_node_id}: {e}")
+                        from src.agents.workers.jury_worker import GateResult
+                        return finding, GateResult(verdict="PASS", gate=0, quote="error")
 
             gate_results = await asyncio.gather(*[_run_gate(f) for f in findings])
             

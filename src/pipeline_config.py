@@ -48,6 +48,8 @@ _MODE_PRESETS: dict[str, dict[str, bool]] = {
         "rag_enabled": False,
         "chain_analysis_enabled": False,
         "etherscan_enabled": False,
+        "threat_profiler_enabled": False,
+        "attack_vector_db_enabled": False,
     },
     "standard": {
         "slither_enabled": True,
@@ -61,6 +63,8 @@ _MODE_PRESETS: dict[str, dict[str, bool]] = {
         "rag_enabled": True,
         "chain_analysis_enabled": True,
         "etherscan_enabled": True,
+        "threat_profiler_enabled": True,
+        "attack_vector_db_enabled": True,
     },
     "deep": {
         "slither_enabled": True,
@@ -74,6 +78,8 @@ _MODE_PRESETS: dict[str, dict[str, bool]] = {
         "rag_enabled": True,
         "chain_analysis_enabled": True,
         "etherscan_enabled": True,
+        "threat_profiler_enabled": True,
+        "attack_vector_db_enabled": True,
     },
     "semantic_only": {
         "slither_enabled": False,
@@ -87,6 +93,8 @@ _MODE_PRESETS: dict[str, dict[str, bool]] = {
         "rag_enabled": True,
         "chain_analysis_enabled": True,
         "etherscan_enabled": False,
+        "threat_profiler_enabled": True,
+        "attack_vector_db_enabled": True,
     },
 }
 
@@ -103,6 +111,8 @@ _FIELD_TO_ENV: dict[str, str] = {
     "rag_enabled": "RAG_ENABLED",
     "chain_analysis_enabled": "CHAIN_ANALYSIS_ENABLED",
     "etherscan_enabled": "ETHERSCAN_ENABLED",
+    "threat_profiler_enabled": "THREAT_PROFILER_ENABLED",
+    "attack_vector_db_enabled": "ATTACK_VECTOR_DB_ENABLED",
 }
 
 
@@ -124,6 +134,8 @@ class PipelineConfig:
     rag_enabled: bool = True
     chain_analysis_enabled: bool = True
     etherscan_enabled: bool = True
+    threat_profiler_enabled: bool = True
+    attack_vector_db_enabled: bool = True
 
     audit_mode: str = "standard"
 
