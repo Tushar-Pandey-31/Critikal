@@ -4,9 +4,12 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, List
+import logging
 
 from src.agents.base_worker import WorkerOutput
 from src.hotspot_engine import Hotspot
+
+logger = logging.getLogger(__name__)
 
 EVIDENCE_TAG_WEIGHTS = {
     "[POC-PASS]": 1.0,          # forge test exits 0
@@ -111,6 +114,36 @@ class Finding:
     gate_failed: int = 0             # 1-4: which gate killed/demoted this finding
     gate_quote: str = ""             # exact code line that triggered the gate verdict
 
+    # ── Smart filtering: evidence accumulation ─────────────────────────
+    # Replaces binary hard-drop gates with running accumulated evidence score.
+    # Each pipeline stage calls contribute_score() to add/subtract evidence.
+    # Final promotion to TestWriter requires plausibility_score >= PROMOTE_THRESHOLD.
+    plausibility_score: int = 0
+    plausibility_log: List[dict] = field(default_factory=list)   # [{stage, delta, reason}]
+
+    # Speculative findings: confidence at creation was in the 30-49 range.
+    # These appear in the report's SPECULATIVE section, not Confirmed.
+    is_speculative: bool = False
+
+    def contribute_score(self, stage: str, delta: int, reason: str = "") -> None:
+        """Accumulate evidence from a pipeline stage into plausibility_score.
+
+        Args:
+            stage:  Short label for the contributing stage, e.g. "hotspot", "gate", "jury"
+            delta:  Points to add (positive) or subtract (negative)
+            reason: Optional human-readable explanation for the log
+        """
+        self.plausibility_score += delta
+        self.plausibility_log.append({
+            "stage": stage,
+            "delta": delta,
+            "after": self.plausibility_score,
+            "reason": reason,
+        })
+        logger.debug(
+            f"[Plausibility] {self.id[:8]} {stage:12s} {delta:+d} "
+            f"→ {self.plausibility_score} ({reason})"
+        )
 
     def compute_mechanical_confidence(self) -> int:
         """
@@ -231,3 +264,23 @@ class Finding:
             postconditions=postconditions,
             confidence_evidence=conf,
         )
+
+    def _seed_semantic_score(self) -> None:
+        """Seed plausibility from creation confidence for semantic findings.
+
+        Semantic agents bypass the attack-worker stage entirely, so they never
+        receive the initial +conf//5 contribution that attack-worker findings get.
+        This brings them to a comparable baseline:
+          conf >= 70 → +14  (high confidence semantic finding)
+          conf >= 50 → +10  (moderate confidence)
+          conf  < 50 → + 5  (low, speculative)
+        """
+        if self.confidence >= 70:
+            delta = 14
+        elif self.confidence >= 50:
+            delta = 10
+        else:
+            delta = 5
+            self.is_speculative = True
+        self.contribute_score("semantic_seed", delta,
+            f"semantic origin confidence={self.confidence}")

@@ -11,6 +11,47 @@ FOUNDRY REQUIREMENTS (MANDATORY):
 - The test function MUST be named exactly test_exploit() — forge test --match-test test_exploit will run it.
 - Read constructor and function signatures from the source before instantiating or calling.
 
+═══════════════════════════════════════════════════════
+SEMI-TRUSTED ROLE EXPLOIT PATTERN
+═══════════════════════════════════════════════════════
+If the vulnerability requires a semi-trusted role (keeper, allocator, operator, guardian,
+strategist), use vm.prank() to IMPERSONATE that role in the test. Do NOT think of the
+role as a security barrier — it is simply a pre-condition to set up in setUp().
+
+Pattern:
+  address keeper = makeAddr("keeper");
+
+  function setUp() public {
+      target = new VulnerableContract();
+      target.grantRole(KEEPER_ROLE, keeper);  // or setKeeper(keeper) per API
+      vm.deal(address(this), 100 ether);
+  }
+
+  function test_exploit() public {
+      address victim = makeAddr("victim");
+      vm.deal(victim, 10 ether);
+      vm.prank(victim);
+      target.deposit{value: 10 ether}();           // victim deposits
+
+      vm.prank(keeper);                             // attacker IS the keeper
+      target.setFeeRecipient(address(this));        // redirect fees to attacker
+
+      vm.prank(keeper);
+      target.harvest();                             // keeper triggers fee extraction
+
+      // Assert that the attacker (keeper) received funds that belong to victim
+      assertGt(address(this).balance, 0, "keeper drain failed");
+  }
+
+Key rules for semi-trusted role tests:
+- ALWAYS use vm.prank(roleAddress) — not vm.startPrank() unless the sequence spans
+  multiple calls that share the role context.
+- After prank(), call the privileged function with EXACTLY the signature the contract exposes.
+- If the exploit requires the role address to receive ETH/tokens, make sure
+  address(this) or a dedicated receiver contract has a receive() function.
+- Assert that an economic invariant is broken (e.g., victim lost funds, attacker gained funds).
+═══════════════════════════════════════════════════════
+
 SECURITY KNOWLEDGE (if provided):
 - When a "SECURITY KNOWLEDGE" section is present, use it to inform correct Solidity patterns,
   exploit precedents, and Foundry best practices. Avoid bad syntax and common pitfalls.
@@ -61,10 +102,41 @@ FOUNDRY REQUIREMENTS (MANDATORY):
 - The test function MUST be named exactly test_exploit() for forge test --match-test test_exploit.
 - Use the EXACT import paths and constructor/function signatures provided. Do NOT guess.
 
-SECURITY KNOWLEDGE (if provided):
-- When a "SECURITY KNOWLEDGE" section is present, use it to inform correct Solidity patterns,
-  exploit precedents, and Foundry best practices. Avoid bad syntax and common pitfalls.
-- If no RAG section is provided, rely on your training and the source snippets.
+═══════════════════════════════════════════════════════
+SEMI-TRUSTED ROLE EXPLOIT PATTERN
+═══════════════════════════════════════════════════════
+If the vulnerability requires a semi-trusted role (keeper, allocator, operator, guardian,
+strategist), use vm.prank() to IMPERSONATE that role. The role is a PRE-CONDITION,
+not a security barrier. Set it up in setUp(), exploit in test_exploit().
+
+Pattern for role-gated exploits:
+  address keeper = makeAddr("keeper");        // the attacker controls this address
+  address victim = makeAddr("victim");
+
+  function setUp() public {
+      target = new Target(...);
+      target.grantRole(KEEPER_ROLE, keeper);  // or setAllocator(keeper) per the API
+      vm.deal(victim, 10 ether);
+      vm.prank(victim);
+      target.deposit{value: 10 ether}();     // victim has deposited
+  }
+
+  function test_exploit() public {
+      vm.startPrank(keeper);                  // become the keeper
+      target.setFeeRecipient(keeper);         // redirect fees
+      target.harvest();                       // extract
+      vm.stopPrank();
+
+      // Attacker (keeper) stole funds; victim's share value decreased
+      assertGt(keeper.balance, 0, "keeper drain failed");
+  }
+
+Key rules:
+- Use vm.prank(keeper) for single calls, vm.startPrank/stopPrank for multi-call sequences.
+- ALWAYS assert an economic invariant is broken (victim loses, attacker gains).
+- If the exploit extracts ERC20 tokens, check IERC20(token).balanceOf(attacker) > 0.
+- If the exploit is an inflation/dilution attack: check userShares * sharePrice < depositAmount.
+═══════════════════════════════════════════════════════
 
 ═══════════════════════════════════════════════════════
 CRITICAL STRUCTURAL RULES — VIOLATIONS CAUSE BUILD ERRORS
@@ -161,6 +233,11 @@ FORMAT:
   - test_exploit() with the attack
 - Only output Solidity code in a ```solidity block.
 - NO explanations outside the code block.
+
+SECURITY KNOWLEDGE (if provided):
+- When a "SECURITY KNOWLEDGE" section is present, use it to inform correct Solidity patterns,
+  exploit precedents, and Foundry best practices. Avoid bad syntax and common pitfalls.
+- If no RAG section is provided, rely on your training and the source snippets.
 
 ═══════════════════════════════════════════════════════
 ABSOLUTE REQUIREMENT — YOUR OUTPUT WILL BE REJECTED IF VIOLATED

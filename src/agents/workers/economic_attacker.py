@@ -31,6 +31,12 @@ economic attack vectors — bugs where an attacker can extract value by manipula
 prices, ratios, or balances using flash loans, sandwich attacks, or multi-step
 sequences.
 
+## Threat Actor Model
+- SEMI-TRUSTED ROLES (keeper, operator, allocator, strategist, relayer) are VALID attackers.
+  A keeper extracting more fees than entitled IS a high-severity finding.
+  Do NOT skip findings that require a semi-trusted role to trigger.
+- Flash loan bots and sandwich attackers are ALWAYS in-scope.
+
 ## Methodology
 
 ### Step 1: Map Value Flows
@@ -62,8 +68,25 @@ For any division operation:
 - Can repeated small operations accumulate rounding profit?
 - Can fee-on-transfer tokens cause accounting drift?
 
+### Step 6: Fee Recipient / Keeper Drain Analysis (catches Morpho-class bugs)
+For any function that charges a fee OR allows a keeper/operator to set a recipient:
+- Who controls the fee recipient address?
+- Can a keeper set fee recipient to themselves and extract fees that belong to depositors?
+- Is there a function that calls a user-controlled callback that is used to compute or receive fees?
+- Is totalAssets() usage in the fee calculation based on a complete accounting (all positions) or only
+  a subset (e.g. iterating a queue that might miss positions)?
+- If totalAssets() can be artificially lowered (by removing positions from a tracking set),
+  does this allow inflating the fee percentage or stealing underlying assets?
+
+### Step 7: Oracle Staleness
+For any function that reads a price or rate from an external source:
+- What is the TWAP window? Is it manipulable within a single block?
+- Can the oracle return a stale value that diverges significantly from spot price?
+- Can an attacker benefit from feeding the protocol a stale oracle reading?
+
 ## CRITICAL RULES
 - Every claim MUST reference a specific function and the arithmetic operation.
+- Semi-trusted role findings (keeper, operator, fee recipient manipulation) are HIGH/CRITICAL severity.
 - If you find nothing, return empty findings. Do NOT hallucinate.
 - Focus on THIS contract's code, not generic patterns.
 
@@ -75,11 +98,12 @@ Return ONLY valid JSON:
   ],
   "findings": [
     {
-      "vulnerability_class": "flash_loan_manipulation | sandwich_attack | inflation_attack | rounding_profit | fee_accounting",
+      "vulnerability_class": "flash_loan_manipulation | sandwich_attack | inflation_attack | rounding_profit | fee_accounting | keeper_drain | oracle_manipulation",
       "affected_contract": "ContractName",
       "affected_function": "functionName",
       "hypothesis": "detailed explanation",
       "attack_path": ["step1", "step2", "step3"],
+      "threat_actor": "unprivileged | semi_trusted_role | privileged",
       "confidence": <integer 0-100>,
       "evidence": "specific code/arithmetic reference",
       "impact": "what the attacker gains",

@@ -39,6 +39,9 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BENCH_CSV = Path(__file__).parent / "scone_benchmark.csv"
 RESULTS_FILE = Path(__file__).parent / "scone_results.jsonl"
@@ -85,8 +88,14 @@ def fetch_etherscan_source(address: str, chain: str, api_key: str | None) -> dic
         print(f"  [SCONE] Etherscan V2 fetch failed: {e}")
         return {}
 
+    # Handle Etherscan error strings (e.g. "result": "Invalid API Key")
+    if data.get("status") == "0":
+        print(f"  [SCONE] Etherscan API Error: {data.get('result')}")
+        return {}
+        
     result = data.get("result", [{}])
-    if not result:
+    if not result or not isinstance(result, list) or not isinstance(result[0], dict):
+        print(f"  [SCONE] Unexpected API response format")
         return {}
 
     entry = result[0]
@@ -98,26 +107,43 @@ def fetch_etherscan_source(address: str, chain: str, api_key: str | None) -> dic
         return {}
 
     # Etherscan returns JSON-wrapped multi-file sources or single file
-    if source_code.startswith("{{"):
-        # Multi-file JSON, strip outer braces
-        try:
-            inner = json.loads(source_code[1:-1])
-            sources = inner.get("sources", {})
-            return {path: content.get("content", "") for path, content in sources.items()}
-        except json.JSONDecodeError:
-            pass
+    def parse_source(entry):
+        src = entry.get("SourceCode", "")
+        cname = entry.get("ContractName", "Contract")
+        if not src:
+            return {}
 
-    if source_code.startswith("{"):
-        try:
-            inner = json.loads(source_code)
-            sources = inner.get("sources", {})
-            if sources:
+        if src.startswith("{{"):
+            try:
+                inner = json.loads(src[1:-1])
+                sources = inner.get("sources", {})
                 return {path: content.get("content", "") for path, content in sources.items()}
-        except json.JSONDecodeError:
-            pass
+            except json.JSONDecodeError:
+                pass
 
-    # Single file
-    return {f"{contract_name}.sol": source_code}
+        if src.startswith("{"):
+            try:
+                inner = json.loads(src)
+                sources = inner.get("sources", {})
+                if sources:
+                    return {path: content.get("content", "") for path, content in sources.items()}
+            except json.JSONDecodeError:
+                pass
+
+        return {f"{cname}.sol": src}
+
+    # IMPORTANT: Auto-resolve proxies (crucial for SCONE tests like Cream/Euler)
+    if entry.get("Proxy") == "1" and entry.get("Implementation"):
+        impl_addr = entry.get("Implementation")
+        print(f"  [SCONE] Auto-resolving proxy -> fetching implementation {impl_addr}")
+        impl_sources = fetch_etherscan_source(impl_addr, chain, api_key)
+        # Combine proxy source + impl source so we have the full picture
+        combined = parse_source(entry)
+        combined.update(impl_sources)
+        return combined
+
+    # Normal fetch without proxy
+    return parse_source(entry)
 
 
 
@@ -135,8 +161,8 @@ def run_critikal_on_dir(src_dir: Path, case: dict, extra_env: dict | None = None
         env.update(extra_env)
 
     cmd = [
-        sys.executable, "-m", "src.main",
-        "--dir", str(src_dir),
+        "poetry", "run", "python", "-m", "src.main",
+        "--repo", str(src_dir),
     ]
 
     print(f"  [SCONE] Running: {' '.join(cmd)}")
@@ -147,7 +173,7 @@ def run_critikal_on_dir(src_dir: Path, case: dict, extra_env: dict | None = None
             env=env,
             capture_output=True,
             text=True,
-            timeout=600,  # 10 min per case
+            timeout=3600,  # 1 hour max per case
             cwd=Path(__file__).parent.parent,  # critikal root
         )
         elapsed = time.time() - t0

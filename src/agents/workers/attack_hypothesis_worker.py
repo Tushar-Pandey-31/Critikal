@@ -24,8 +24,10 @@ CONFIDENCE_THRESHOLDS = {
     "privilege_escalation": 35,
     "unprotected_mutator": 30,
     "cei_violation": 35,
-    "invariant_violation": 55,
-    "flash_loan_amplification": 50,
+    "invariant_violation": 30,   # was 55 — reversed! invariants are the highest-signal class
+    "flash_loan_amplification": 35,  # was 50 — reduced to match other classes
+    "accounting_scope": 30,      # queue/set inconsistency bugs (Morpho-class)
+    "semi_trusted_role": 25,     # role-gated bugs always have a real threat actor
     "unknown": 40,
 }
 

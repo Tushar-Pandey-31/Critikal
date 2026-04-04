@@ -26,9 +26,10 @@ logger = logging.getLogger(__name__)
 # ── Environment variable names per provider ─────────────────────────
 _POOL_ENV_VARS: dict[str, tuple[str, str]] = {
     # provider -> (pool_env_var, fallback_single_key_env_var)
-    "gemini":    ("GEMINI_API_KEYS",    "GOOGLE_API_KEY"),
-    "openai":    ("OPENAI_API_KEYS",    "OPENAI_API_KEY"),
-    "anthropic": ("ANTHROPIC_API_KEYS", "ANTHROPIC_API_KEY"),
+    "gemini":      ("GEMINI_API_KEYS",      "GOOGLE_API_KEY"),
+    "openai":      ("OPENAI_API_KEYS",      "OPENAI_API_KEY"),
+    "anthropic":   ("ANTHROPIC_API_KEYS",   "ANTHROPIC_API_KEY"),
+    "openrouter":  ("OPENROUTER_API_KEYS",  "OPENROUTER_API_KEY"),
 }
 
 # Default cooldown when a key is rate-limited (seconds)

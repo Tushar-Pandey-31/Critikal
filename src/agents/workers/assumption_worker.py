@@ -57,18 +57,34 @@ For each function, list ALL implicit assumptions:
 - **Arithmetic**: "intermediate result fits in type", "denominator is nonzero"
 - **State**: "flag was set by a prior call", "mapping entry exists", "invariant holds across calls"
 - **Timing**: "this executes atomically with the next call", "state doesn't change between reads"
+- **Scope**: "the collection I iterate contains ALL relevant items" (check queues, lists, mappings)
 
 ### Step 2 — Violate an assumption
 For each assumption:
 - Who controls the inputs that could break it?
 - Construct a multi-transaction sequence that reaches the function with the assumption broken.
-- Consider: direct calls, flash loans, MEV reordering, governance actions, natural protocol growth.
+- Consider: direct calls, flash loans, MEV reordering, governance actions, natural protocol growth,
+  a SEMI-TRUSTED role (allocator, keeper, operator) acting maliciously.
 
 ### Step 3 — Exploit the break
 - Trace execution with the violated assumption active.
 - Where does corrupted storage accumulate?
 - Who can extract value from that corruption?
 - Build a concrete step-by-step attack sequence.
+
+## Design Intent Check (apply carefully before calling anything CONTESTED)
+Before classifying a function as vulnerable, check Design Context:
+1. Does natspec say this behaviour is intentional AND no external party is harmed?
+2. Does the caller PAY their own tokens AND the "victim" only benefits?
+3. Is overflow the claimed mechanism AND Solidity >= 0.8.0 without `unchecked {}`?
+
+If ALL THREE checks pass: set verdict CONTESTED, confidence ≤ 40.
+If only some pass: Do NOT reduce severity. The pattern may be "by design" yet still enable fund loss.
+
+NEVER invoke design-intent reduction when:
+- A semi-trusted role can cause harm to third parties via the "by design" path
+- The mechanism allows arbitrary asset extraction by a non-owner
+- The "intent" of the function and the attack path diverge
 
 ## Output Format
 Return ONLY valid JSON. No markdown. No preamble.
@@ -78,19 +94,32 @@ Return ONLY valid JSON. No markdown. No preamble.
   "violation": "<how you broke it and exactly who controls the input to do so>",
   "proof": "<concrete multi-tx trace: call sequence, storage state, value extracted>",
   "confidence": <integer 0-100>,
-  "title": "<short descriptive title for this finding>",
+  "title": "<short descriptive title — describe the mechanism, not a pattern name>",
   "impact": "<what the attacker gains if this succeeds>",
+  "vulnerability_class": "invariant_violation | unprotected_mutator | privilege_escalation | flash_loan_amplification | accounting_scope | unknown",
+  "severity_estimate": "CRITICAL | HIGH | MEDIUM | LOW",
   "attack_path": ["ContractName::functionName", ...],
   "preconditions": ["<what must be true before the attack>"],
+  "preconditions_missing": ["<conditions needed but not currently met>"],
   "postconditions": ["<what state changes after the attack>"],
   "verdict": "CONFIRMED | PARTIAL | CONTESTED"
 }
 
 ## Confidence Guidelines
-- You found a concrete exploitable assumption + full call trace = 70–95
-- Assumption is violated but extraction path is indirect = 45–70
-- Assumption is breakable but impact is unclear = 25–45
-- No violation found (return confidence=0 + list assumptions you DID check) = 0
+- Concrete exploitable assumption + full self-contained call trace = 75–95
+- Assumption violated + call trace established + SEMI-TRUSTED ROLE as threat actor = 65–80
+  (do NOT reduce confidence because of role requirement — role-gated bugs are real and high-severity)
+- Assumption violated, call trace indirect (depends on external state not in source) = 50–70
+- Assumption breakable, extraction path unclear = 30–50
+- No violation found: return confidence=0
+
+## Semi-Trusted Role Rule
+If the assumption violation requires a malicious allocator, keeper, guardian, operator, relayer, or
+strategist:
+- This is a VALID and IMPORTANT finding. Do NOT reduce confidence because of role.
+- Set confidence based on the severity of the violation, not the role required.
+- Set severity_estimate = CRITICAL if depositor/LP/lender funds can be drained.
+- Set verdict = CONFIRMED if you can trace the full attack without needing live on-chain state.
 
 ## If no violations found
 Return confidence=0 with:
@@ -99,6 +128,8 @@ Return confidence=0 with:
   "violation": "No assumption violations found",
   "proof": "<list the assumptions you checked and why each is upheld>",
   "confidence": 0,
+  "vulnerability_class": "unknown",
+  "severity_estimate": "LOW",
   ...
 }
 
@@ -106,7 +137,6 @@ This is more valuable than a hallucinated false positive.
 
 ## Hard Rules
 - NEVER invent a named vulnerability class as your title.
-- NEVER say "this is a reentrancy bug" — describe the assumption violation instead.
 - The finding stands on its own proof, not on pattern recognition.
 - If your proof requires knowing contract state that isn't in the source, mark it PARTIAL.
 """

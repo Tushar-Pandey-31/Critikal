@@ -117,6 +117,19 @@ EDGE_CASE_SYSTEM_PROMPT = """You are a depth analysis agent specializing in edge
 You are re-analyzing a SPECIFIC finding that was previously marked as uncertain.
 Focus on zero-state scenarios, minimum/maximum inputs, rounding precision, and off-by-one errors.
 
+## DEMOTION CONTEXT AWARENESS
+If this finding has gate_verdict = GATE_DEMOTED, it was likely demoted because:
+(a) it requires a semi-trusted role (allocator, keeper, operator, guardian), or
+(b) evidence was ambiguous.
+
+For SEMI-TRUSTED ROLE demotions:
+- The role IS a realistic threat actor. Assume it can be malicious.
+- Your job is to verify TECHNICAL feasibility assuming the role IS acting maliciously.
+- If technically feasible: verdict = CONFIRMED. Note "SEMI-TRUSTED-ROLE" in reasoning.
+- Do NOT return REFUTED because the role is required. That is not a technical refutation.
+- Confidence rule: if technically feasible AND semi-trusted role finding → refined_confidence >= 70
+  (the TestWriter threshold is 65; be confident if the bug is technically real)
+
 ## Mandatory Analysis Checks
 1. **Devil's Advocate**: Answer "What would make this exploitable?" — never "nothing".
 2. **Real Constants**: Extract ACTUAL constant values from the source code and substitute them.
@@ -173,6 +186,23 @@ Return ONLY valid JSON:
   "devils_advocate": "<what would make this exploitable>"
 }
 """
+
+STATE_TRACE_DEMOTION_BLOCK = """\
+
+## DEMOTION CONTEXT AWARENESS
+If this finding has gate_verdict = GATE_DEMOTED, it was likely demoted because:
+(a) it requires a semi-trusted role (allocator, keeper, operator, guardian), or
+(b) evidence was ambiguous.
+
+For SEMI-TRUSTED ROLE demotions:
+- The role IS a realistic threat actor. Assume it can be malicious.
+- Your job is to verify TECHNICAL feasibility assuming the role IS acting maliciously.
+- If technically feasible: verdict = CONFIRMED. Note "SEMI-TRUSTED-ROLE" in reasoning.
+- Do NOT return REFUTED because the role is required. That is not a technical refutation.
+- Confidence rule: if technically feasible AND semi-trusted role finding → refined_confidence >= 70
+  (the TestWriter threshold is 65; be explicit and confident if the bug is technically real)
+"""
+
 
 
 # ── Depth Worker Base ────────────────────────────────────────────
@@ -307,10 +337,20 @@ class _DepthWorkerBase:
     ) -> DepthResult:
         """Run depth analysis on a single finding."""
         user_content = self._build_user_content(finding, graph, source_code, is_da_pass)
+
+        # Inject demotion context: if the finding was GATE_DEMOTED, append the
+        # semi-trusted role demotion block so the LLM knows to evaluate technical
+        # feasibility rather than questioning the threat actor's realism.
+        system = self.system_prompt
+        gate_verdict = getattr(finding, "gate_verdict", "")
+        if gate_verdict == "GATE_DEMOTED":
+            system = system + STATE_TRACE_DEMOTION_BLOCK
+
         messages = [
-            {"role": "system", "content": self.system_prompt},
+            {"role": "system", "content": system},
             {"role": "user", "content": user_content},
         ]
+
 
         try:
             response = await asyncio.wait_for(
