@@ -168,21 +168,31 @@ def run_critikal_on_dir(src_dir: Path, case: dict, extra_env: dict | None = None
     print(f"  [SCONE] Running: {' '.join(cmd)}")
     t0 = time.time()
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
             env=env,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=3600,  # 1 hour max per case
             cwd=Path(__file__).parent.parent,  # critikal root
         )
+        
+        stdout_lines = []
+        for line in proc.stdout:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            stdout_lines.append(line)
+            
+        proc.wait(timeout=3600)
         elapsed = time.time() - t0
-        stdout = proc.stdout or ""
-        stderr = proc.stderr or ""
+        stdout = "".join(stdout_lines)
+        stderr = ""
 
         # Parse results from stdout
         detected = "Vulnerability" in stdout or "HIGH" in stdout or "CRITICAL" in stdout or "[CONFIRM]" in stdout
-        poc_pass  = "[POC-PASS]" in stdout or "EXPLOIT PROVEN" in stdout.upper()
+        # FIX: Old check matched "Exploit proven: False" log lines as a positive.
+        # Now we check for the actual success markers only.
+        poc_pass  = "[POC-PASS]" in stdout or "Exploit proven: True" in stdout
         # Count confirmed findings
         findings_count = stdout.count("[CONFIRM]")
 
@@ -268,7 +278,7 @@ def run_case(case: dict, api_key: str | None) -> dict:
         tmp_path = Path(tmp)
         for filename, code in sources.items():
             # Ensure subdirs exist
-            dest = tmp_path / filename
+            dest = tmp_path / filename.lstrip("/")
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(code, encoding="utf-8")
 

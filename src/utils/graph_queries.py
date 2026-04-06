@@ -981,9 +981,9 @@ class GraphQueries:
 
     def get_high_risk_hotspots(
         self,
-        min_score: int = 70,
-        min_structural: int = 40,
-        min_exploitability: int = 30,
+        min_score: int = 40,
+        min_structural: int = 15,
+        min_exploitability: int = 5,
         require_exploit_target: bool = True,
     ) -> List[Any]:
         """
@@ -1131,7 +1131,7 @@ def get_state_mutators(graph: nx.DiGraph, contract_name: str | None = None) -> L
 def get_unprotected_mutators(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
     return get_graph_queries(graph).get_unprotected_mutators(contract_name)
 
-def get_high_risk_hotspots(graph: nx.DiGraph, min_score: int = 70) -> List[Any]:
+def get_high_risk_hotspots(graph: nx.DiGraph, min_score: int = 40) -> List[Any]:
     return get_graph_queries(graph).get_high_risk_hotspots(min_score)
 
 def get_function_context(graph: nx.DiGraph, node_id: str) -> Dict[str, Any]:

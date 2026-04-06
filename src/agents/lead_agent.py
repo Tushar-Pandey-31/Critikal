@@ -88,9 +88,17 @@ def _exploit_target_eligible(finding: Finding, graph) -> bool:
          return True # fail open
     
     data = graph.nodes[target]
-    # Drop external view functions, interface placeholders, and internal functions
+    # FIX-4: View/pure functions CAN be exploited via read-only reentrancy,
+    # oracle manipulation, or stale data. Only drop if vuln class is
+    # clearly incompatible with a view/pure target.
     if data.get("is_view") or data.get("is_pure"):
-         return False
+        vuln = (finding.vulnerability_class or "").lower()
+        is_read_only_vuln = any(kw in vuln for kw in (
+            "oracle", "stale", "read-only", "price", "manipulation",
+            "inflation", "accounting", "fee", "readonly",
+        ))
+        if not is_read_only_vuln:
+            return False
     if data.get("node_type") == "interface_function":
          return False
     vis = data.get("visibility", "")
@@ -225,12 +233,19 @@ def get_llm(
     bind_tools: bool = True,
 ):
     """Returns a configured coordinator LLM (tool-bound by default)."""
-    if not ChatGoogleGenerativeAI:
-        raise ImportError("langchain-google-genai is not installed.")
-    if "GOOGLE_API_KEY" not in os.environ:
-        logger.info("WARNING: GOOGLE_API_KEY not found in environment.")
-    llm = ChatGoogleGenerativeAI(model=model_name, temperature=temperature)
-    logger.info(f"[get_llm] Created LLM: {llm.model} (bind_tools={bind_tools})")
+    provider = _detect_provider(model_name)
+    if provider == "openrouter":
+        clean_model = model_name.removeprefix("openrouter/") if model_name.lower().startswith("openrouter/") else model_name
+        llm = ChatOpenAI(
+            model=clean_model,
+            temperature=temperature,
+            openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+            openai_api_base="https://openrouter.ai/api/v1",
+        )
+    else:
+        llm = ChatGoogleGenerativeAI(model=model_name, temperature=temperature)
+
+    logger.info(f"[get_llm] Created LLM: {model_name} (bind_tools={bind_tools})")
     if bind_tools and _TOOLS:
         return llm.bind_tools(_TOOLS)
     return llm
@@ -305,6 +320,7 @@ def get_worker_llm(
                 "HTTP-Referer": "https://github.com/critikal",
                 "X-Title": "Critikal",
             },
+            max_tokens=int(os.getenv("OPENROUTER_MAX_TOKENS", "16384")),
         )
     elif provider == "xai":
         if not ChatOpenAI:
@@ -583,11 +599,22 @@ async def coordinator_node(state: AgentState):
         print(f"[Step 2] Seeded findings with {len(_semantic_findings)} semantic finding(s)")
 
     if config.slither_enabled and state["graph"].number_of_nodes() > 0:
-        hotspots = get_high_risk_hotspots(state["graph"], min_score=70)
+        hotspots = get_high_risk_hotspots(state["graph"])
         # v2 E2E TESTING: fallback to relaxed gate if no hotspots found (single-contract repos)
         if not hotspots:
             from src.utils.graph_queries import get_graph_queries as _gq
-            hotspots = _gq(state["graph"]).get_high_risk_hotspots(min_score=70, require_exploit_target=False)
+            hotspots = _gq(state["graph"]).get_high_risk_hotspots(require_exploit_target=False)
+        # BUG-1 FIX: Adaptive threshold for small graphs — single-file SCONE
+        # contracts produce low signal density. Auto-retry at lower threshold.
+        if not hotspots and state["graph"].number_of_nodes() < 50:
+            _current_min = int(os.getenv("HOTSPOT_MIN_SCORE", "40"))
+            _lowered = max(25, _current_min - 15)
+            print(f"[Step 2] Small graph ({state['graph'].number_of_nodes()} nodes), retrying hotspots at min_score={_lowered}")
+            from src.utils.graph_queries import get_graph_queries as _gq2
+            hotspots = _gq2(state["graph"]).get_high_risk_hotspots(
+                min_score=_lowered, min_structural=10, min_exploitability=5,
+                require_exploit_target=False,
+            )
         print(f"[Step 2] Found {len(hotspots)} high-risk hotspot(s)")
     else:
         print("[Step 2] Slither disabled or empty graph — skipping hotspot-based workers")
@@ -774,13 +801,16 @@ async def coordinator_node(state: AgentState):
             speculative_floor   = int(os.getenv("ATTACK_SPECULATIVE_FLOOR",  "30"))
             if out_conf >= attack_conf_floor:
                 finding = Finding.from_worker_output(output, hotspot)
-                finding.contribute_score("attack_worker", out_conf // 5,
+                # BUG-4 FIX: Old seed (conf//5 = 10-16) was too low to ever
+                # reach PROMOTE_THRESHOLD=50 with gate PASS (+20). Now conf//3
+                # gives 16-33, so gate PASS pushes to 36-53 — reachable.
+                finding.contribute_score("attack_worker", out_conf // 3,
                     f"attack confidence {out_conf}")
                 findings.append(finding)
             elif out_conf >= speculative_floor:
                 finding = Finding.from_worker_output(output, hotspot)
                 finding.is_speculative = True
-                finding.contribute_score("attack_worker", out_conf // 10,
+                finding.contribute_score("attack_worker", out_conf // 5,
                     f"speculative attack confidence {out_conf}")
                 findings.append(finding)
 
@@ -801,6 +831,9 @@ async def coordinator_node(state: AgentState):
             out_conf = getattr(output, "confidence", 0)
             if out_conf >= assumption_conf_threshold:
                 finding = Finding.from_worker_output(output, hotspot)
+                # BUG-4 FIX: Assumption findings also need a plausibility seed
+                finding.contribute_score("assumption_worker", out_conf // 4,
+                    f"assumption confidence {out_conf}")
                 findings.append(finding)
                 assumption_finding_count += 1
 
@@ -1004,8 +1037,21 @@ async def coordinator_node(state: AgentState):
         
         for finding in jury_candidates:
             hotspot = hotspot_map.get(finding.hotspot_node_id)
-            if hotspot:
-                jury_tasks.append(_run_jury_for_finding(finding, hotspot))
+            # BUG-3 FIX: Semantic findings use "Contract::function" node IDs
+            # but hotspot_map keys are "Contract.function". Don't skip findings
+            # without a hotspot match — build a synthetic hotspot from the finding.
+            if not hotspot:
+                from src.hotspot_engine import Hotspot
+                hotspot = Hotspot(
+                    node_id=finding.hotspot_node_id,
+                    contract=finding.affected_contract,
+                    function=finding.affected_function,
+                    risk_score=finding.risk_score or finding.confidence,
+                    risk_categories=[finding.vulnerability_class],
+                    signals={},
+                    priority=finding.severity_estimate or "MEDIUM",
+                )
+            jury_tasks.append(_run_jury_for_finding(finding, hotspot))
 
         if jury_tasks:
             jury_results = await asyncio.gather(*jury_tasks, return_exceptions=True)
@@ -1055,6 +1101,9 @@ async def coordinator_node(state: AgentState):
                 finding.jury_reasoning = judge_output.reasoning
                 finding.confidence_consensus = 50
                 finding.contribute_score("jury", +10, "ESCALATE: mixed jury, needs human review")
+                # FIX-2: ESCALATE = benefit of the doubt → always try TestWriter.
+                # If jury couldn't agree, a PoC attempt is the best tiebreaker.
+                finding._jury_confirmed = True
                 print(f"  [Jury] ? ESCALATE: {finding.hotspot_node_id}")
 
             else:  # REJECTED
@@ -1351,12 +1400,14 @@ async def coordinator_node(state: AgentState):
                 return True
             return False
 
+        # BUG-7 FIX: Removed `jury_unprovable` filter — CONFIRMED_UNPROVABLE
+        # findings have _jury_confirmed=True and should still get a TW attempt.
+        # The TW might find a way to prove them in isolation.
         sorted_findings = sorted(
             [f for f in findings
              if _eligible_for_testwriter(f)
              and f.severity_estimate in ("CRITICAL", "HIGH", "MEDIUM")
-             and _exploit_target_eligible(f, state.get("graph"))
-             and not getattr(f, "jury_unprovable", False)],
+             and _exploit_target_eligible(f, state.get("graph"))],
             key=_finding_priority,
         )
 

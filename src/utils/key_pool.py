@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # ── Environment variable names per provider ─────────────────────────
 _POOL_ENV_VARS: dict[str, tuple[str, str]] = {
     # provider -> (pool_env_var, fallback_single_key_env_var)
-    "gemini":      ("GEMINI_API_KEYS",      "GOOGLE_API_KEY"),
+    "gemini":      ("GOOGLE_API_KEYS",      "GOOGLE_API_KEY"),
     "openai":      ("OPENAI_API_KEYS",      "OPENAI_API_KEY"),
     "anthropic":   ("ANTHROPIC_API_KEYS",   "ANTHROPIC_API_KEY"),
     "openrouter":  ("OPENROUTER_API_KEYS",  "OPENROUTER_API_KEY"),
@@ -223,10 +223,12 @@ class APIKeyPool:
             raw = os.getenv(pool_var, "")
             keys = [k.strip() for k in raw.split(",") if k.strip()]
 
-            if not keys:
-                single = os.getenv(fallback_var, "")
-                if single.strip():
-                    keys = [single.strip()]
+            # Always merge the fallback single key into the pool
+            # (previously it was only used when the pool was empty,
+            # causing 401s when pool keys were expired but the main key worked)
+            single = os.getenv(fallback_var, "").strip()
+            if single and single not in keys:
+                keys.insert(0, single)  # primary key gets priority
 
             self._pools[provider] = [_KeyState(key=k) for k in keys]
             self._indices[provider] = 0

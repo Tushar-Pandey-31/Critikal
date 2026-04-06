@@ -151,24 +151,28 @@ async def async_main():
         
         slither_obj, ingestion_report = engine.run_analysis_v2(repo_path, targets=targets)
         if not slither_obj:
-            print("Error: Slither analysis failed. Exiting.")
+            print("WARNING: Slither analysis failed — continuing with semantic-only analysis.")
             if ingestion_report and ingestion_report.warnings:
                 print("  Diagnostics:")
                 for w in ingestion_report.warnings:
                     print(f"    - {w}")
-            sys.exit(1)
-        
-        if ingestion_report:
-            print(f"  {ingestion_report.summary()}")
+            # Don't exit — fall through with an empty graph.
+            # Semantic discovery agents (Step 1.5) analyze raw source code
+            # from the repo directory and don't need a compiled AST.
+            graph = nx.DiGraph()
+            print(f"  Using empty graph. Semantic agents will analyze raw source files in {repo_path}.")
+        else:
+            if ingestion_report:
+                print(f"  {ingestion_report.summary()}")
 
-        # 4. Build Knowledge Graph
-        print("Building Knowledge Graph...")
-        builder = GraphBuilder()
-        builder.build_graph(slither_obj)
-        graph = builder.graph
-        
-        builder.export_json("./data/graph_debug.json")
-        print(f"Graph built with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges.")
+            # 4. Build Knowledge Graph
+            print("Building Knowledge Graph...")
+            builder = GraphBuilder()
+            builder.build_graph(slither_obj)
+            graph = builder.graph
+            
+            builder.export_json("./data/graph_debug.json")
+            print(f"Graph built with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges.")
     else:
         print("[Config] Slither disabled — using empty graph")
         graph = nx.DiGraph()
