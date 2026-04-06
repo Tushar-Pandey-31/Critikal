@@ -24,8 +24,10 @@ CONFIDENCE_THRESHOLDS = {
     "privilege_escalation": 35,
     "unprotected_mutator": 30,
     "cei_violation": 35,
-    "invariant_violation": 55,
-    "flash_loan_amplification": 50,
+    "invariant_violation": 30,   # was 55 — reversed! invariants are the highest-signal class
+    "flash_loan_amplification": 35,  # was 50 — reduced to match other classes
+    "accounting_scope": 30,      # queue/set inconsistency bugs (Morpho-class)
+    "semi_trusted_role": 25,     # role-gated bugs always have a real threat actor
     "unknown": 40,
 }
 
@@ -191,10 +193,12 @@ class AttackHypothesisWorker(WorkerAgent):
             )
 
         recon_context = task.context.get("recon_context", {})
+        threat_context = task.context.get("threat_context", {})
+        vector_bundle = task.context.get("vector_bundle", "")
         node_id = hotspot.node_id
 
         graph_context = self._gather_graph_context(node_id, hotspot)
-        prompt = self._build_prompt(hotspot, graph_context, recon_context)
+        prompt = self._build_prompt(hotspot, graph_context, recon_context, threat_context, vector_bundle)
 
         raw_response = await self._call_llm(prompt)
         parsed = self._parse_response(raw_response, node_id)
@@ -396,7 +400,7 @@ class AttackHypothesisWorker(WorkerAgent):
 
         return context
 
-    def _build_prompt(self, hotspot, graph_context: dict, recon_context: dict) -> list[dict]:
+    def _build_prompt(self, hotspot, graph_context: dict, recon_context: dict, threat_context: dict = None, vector_bundle: str = "") -> list[dict]:
         fn_ctx = graph_context.get("function_context", {})
         source_code = fn_ctx.get("source_code") or fn_ctx.get("code", "Source code not available")
         signals = graph_context.get("signals_summary", {})
@@ -612,6 +616,27 @@ Intentional Design Patterns Found: {intentional_patterns if intentional_patterns
 Natspec for {hotspot.function}(): {fn_natspec if fn_natspec else 'No natspec found'}
 """
 
+        # P0: Inject threat intelligence if available
+        if threat_context:
+            threat_prompt = threat_context.get("threat_prompt", "")
+            if threat_prompt:
+                user_content += f"""
+## Threat Intelligence
+{threat_prompt}
+
+USE THE ABOVE to:
+- Think like the ranked adversaries (act AS each attacker)
+- Check each invariant against the code — can any be violated?
+- Consider composability risks if external calls are present
+"""
+
+        # P0: Inject attack vector bundle if available
+        if vector_bundle:
+            user_content += f"""
+## Attack Vectors
+{vector_bundle}
+"""
+
         user_content += f"""
 ## Instructions
 1. The graph signals above are from deterministic static analysis — treat them as ground truth.
@@ -621,7 +646,9 @@ Natspec for {hotspot.function}(): {fn_natspec if fn_natspec else 'No natspec fou
 5. attack_path must use "ContractName::functionName" (double colon)
 6. Return ONLY the JSON object, no markdown, no prose.
 7. CHECK DESIGN CONTEXT: If natspec says behaviour is intentional AND caller pays own tokens → downgrade confidence.
-8. CHECK COMPILER: If Solidity >= 0.8 and no unchecked blocks, overflow/underflow is NOT exploitable."""
+8. CHECK COMPILER: If Solidity >= 0.8 and no unchecked blocks, overflow/underflow is NOT exploitable.
+9. CHECK THREAT INTELLIGENCE: If invariants or adversary profiles are provided, verify against the code.
+10. CHECK ATTACK VECTORS: If vector bundle is provided, classify each applicable vector as SKIP/DROP/INVESTIGATE."""
 
         return [
             {"role": "system", "content": ATTACK_WORKER_SYSTEM_PROMPT},

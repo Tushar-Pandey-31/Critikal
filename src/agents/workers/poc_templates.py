@@ -525,17 +525,22 @@ def dos_loop_poc(
 #  Template Registry (must be after function definitions)
 # ────────────────────────────────────────────────────────────────────────────
 
+# FIX-5: Only register templates with COMPLETE, uncommented exploit logic.
+# Templates with commented-out bodies waste attempt 1 and can produce false
+# positives (empty test body = automatic pass with no assertions).
+# Skeleton templates remain as functions above for future completion.
 _TEMPLATES: dict[str, Callable] = {
     "reentrancy": reentrancy_poc,
     "access_control": access_control_poc,
     "tx_origin": tx_origin_poc,
-    "oracle_manipulation": oracle_manipulation_poc,
-    "integer_overflow": integer_overflow_poc,
-    "vault_inflation": vault_inflation_poc,
-    "delegatecall": delegatecall_poc,
-    "signature_replay": signature_replay_poc,
     "selfdestruct": selfdestruct_poc,
-    "stale_oracle": stale_oracle_poc,
-    "fee_on_transfer": fee_on_transfer_poc,
-    "dos_loop": dos_loop_poc,
+    # Disabled until their test bodies are completed:
+    # "oracle_manipulation": oracle_manipulation_poc,
+    # "integer_overflow": integer_overflow_poc,
+    # "vault_inflation": vault_inflation_poc,
+    # "delegatecall": delegatecall_poc,
+    # "signature_replay": signature_replay_poc,
+    # "stale_oracle": stale_oracle_poc,
+    # "fee_on_transfer": fee_on_transfer_poc,
+    # "dos_loop": dos_loop_poc,
 }

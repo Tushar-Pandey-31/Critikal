@@ -426,8 +426,15 @@ class TestWriterWorker(WorkerAgent):
         stripped = TestWriterWorker._strip_solidity_comments(test_code)
         defined_contracts = re.findall(r'\bcontract\s+(\w+)', stripped)
 
-        # These names are always allowed — they are the test infrastructure
-        allowed = {"ExploitTest", "AttackContract", "Attacker", "Exploit"}
+        # These names are always allowed — they are test infrastructure, not fabrication.
+        # The fuzzy mock-of-target check below still catches `MockTargetName` patterns.
+        allowed = {
+            "ExploitTest", "AttackContract", "Attacker", "Exploit",
+            # Common exploit helper patterns the LLM legitimately writes:
+            "ReentrancyAttacker", "FlashLoanReceiver", "MaliciousReceiver",
+            "CallbackContract", "AttackHelper", "MaliciousContract",
+            "ForceEther", "TxOriginAttacker",
+        }
 
         target_lower = target_contract.lower()
         target_parts = [p for p in re.split(r'[_A-Z]', target_contract) if len(p) > 3]
@@ -919,8 +926,8 @@ Hypothesis: {finding.hypothesis}
         re.MULTILINE
     )
     _MAX_DEP_FILES = 12
-    _MAX_TOTAL_CHARS = 60_000
-    _TARGET_FILE_CAP = 6000
+    _MAX_TOTAL_CHARS = 120_000
+    _TARGET_FILE_CAP = 50_000     # Never truncate the target contract
     _INTERFACE_FILE_CAP = 4000
     _IMPL_FILE_CAP = 3000
 
@@ -1545,6 +1552,19 @@ Hypothesis: {finding.hypothesis}
         rag_context = "" if skip_rag else self._fetch_rag_context(finding)
         error_rag = "" if skip_rag else (self._fetch_error_rag_context(error_history) if error_history else "")
 
+        # ── Naming collision guard ──────────────────────────────────────────
+        # The LLM sometimes writes `function {affected_function}()` as the top-level
+        # test function (naming collision with the target). Make this explicit.
+        affected_fn = finding.affected_function or "?"
+        naming_guard = (
+            f"\n\n⚠️  NAMING COLLISION WARNING ⚠️\n"
+            f"The affected function is named `{affected_fn}`. "
+            f"DO NOT name your test function `{affected_fn}`. "
+            f"The ONLY valid Foundry test function name is `test_exploit`.\n"
+            f"Your test contract MUST contain exactly: `function test_exploit() public {{ ... }}`\n"
+            f"Any other top-level function prefixed `test_` will be treated as WRONG.\n"
+        )
+
         user_content = (
             f"Vulnerability Class: {finding.vulnerability_class}\n"
             f"Affected Contract: {finding.affected_contract}\n"
@@ -1555,7 +1575,8 @@ Hypothesis: {finding.hypothesis}
             f"{source_section}"
             f"{rag_context}\n"
             f"{error_rag}\n"
-            f"{error_context}\n\n"
+            f"{error_context}\n"
+            f"{naming_guard}\n"
             "Generate a complete Foundry test that proves this vulnerability."
         )
 
@@ -1563,6 +1584,100 @@ Hypothesis: {finding.hypothesis}
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content}
         ]
+
+
+    def _parse_exploit_body_response(self, response: str) -> tuple[str, str]:
+        """
+        Parse the LLM response from harness mode (exploit-body-only).
+
+        The LLM outputs two code blocks:
+          1. HELPERS (optional): contract definitions for callbacks, attackers, etc.
+          2. EXPLOIT (required): statements that go inside test_exploit()
+
+        Returns:
+            (helper_contracts_code, exploit_body_code)
+        """
+        response = response.replace("\r\n", "\n")
+
+        # Extract all solidity code blocks
+        blocks = re.findall(
+            r"```(?:solidity|sol|Solidity)?\s*\n(.*?)\n\s*```",
+            response,
+            re.IGNORECASE | re.DOTALL,
+        )
+
+        if not blocks:
+            # Try to extract raw Solidity from the response
+            # Look for lines that look like Solidity statements
+            lines = response.strip().split("\n")
+            sol_lines = [
+                l for l in lines
+                if any(kw in l for kw in ("vm.", "assert", "target.", "attacker", "new ", "address("))
+                and not l.strip().startswith("//")
+                and not l.strip().startswith("#")
+                and not l.strip().startswith("-")
+            ]
+            if sol_lines:
+                return "", "\n".join(sol_lines)
+            return "", ""
+
+        if len(blocks) == 1:
+            code = blocks[0].strip()
+            # Determine if this is helpers or exploit body
+            if "contract " in code and "function " in code:
+                # Looks like a helper contract — but check if it also has
+                # standalone statements (vm.prank, assert, etc.)
+                has_standalone = any(
+                    kw in code for kw in ("vm.prank", "vm.start", "assert", "vm.deal")
+                )
+                if has_standalone and "contract " in code:
+                    # Mixed: split at the first standalone statement
+                    lines = code.split("\n")
+                    helper_lines = []
+                    exploit_lines = []
+                    in_contract = False
+                    brace_depth = 0
+                    passed_contracts = False
+
+                    for line in lines:
+                        stripped = line.strip()
+                        if not passed_contracts:
+                            if stripped.startswith("contract ") or stripped.startswith("interface "):
+                                in_contract = True
+                            if in_contract:
+                                helper_lines.append(line)
+                                brace_depth += line.count("{") - line.count("}")
+                                if brace_depth <= 0 and in_contract:
+                                    in_contract = False
+                                    passed_contracts = True
+                                continue
+                            if not in_contract and any(kw in stripped for kw in ("vm.", "assert", "target.", "new ")):
+                                passed_contracts = True
+                                exploit_lines.append(line)
+                                continue
+                            helper_lines.append(line)
+                        else:
+                            exploit_lines.append(line)
+
+                    return "\n".join(helper_lines).strip(), "\n".join(exploit_lines).strip()
+                elif "contract " in code:
+                    return code, ""
+                else:
+                    return "", code
+            else:
+                return "", code
+
+        # Two or more blocks: first is helpers, last is exploit
+        helpers = blocks[0].strip()
+        exploit = blocks[-1].strip()
+
+        # Validate: if "helpers" block doesn't have contract/interface, it's probably exploit
+        if "contract " not in helpers and "interface " not in helpers:
+            # Both blocks are exploit body — concatenate
+            return "", helpers + "\n" + exploit
+
+        return helpers, exploit
+
 
     def _build_variant_prompt(self, finding: "Finding", failed_code: str, failed_logs: str) -> list[dict]:
         """
@@ -1850,9 +1965,197 @@ Nothing else matters. Just write the test."""
                 effective_max = min(2, self.MAX_ATTEMPTS)
                 print(f"  [TestWriter] MOCK mode — limited to {effective_max} attempts (no real source available)")
 
-            print(f"  [TestWriter] Starting attempt loop (max={effective_max}, LLM timeout={self.LLM_TIMEOUT}s)")
+            # ════════════════════════════════════════════════════════════════
+            #  PHASE A: Deterministic Harness Builder (primary path)
+            #  Builds a compilable setUp() deterministically, then asks the
+            #  LLM to write ONLY the exploit body. Falls back to full-prompt
+            #  loop if harness can't compile.
+            # ════════════════════════════════════════════════════════════════
+            harness_mode_enabled = os.getenv("HARNESS_MODE", "true").lower() in ("true", "1", "yes")
+            harness_succeeded = False
 
-            while attempts < effective_max:
+            if harness_mode_enabled and real_sources_full:
+                try:
+                    from src.agents.workers.test_writer_harness import HarnessBuilder
+                    from src.agents.workers.test_writer_prompts import EXPLOIT_BODY_SYSTEM_PROMPT
+
+                    print(f"\n  [TestWriter] ═══ HARNESS MODE ═══")
+                    print(f"  [TestWriter] Building deterministic harness for {finding.affected_contract}...")
+
+                    # First, run forge build to generate ABI artifacts
+                    build_result = sandbox.run("forge build --no-cache --ignored-error-codes 8429 --ignored-error-codes 2424")
+                    if build_result.success:
+                        print(f"  [TestWriter] forge build succeeded — ABI artifacts available")
+                    else:
+                        print(f"  [TestWriter] forge build failed (harness will use regex fallback for constructor)")
+
+                    harness_builder = HarnessBuilder(graph=self.graph, sandbox=sandbox)
+                    harness_result = harness_builder.build(
+                        finding=finding,
+                        collected_sources=real_sources_full,
+                        is_legacy=is_legacy,
+                        pragma=target_pragma,
+                        deploy_path=deploy_paths.get(finding.affected_contract, ""),
+                        contract_signatures=contract_signatures,
+                    )
+
+                    if harness_result.compiled:
+                        print(f"  [TestWriter] ✓ Harness compiled! Entering exploit-body-only LLM loop")
+                        print(f"  [TestWriter]   Constructor: {harness_result.constructor_info.raw_signature}")
+                        print(f"  [TestWriter]   Deploy: {harness_result.deploy_statement[:80]}")
+
+                        # Phase B: LLM writes only the exploit body
+                        harness_attempts = 0
+                        harness_max = min(4, effective_max)
+                        harness_error_history: list[str] = []
+
+                        while harness_attempts < harness_max:
+                            harness_attempts += 1
+                            attempts += 1
+                            print(f"\n  [TestWriter] ── Harness Attempt {harness_attempts}/{harness_max} ──")
+
+                            # Build the focused prompt
+                            user_content = harness_result.exploit_prompt
+                            if harness_error_history:
+                                error_ctx = "\n\n".join(harness_error_history[-2:])
+                                user_content += f"""
+
+═══════════════════════════════════════════════════
+PREVIOUS ERRORS (fix these)
+═══════════════════════════════════════════════════
+{error_ctx}
+
+Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
+"""
+
+                            prompt = [
+                                {"role": "system", "content": EXPLOIT_BODY_SYSTEM_PROMPT},
+                                {"role": "user", "content": user_content},
+                            ]
+
+                            prompt_chars = sum(len(m.get("content", "")) for m in prompt)
+                            print(f"  [TestWriter] Exploit-body prompt: {prompt_chars} chars (vs ~50K+ for full-prompt)")
+
+                            # Call LLM
+                            try:
+                                import time as _time
+                                t_llm = _time.time()
+                                response = await asyncio.wait_for(
+                                    asyncio.to_thread(self.llm_client.invoke, prompt),
+                                    timeout=self.LLM_TIMEOUT
+                                )
+                                llm_elapsed = _time.time() - t_llm
+                                content = response.content if hasattr(response, "content") else str(response)
+                                if isinstance(content, list):
+                                    content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
+                                print(f"  [TestWriter] LLM responded in {llm_elapsed:.1f}s ({len(content)} chars)")
+
+                                # Track cost
+                                try:
+                                    from src.utils.token_counter import get_token_counter
+                                    input_text = "\n".join(m.get("content", "") for m in prompt)
+                                    _tw_model = getattr(self.llm_client, "model_name", "unknown")
+                                    get_token_counter().record(
+                                        "TestWriterWorker", _tw_model,
+                                        input_text, content,
+                                        getattr(response, "response_metadata", None),
+                                    )
+                                except Exception:
+                                    pass
+
+                            except (asyncio.TimeoutError, Exception) as e:
+                                print(f"  [TestWriter] Harness LLM call failed: {e}")
+                                harness_error_history.append(f"LLM call error: {e}")
+                                continue
+
+                            # Parse LLM response — extract helpers and exploit body
+                            helper_code, exploit_body = self._parse_exploit_body_response(content)
+
+                            if not exploit_body:
+                                print(f"  [TestWriter] LLM did not produce exploit body")
+                                harness_error_history.append("No exploit body found in LLM response")
+                                continue
+
+                            # Inject into harness
+                            full_test = harness_result.inject_exploit(exploit_body, helper_code)
+                            test_code_generated = full_test
+
+                            # Write and compile
+                            test_path = sandbox.get_test_path()
+                            test_file = f"{test_path}/ExploitTest.t.sol"
+                            sandbox.write_test_file(test_file, full_test)
+                            self._clear_forge_cache(sandbox)
+
+                            build_res = sandbox.run(
+                                "forge build --no-cache"
+                                " --ignored-error-codes 8429"
+                                " --ignored-error-codes 2424"
+                            )
+
+                            if not build_res.success:
+                                build_err = (build_res.stderr or "") + (build_res.stdout or "")
+                                print(f"  [TestWriter] Harness+exploit compilation failed")
+                                preview = exploit_body[:300] + ("..." if len(exploit_body) > 300 else "")
+                                harness_error_history.append(
+                                    f"Compilation failed:\n{build_err[:400]}\n\n"
+                                    f"Your exploit body (preview):\n{preview}"
+                                )
+                                continue
+
+                            compiled = True
+                            print(f"  [TestWriter] ✓ Harness+exploit compiled! Running test...")
+
+                            # Run test
+                            test_res = sandbox.run(
+                                "forge test --match-test test_exploit --no-cache -vvvv"
+                                " --ignored-error-codes 8429 --ignored-error-codes 2424"
+                            )
+                            test_logs = (test_res.stdout or "") + "\n" + (test_res.stderr or "")
+                            passed_by_logs = "[PASS]" in test_logs or "exploit succeeded" in test_logs.lower()
+
+                            if test_res.success and passed_by_logs:
+                                # Authenticity check
+                                authentic, auth_reason = self._check_test_authenticity(
+                                    full_test, finding.affected_contract, is_legacy,
+                                )
+                                if authentic:
+                                    print(f"  [TestWriter] ✓✓ EXPLOIT PROVEN via Harness Mode!")
+                                    exploit_success = True
+                                    harness_succeeded = True
+                                    break
+                                else:
+                                    print(f"  [TestWriter] Test passed but FABRICATED: {auth_reason}")
+                                    harness_error_history.append(
+                                        f"Test passed but authenticity check failed: {auth_reason}\n"
+                                        f"You must use the REAL contract, not mock/recreate it."
+                                    )
+                            else:
+                                print(f"  [TestWriter] Test compiled but exploit check failed")
+                                harness_error_history.append(
+                                    f"Test compiled but exploit failed.\nLogs:\n{test_logs[:400]}"
+                                )
+
+                        if harness_succeeded:
+                            print(f"  [TestWriter] ═══ HARNESS MODE SUCCESS ═══")
+                        else:
+                            print(f"  [TestWriter] Harness mode exhausted {harness_attempts} attempts — falling back to full-prompt")
+                            error_history.extend(harness_error_history[-2:])
+
+                except Exception as e:
+                    print(f"  [TestWriter] Harness builder error: {e} — falling back to full-prompt")
+                    logger.warning(f"[TestWriter] Harness builder error: {e}", exc_info=True)
+
+            # ════════════════════════════════════════════════════════════════
+            #  FALLBACK: Original full-prompt attempt loop
+            #  Only runs if harness mode didn't succeed
+            # ════════════════════════════════════════════════════════════════
+            if harness_succeeded:
+                # Skip the legacy loop entirely
+                pass
+            else:
+                print(f"\n  [TestWriter] Starting full-prompt attempt loop (max={effective_max - attempts}, LLM timeout={self.LLM_TIMEOUT}s)")
+
+            while attempts < effective_max and not harness_succeeded:
                 attempts += 1
                 print(f"\n  [TestWriter] ── Attempt {attempts}/{effective_max} {'(BRIDGE)' if is_legacy else ''} ──")
 
@@ -1888,8 +2191,10 @@ Nothing else matters. Just write the test."""
 
                 if not _used_template:
                     # ── Original LLM path ──
-                    sources_for_attempt = real_sources_full if attempts >= 3 else real_sources_minimal
-                    source_mode = "FULL" if attempts >= 3 else "MINIMAL"
+                    # FIX-7: Always use full sources — minimal mode was counterproductive
+                    # (less context = more compile errors on first attempts)
+                    sources_for_attempt = real_sources_full or real_sources_minimal
+                    source_mode = "FULL" if real_sources_full else "MINIMAL-FALLBACK"
                     print(f"  [TestWriter] Source mode: {source_mode} ({len(sources_for_attempt) if sources_for_attempt else 0} files)")
                     logger.info(f"[TestWriter] Attempt {attempts}/{effective_max} building prompt...")
 
@@ -2064,8 +2369,10 @@ Nothing else matters. Just write the test."""
                     try:
                         from src.utils.token_counter import get_token_counter
                         input_text = "\n".join(m.get("content", "") for m in prompt)
+                        # FIX-3: Use actual model name, not hardcoded
+                        _tw_model = getattr(self.llm_client, "model_name", "unknown")
                         get_token_counter().record(
-                            "TestWriterWorker", "gemini-2.5-flash",
+                            "TestWriterWorker", _tw_model,
                             input_text, content,
                             getattr(response, "response_metadata", None),
                         )
@@ -2242,7 +2549,9 @@ Nothing else matters. Just write the test."""
                             print(f"  [TestWriter] Loop detected on error codes {looping_codes} — injecting strategy switch")
 
                         if test_code_generated:
-                            error_entry = f"Code you wrote:\n```solidity\n{test_code_generated}\n```\n\n" + error_entry
+                            # FIX-6: Only include first 500 chars to prevent context blowup
+                            code_preview = test_code_generated[:500] + ("\n... [truncated]" if len(test_code_generated) > 500 else "")
+                            error_entry = f"Code you wrote (preview):\n```solidity\n{code_preview}\n```\n\n" + error_entry
                         error_history.append(error_entry)
                         compiled = False
                         self._clear_forge_cache(sandbox)
@@ -2346,7 +2655,8 @@ Nothing else matters. Just write the test."""
 
                     err_msg = f"Test compiled but exploit check failed.\nLogs:\n{test_logs[:400]}"
                     if test_code_generated:
-                        err_msg = f"Code you wrote:\n```solidity\n{test_code_generated}\n```\n\n" + err_msg
+                        code_preview = test_code_generated[:500] + ("\n... [truncated]" if len(test_code_generated) > 500 else "")
+                        err_msg = f"Code you wrote (preview):\n```solidity\n{code_preview}\n```\n\n" + err_msg
 
                     # ── v2: Variant Exploration ──────────────────────────────────
                     # Before giving up, try ONE relaxed variant. This catches cases

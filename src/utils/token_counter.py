@@ -22,16 +22,72 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Gemini Flash pricing (per 1M tokens) — updated March 2026
+# Model pricing (per 1M tokens) — updated April 2026
+# Covers all models configured in .env. Keyed by bare model name
+# (OpenRouter/provider prefixes are stripped before lookup).
 _PRICING = {
-    "gemini-2.5-flash": {"input": 0.15, "output": 0.60},
-    "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
-    "gemini-2.5-pro":   {"input": 1.25, "output": 5.00},
+    # ── Gemini ──────────────────────────────────────────────
+    "gemini-3.1-pro-preview":       {"input": 1.25, "output": 10.00},
+    "gemini-3.1-pro":               {"input": 1.25, "output": 10.00},
+    "gemini-3.1-flash-lite-preview":{"input": 0.075, "output": 0.30},
+    "gemini-3.1-flash-lite":        {"input": 0.075, "output": 0.30},
+    "gemini-3-flash-preview":       {"input": 0.10, "output": 0.40},
+    "gemini-3-flash":               {"input": 0.10, "output": 0.40},
+    "gemini-2.5-pro":               {"input": 1.25, "output": 5.00},
+    "gemini-2.5-flash":             {"input": 0.15, "output": 0.60},
+    "gemini-2.5-flash-lite":        {"input": 0.075, "output": 0.30},
+    "gemini-2.0-flash":             {"input": 0.10, "output": 0.40},
+    "gemini-1.5-pro":               {"input": 1.25, "output": 5.00},
+    "gemini-1.5-flash":             {"input": 0.075, "output": 0.30},
+    # ── Anthropic ───────────────────────────────────────────
+    "claude-sonnet-4.6":            {"input": 3.00, "output": 15.00},
+    "claude-sonnet-4":              {"input": 3.00, "output": 15.00},
+    "claude-opus-4":                {"input": 15.00, "output": 75.00},
+    "claude-3.5-sonnet":            {"input": 3.00, "output": 15.00},
+    "claude-3-haiku":               {"input": 0.25, "output": 1.25},
+    # ── OpenAI ──────────────────────────────────────────────
+    "gpt-5.1":                      {"input": 2.00, "output": 8.00},
+    "gpt-4o":                       {"input": 2.50, "output": 10.00},
+    "gpt-4o-mini":                  {"input": 0.15, "output": 0.60},
+    "o1":                           {"input": 15.00, "output": 60.00},
+    "o1-mini":                      {"input": 3.00, "output": 12.00},
 }
-_DEFAULT_PRICING = {"input": 0.15, "output": 0.60}
+_DEFAULT_PRICING = {"input": 0.50, "output": 2.00}  # conservative default
 
 # Rough chars-per-token ratio for estimation when metadata missing
 _CHARS_PER_TOKEN = 4
+
+
+def _normalize_model_name(model: str) -> str:
+    """Strip OpenRouter/provider prefix to get bare model name.
+
+    Examples:
+        'openrouter/google/gemini-3.1-pro-preview' → 'gemini-3.1-pro-preview'
+        'openrouter/anthropic/claude-sonnet-4.6'   → 'claude-sonnet-4.6'
+        'gemini-2.5-flash'                          → 'gemini-2.5-flash'
+    """
+    name = model.lower().strip()
+    if name.startswith("openrouter/"):
+        parts = name.split("/")
+        name = parts[-1] if len(parts) >= 3 else parts[-1]
+    return name
+
+
+def _get_pricing(model: str) -> dict:
+    """Look up pricing for a model, with prefix-match fallback."""
+    name = _normalize_model_name(model)
+
+    # Exact match
+    if name in _PRICING:
+        return _PRICING[name]
+
+    # Prefix match (e.g. "gemini-3.1-pro-preview-05" matches "gemini-3.1-pro-preview")
+    for prefix, pricing in _PRICING.items():
+        if name.startswith(prefix):
+            return pricing
+
+    logger.warning(f"[TokenCounter] Unknown model '{model}' (normalized: '{name}'), using default pricing")
+    return _DEFAULT_PRICING
 
 
 @dataclass
@@ -93,8 +149,8 @@ class TokenCounter:
         )
         total_tokens = input_tokens + output_tokens
 
-        # Cost estimation
-        pricing = _PRICING.get(model, _DEFAULT_PRICING)
+        # Cost estimation — uses normalized model name + prefix-match fallback
+        pricing = _get_pricing(model)
         cost = (
             (input_tokens / 1_000_000) * pricing["input"]
             + (output_tokens / 1_000_000) * pricing["output"]

@@ -1,3 +1,4 @@
+import os
 import networkx as nx
 from collections import defaultdict
 from typing import List, Dict, Any
@@ -980,9 +981,9 @@ class GraphQueries:
 
     def get_high_risk_hotspots(
         self,
-        min_score: int = 70,
-        min_structural: int = 40,
-        min_exploitability: int = 30,
+        min_score: int = 40,
+        min_structural: int = 15,
+        min_exploitability: int = 5,
         require_exploit_target: bool = True,
     ) -> List[Any]:
         """
@@ -1011,15 +1012,23 @@ class GraphQueries:
             exploit = data.get("exploitability_score", 0)
             eligible = data.get("send_to_exploit_writer", True)
 
-            if final < min_score:
+            # F1 threshold parameters — all overrideable via env vars.
+            # Reduced from 70/40/30 to 55/20/10 to stop Slither-correlated signals
+            # from acting as a correlated error: a bug that Slither misclassifies on
+            # TWO sub-dimensions was being dropped incorrectly.
+            _min_score   = int(os.environ.get("HOTSPOT_MIN_SCORE",      "55"))   # was 70
+            _min_struct  = int(os.environ.get("HOTSPOT_MIN_STRUCTURAL", "20"))   # was 40
+            _min_exploit = int(os.environ.get("HOTSPOT_MIN_EXPLOIT",    "10"))   # was 30
+
+            if final < _min_score:
                 continue
 
             if require_exploit_target and not eligible:
                 skipped_gate += 1
                 continue
 
-            # Multi-dimensional gate (Epic 3, Story 3.1)
-            if structural < min_structural or exploit < min_exploitability:
+            # Multi-dimensional gate (Epic 3, Story 3.1) — relaxed thresholds
+            if structural < _min_struct or exploit < _min_exploit:
                 skipped_gate += 1
                 continue
 
@@ -1053,7 +1062,7 @@ class GraphQueries:
                 final = int(final * 0.5)
                 structural = int(structural * 0.5)
                 exploit = int(exploit * 0.5)
-                if final < min_score:
+                if final < _min_score:
                     skipped_gate += 1
                     continue
 
@@ -1078,6 +1087,7 @@ class GraphQueries:
                 tier=contract_data.get("tier", "INFRA"),
             ))
 
+
         if skipped_test:
             print(f"[GraphQueries] Skipped {skipped_test} hotspot(s) in test/mock/fuzzing contracts.")
         if skipped_gate:
@@ -1085,7 +1095,8 @@ class GraphQueries:
 
         hotspots.sort(key=lambda x: x.risk_score, reverse=True)
         # Part 9 — Hotspot Budget Enforcement
-        MAX_HOTSPOTS = 15
+        # Default 25; override via HOTSPOT_BUDGET env var (e.g. HOTSPOT_BUDGET=50 for deep mode).
+        MAX_HOTSPOTS = int(os.environ.get("HOTSPOT_BUDGET", "40"))   # was 25
         if len(hotspots) > MAX_HOTSPOTS:
             threshold_score = hotspots[MAX_HOTSPOTS - 1].risk_score
             dropped = len(hotspots) - MAX_HOTSPOTS
@@ -1120,7 +1131,7 @@ def get_state_mutators(graph: nx.DiGraph, contract_name: str | None = None) -> L
 def get_unprotected_mutators(graph: nx.DiGraph, contract_name: str | None = None) -> List[Dict[str, Any]]:
     return get_graph_queries(graph).get_unprotected_mutators(contract_name)
 
-def get_high_risk_hotspots(graph: nx.DiGraph, min_score: int = 70) -> List[Any]:
+def get_high_risk_hotspots(graph: nx.DiGraph, min_score: int = 40) -> List[Any]:
     return get_graph_queries(graph).get_high_risk_hotspots(min_score)
 
 def get_function_context(graph: nx.DiGraph, node_id: str) -> Dict[str, Any]:

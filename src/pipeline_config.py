@@ -10,13 +10,26 @@ Environment variables:
     SEMANTIC_DISCOVERY_ENABLED  true/false
     ASSUMPTION_WORKER_ENABLED   true/false
     DEPTH_WORKERS_ENABLED       true/false
-    JURY_ENABLED                true/false   (already existed)
+    JURY_ENABLED                true/false
     GATE_ENABLED                true/false
     TESTWRITER_ENABLED          true/false
     FUZZ_GENERATOR_ENABLED      true/false
     RAG_ENABLED                 true/false
     CHAIN_ANALYSIS_ENABLED      true/false
     ETHERSCAN_ENABLED           true/false
+
+    ─── Smart filtering (evidence accumulation architecture)
+    PROMOTE_THRESHOLD           int  (default 50) — plausibility_score needed to reach TestWriter
+    ATTACK_CONFIDENCE_FLOOR     int  (default 50) — attack worker min confidence for normal Finding
+    ATTACK_SPECULATIVE_FLOOR    int  (default 30) — lower floor for SPECULATIVE Finding tier
+    DEPTH_ON_REJECTED           true/false (default false) — run depth on jury-rejected findings
+    SEMANTIC_FALLBACK_N         int  (default 3)  — max semantic findings to force-promote when attack workers find nothing
+    SEMANTIC_FALLBACK_THRESHOLD int  (default 55) — min confidence for semantic synthetic fallback
+
+    ─── LLM providers (OpenRouter — optional, not a hard dependency)
+    OPENROUTER_API_KEY          str  — single key, used when WORKER_MODEL_NAME uses provider/model format
+    OPENROUTER_API_KEYS         str  — comma-separated list for key rotation
+    # Usage: set WORKER_MODEL_NAME=anthropic/claude-3.5-sonnet to route through OpenRouter
 """
 
 from __future__ import annotations
@@ -48,6 +61,8 @@ _MODE_PRESETS: dict[str, dict[str, bool]] = {
         "rag_enabled": False,
         "chain_analysis_enabled": False,
         "etherscan_enabled": False,
+        "threat_profiler_enabled": False,
+        "attack_vector_db_enabled": False,
     },
     "standard": {
         "slither_enabled": True,
@@ -61,6 +76,8 @@ _MODE_PRESETS: dict[str, dict[str, bool]] = {
         "rag_enabled": True,
         "chain_analysis_enabled": True,
         "etherscan_enabled": True,
+        "threat_profiler_enabled": True,
+        "attack_vector_db_enabled": True,
     },
     "deep": {
         "slither_enabled": True,
@@ -74,6 +91,8 @@ _MODE_PRESETS: dict[str, dict[str, bool]] = {
         "rag_enabled": True,
         "chain_analysis_enabled": True,
         "etherscan_enabled": True,
+        "threat_profiler_enabled": True,
+        "attack_vector_db_enabled": True,
     },
     "semantic_only": {
         "slither_enabled": False,
@@ -87,6 +106,8 @@ _MODE_PRESETS: dict[str, dict[str, bool]] = {
         "rag_enabled": True,
         "chain_analysis_enabled": True,
         "etherscan_enabled": False,
+        "threat_profiler_enabled": True,
+        "attack_vector_db_enabled": True,
     },
 }
 
@@ -103,6 +124,8 @@ _FIELD_TO_ENV: dict[str, str] = {
     "rag_enabled": "RAG_ENABLED",
     "chain_analysis_enabled": "CHAIN_ANALYSIS_ENABLED",
     "etherscan_enabled": "ETHERSCAN_ENABLED",
+    "threat_profiler_enabled": "THREAT_PROFILER_ENABLED",
+    "attack_vector_db_enabled": "ATTACK_VECTOR_DB_ENABLED",
 }
 
 
@@ -124,6 +147,8 @@ class PipelineConfig:
     rag_enabled: bool = True
     chain_analysis_enabled: bool = True
     etherscan_enabled: bool = True
+    threat_profiler_enabled: bool = True
+    attack_vector_db_enabled: bool = True
 
     audit_mode: str = "standard"
 

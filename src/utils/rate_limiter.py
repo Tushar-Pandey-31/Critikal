@@ -34,6 +34,19 @@ _TIER = os.getenv("RATE_LIMIT_TIER", "free").lower()
 
 _MODEL_LIMITS: dict[str, dict[str, dict[str, int]]] = {
     # ── Gemini ──────────────────────────────────────────────
+    "gemini-3.1-pro": {
+        "free":    {"rpm": 5,   "tpm": 250_000,   "rpd": 100},
+        "paid_t1": {"rpm": 150, "tpm": 1_000_000, "rpd": 1_500},
+        "paid_t2": {"rpm": 500, "tpm": 2_000_000, "rpd": 10_000},
+    },
+    "gemini-3.1-flash-lite": {
+        "free":    {"rpm": 15,  "tpm": 250_000,   "rpd": 1_000},
+        "paid_t1": {"rpm": 300, "tpm": 1_000_000, "rpd": 1_500},
+    },
+    "gemini-3-flash": {
+        "free":    {"rpm": 10,  "tpm": 250_000,   "rpd": 500},
+        "paid_t1": {"rpm": 300, "tpm": 1_000_000, "rpd": 1_500},
+    },
     "gemini-2.5-pro": {
         "free":    {"rpm": 5,   "tpm": 250_000,   "rpd": 100},
         "paid_t1": {"rpm": 150, "tpm": 1_000_000, "rpd": 1_500},
@@ -60,7 +73,11 @@ _MODEL_LIMITS: dict[str, dict[str, dict[str, int]]] = {
         "free":    {"rpm": 5,   "tpm": 250_000,   "rpd": 100},
         "paid_t1": {"rpm": 150, "tpm": 1_000_000, "rpd": 1_500},
     },
-    # ── OpenAI (future) ─────────────────────────────────────
+    # ── OpenAI ──────────────────────────────────────────────
+    "gpt-5.1": {
+        "free":    {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
+        "paid_t1": {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
+    },
     "gpt-4o": {
         "free":    {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
         "paid_t1": {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
@@ -69,7 +86,11 @@ _MODEL_LIMITS: dict[str, dict[str, dict[str, int]]] = {
         "free":    {"rpm": 500, "tpm": 200_000, "rpd": 10_000},
         "paid_t1": {"rpm": 500, "tpm": 200_000, "rpd": 10_000},
     },
-    # ── Anthropic (future) ──────────────────────────────────
+    # ── Anthropic ───────────────────────────────────────────
+    "claude-sonnet-4": {
+        "free":    {"rpm": 50, "tpm": 40_000, "rpd": 1_000},
+        "paid_t1": {"rpm": 50, "tpm": 40_000, "rpd": 1_000},
+    },
     "claude-sonnet": {
         "free":    {"rpm": 50, "tpm": 40_000, "rpd": 1_000},
         "paid_t1": {"rpm": 50, "tpm": 40_000, "rpd": 1_000},
@@ -95,8 +116,14 @@ def _resolve_limits(model: str) -> dict[str, int]:
             "rpd": int(os.getenv("RATE_LIMIT_RPD_OVERRIDE", "10000")),
         }
 
-    # Try exact match, then prefix match
+    # Strip OpenRouter/provider prefix: "openrouter/google/gemini-3.1-pro" → "gemini-3.1-pro"
     model_lower = model.lower()
+    if model_lower.startswith("openrouter/"):
+        # Strip "openrouter/{provider}/" to get bare model name
+        parts = model_lower.split("/")
+        model_lower = parts[-1] if len(parts) >= 3 else parts[-1]
+
+    # Try exact match, then prefix match
     for prefix, tiers in _MODEL_LIMITS.items():
         if model_lower.startswith(prefix):
             limits = tiers.get(_TIER, tiers.get("free", _FALLBACK_LIMITS))
@@ -302,11 +329,16 @@ class RateLimitedLLM:
         try:
             return self._llm.invoke(*args, **kwargs)
         except Exception as e:
-            if self._is_rate_limit_error(e) and self._key_pool:
-                self._key_pool.mark_cooldown(self._provider, self._current_key)
+            if (self._is_rate_limit_error(e) or self._is_auth_error(e)) and self._key_pool:
+                is_auth = self._is_auth_error(e)
+                # Auth errors (401/402): bench permanently (1 hour)
+                # Rate limits (429): bench temporarily (60s)
+                cooldown = 3600.0 if is_auth else None
+                self._key_pool.mark_cooldown(self._provider, self._current_key, cooldown)
+                err_type = "401/402 auth" if is_auth else "429 rate-limit"
                 logger.warning(
-                    f"[RateLimitedLLM] 429 on key ...{key_suffix}, "
-                    f"cooling down and retrying..."
+                    f"[RateLimitedLLM] {err_type} on key ...{key_suffix}, "
+                    f"cooling down and retrying with next key..."
                 )
                 # Get a new key and retry once
                 new_key = self._key_pool.get_key(self._provider)
@@ -322,11 +354,14 @@ class RateLimitedLLM:
         try:
             return await self._llm.ainvoke(*args, **kwargs)
         except Exception as e:
-            if self._is_rate_limit_error(e) and self._key_pool:
-                self._key_pool.mark_cooldown(self._provider, self._current_key)
+            if (self._is_rate_limit_error(e) or self._is_auth_error(e)) and self._key_pool:
+                is_auth = self._is_auth_error(e)
+                cooldown = 3600.0 if is_auth else None
+                self._key_pool.mark_cooldown(self._provider, self._current_key, cooldown)
+                err_type = "401/402 auth" if is_auth else "429 rate-limit"
                 logger.warning(
-                    f"[RateLimitedLLM] 429 on key ...{key_suffix}, "
-                    f"cooling down and retrying..."
+                    f"[RateLimitedLLM] {err_type} on key ...{key_suffix}, "
+                    f"cooling down and retrying with next key..."
                 )
                 new_key = await self._key_pool.get_key_async(self._provider)
                 self._swap_key(new_key)
@@ -359,6 +394,15 @@ class RateLimitedLLM:
         return any(
             kw in err_str
             for kw in ["429", "quota", "rate_limit", "rate limit", "resource_exhausted"]
+        )
+
+    @staticmethod
+    def _is_auth_error(e: Exception) -> bool:
+        """Check if an exception is a 401/402 auth or credit error."""
+        err_str = str(e).lower()
+        return any(
+            kw in err_str
+            for kw in ["401", "402", "user not found", "unauthorized", "requires more credits"]
         )
 
 
