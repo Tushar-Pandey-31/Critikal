@@ -690,6 +690,24 @@ async def coordinator_node(state: AgentState):
         else:
             print("[Step 3] Assumption worker disabled (ASSUMPTION_WORKER_ENABLED=false)")
 
+        # ExecutionTraceWorker: cross-function symmetry tests and execution path analysis
+        execution_trace_worker = None
+        _execution_trace_enabled = os.getenv("EXECUTION_TRACE_ENABLED", "true").lower() in ("true", "1", "yes")
+        if _execution_trace_enabled:
+            try:
+                from src.agents.workers.execution_trace_worker import ExecutionTraceWorker
+                exec_trace_model = os.getenv("EXECUTION_TRACE_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"))
+                exec_trace_llm = get_worker_llm(model_name=exec_trace_model)
+                execution_trace_worker = ExecutionTraceWorker(
+                    graph=state["graph"],
+                    llm_client=exec_trace_llm,
+                )
+                print(f"[Step 3] ExecutionTraceWorker enabled (model={exec_trace_model})")
+            except Exception as e:
+                print(f"[Step 3] ExecutionTraceWorker init failed (non-fatal): {e}")
+        else:
+            print("[Step 3] ExecutionTraceWorker disabled (EXECUTION_TRACE_ENABLED=false)")
+
         def _budget_for_priority(priority: str) -> int:
             return {"CRITICAL": 8000, "HIGH": 5000, "MEDIUM": 3000}.get(priority, 3000)
 
@@ -728,17 +746,30 @@ async def coordinator_node(state: AgentState):
             )
             for hotspot in hotspots
         ] if assumption_worker else []
+        execution_trace_tasks = [
+            WorkerTask(
+                task_id=f"exec_trace_{hotspot.node_id}",
+                task_type="execution_trace",
+                hotspot=hotspot,
+                context={},   # uses graph internally for sibling lookup
+                budget_tokens=_budget_for_priority(hotspot.priority),
+            )
+            for hotspot in hotspots
+        ] if execution_trace_worker else []
 
-        total_tasks = len(attack_tasks) + len(assumption_tasks)
-        print(f"[Step 3] Launching {len(attack_tasks)} attack + {len(assumption_tasks)} assumption worker(s) in parallel ({total_tasks} total)...")
+        total_tasks = len(attack_tasks) + len(assumption_tasks) + len(execution_trace_tasks)
+        print(f"[Step 3] Launching {len(attack_tasks)} attack + {len(assumption_tasks)} assumption + {len(execution_trace_tasks)} exec_trace worker(s) in parallel ({total_tasks} total)...")
         for t in attack_tasks:
             print(f"  [attack]      - {t.task_id}")
         for t in assumption_tasks:
             print(f"  [assumption]  - {t.task_id}")
+        for t in execution_trace_tasks:
+            print(f"  [exec_trace]  - {t.task_id}")
 
         _attack_concurrency = int(os.getenv("ATTACK_WORKER_CONCURRENCY", "15"))
         _attack_sem = asyncio.Semaphore(_attack_concurrency)
         _assumption_sem = asyncio.Semaphore(_attack_concurrency)
+        _exec_trace_sem = asyncio.Semaphore(_attack_concurrency)
 
         async def _run_attack_with_timeout(task, timeout=300):
             async with _attack_sem:
@@ -756,14 +787,26 @@ async def coordinator_node(state: AgentState):
                     print(f"  TIMEOUT: {task.task_id} (>{timeout}s)")
                     return None
 
-        # Gather ALL workers in parallel — attack and assumption run simultaneously
+        async def _run_exec_trace_with_timeout(task, timeout=300):
+            async with _exec_trace_sem:
+                try:
+                    return await asyncio.wait_for(execution_trace_worker.run(task), timeout=timeout)
+                except asyncio.TimeoutError:
+                    print(f"  TIMEOUT: {task.task_id} (>{timeout}s)")
+                    return None
+
+        # Gather ALL workers in parallel — attack, assumption, and exec_trace run simultaneously
         all_outputs = await asyncio.gather(
             *[_run_attack_with_timeout(t) for t in attack_tasks],
             *[_run_assumption_with_timeout(t) for t in assumption_tasks],
+            *[_run_exec_trace_with_timeout(t) for t in execution_trace_tasks],
             return_exceptions=True,
         )
-        worker_outputs_parallel = all_outputs[:len(attack_tasks)]
-        assumption_outputs_parallel = all_outputs[len(attack_tasks):]
+        _split_1 = len(attack_tasks)
+        _split_2 = _split_1 + len(assumption_tasks)
+        worker_outputs_parallel = all_outputs[:_split_1]
+        assumption_outputs_parallel = all_outputs[_split_1:_split_2]
+        exec_trace_outputs_parallel = all_outputs[_split_2:]
 
         print(f"[Step 3] Attack workers complete: {len(worker_outputs_parallel)} result(s)")
         print(f"[Step 3] Assumption workers complete: {len(assumption_outputs_parallel)} result(s)")
@@ -785,6 +828,15 @@ async def coordinator_node(state: AgentState):
             else:
                 o_conf = getattr(o, "confidence", 0)
                 print(f"  [assumption][{i}] confidence={o_conf}")
+
+        for i, o in enumerate(exec_trace_outputs_parallel):
+            if isinstance(o, Exception):
+                print(f"  [exec_trace][{i}] EXCEPTION: {o}")
+            elif o is None:
+                print(f"  [exec_trace][{i}] TIMEOUT (no result)")
+            else:
+                o_conf = getattr(o, "confidence", 0)
+                print(f"  [exec_trace][{i}] confidence={o_conf}")
 
         # ── Step 4: Build Findings ─────────────────────────
         for output, hotspot in zip(worker_outputs_parallel, hotspots):
@@ -842,7 +894,26 @@ async def coordinator_node(state: AgentState):
                 wo_dict = model_dump_func() if callable(model_dump_func) else output
                 worker_outputs.append(wo_dict)
 
-        print(f"[Step 4] Findings that passed filter: {len(findings)} ({assumption_finding_count} from assumption workers)")
+        # ExecutionTraceWorker findings — cross-function symmetry gaps
+        exec_trace_conf_threshold = int(os.getenv("EXEC_TRACE_CONFIDENCE_THRESHOLD", "35"))
+        exec_trace_finding_count = 0
+        for output, hotspot in zip(exec_trace_outputs_parallel, hotspots):
+            if output is None or isinstance(output, Exception):
+                continue
+            out_conf = getattr(output, "confidence", 0)
+            if out_conf >= exec_trace_conf_threshold:
+                finding = Finding.from_worker_output(output, hotspot)
+                finding.contribute_score("execution_trace", out_conf // 4,
+                    f"exec_trace confidence {out_conf}")
+                findings.append(finding)
+                exec_trace_finding_count += 1
+
+            if not isinstance(output, Exception):
+                model_dump_func = getattr(output, "model_dump", None)
+                wo_dict = model_dump_func() if callable(model_dump_func) else output
+                worker_outputs.append(wo_dict)
+
+        print(f"[Step 4] Findings that passed filter: {len(findings)} ({assumption_finding_count} from assumption, {exec_trace_finding_count} from exec_trace)")
 
     # ── Step 4.25: Synthetic Fallback for Semantic Leads (P2-K) ──────────
     # If attack + assumption workers produced ZERO promoted findings but semantic
@@ -1124,6 +1195,11 @@ async def coordinator_node(state: AgentState):
         rejected_count = sum(1 for f in confirmed_findings if f.jury_decision == "REJECTED")
         print(f"[Step 4.5] Jury complete: {len(confirmed_findings) - rejected_count} confirmed/escalated, {rejected_count} jury-rejected (in pool)")
         findings = confirmed_findings
+
+        # Apply chain severity upgrades AFTER jury — only confirmed findings get upgraded
+        from src.agents.chain_analyzer import apply_chain_severity_upgrades
+        apply_chain_severity_upgrades(findings)
+        print(f"[Step 4.55] Applied post-jury chain severity upgrades")
 
     else:
         if not config.jury_enabled:

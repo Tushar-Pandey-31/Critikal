@@ -402,9 +402,11 @@ class TestWriterWorker(WorkerAgent):
         test_code: str,
         target_contract: str,
         is_legacy: bool,
+        vulnerability_class: str = "",
     ) -> tuple[bool, str]:
         """
-        Checks whether the test actually deploys the real contract or a mock the LLM wrote.
+        Checks whether the test actually deploys the real contract or a mock the LLM wrote,
+        AND whether the test demonstrates the CLAIMED vulnerability class.
 
         Returns (is_authentic, reason_string).
 
@@ -412,6 +414,8 @@ class TestWriterWorker(WorkerAgent):
         1. Bridge mode tests MUST contain deployCode() — if absent, LLM deployed a mock.
         2. Any contract definition in the test file that fuzzy-matches the target name
            (but isn't the target itself) is a mock shadow → fabricated.
+        3. The test MUST contain assertions/setup specific to the claimed vulnerability class.
+           A test that just calls the function and asserts balance transfer ≠ an exploit PoC.
         """
         # Rule 1: bridge mode requires deployCode()
         if is_legacy and "deployCode(" not in test_code:
@@ -434,6 +438,8 @@ class TestWriterWorker(WorkerAgent):
             "ReentrancyAttacker", "FlashLoanReceiver", "MaliciousReceiver",
             "CallbackContract", "AttackHelper", "MaliciousContract",
             "ForceEther", "TxOriginAttacker",
+            # Fee-on-transfer mock tokens are legitimate test infrastructure:
+            "FeeOnTransferToken", "FeeToken", "TaxToken", "MockFeeToken",
         }
 
         target_lower = target_contract.lower()
@@ -458,6 +464,69 @@ class TestWriterWorker(WorkerAgent):
                         f"You must NOT write your own mock of the target. "
                         f"Deploy the real contract via deployCode() or direct import and test against it."
                     )
+
+        # Rule 3: Vulnerability-class-specific authenticity checks
+        # Ensure the PoC actually demonstrates the CLAIMED vulnerability, not just function callability
+        vuln_lower = (vulnerability_class or "").lower().replace(" ", "_")
+        test_lower = test_code.lower()
+
+        if vuln_lower in ("reentrancy", "cei_violation", "cross_contract_reentrancy"):
+            # Reentrancy PoCs MUST show re-entry: either a callback contract or balance drain assertion
+            has_callback = any(kw in test_lower for kw in [
+                "receive()", "fallback()", "tokensreceived", "onreceived",
+                "onerc721received", "onerc1155received", "reentrancyattacker",
+                "attackcontract", "callbackcontract"
+            ])
+            has_drain = any(kw in test_lower for kw in [
+                "assertgt(address(attacker).balance", "assertlt(address(target).balance",
+                "drained", "re-enter"
+            ])
+            if not has_callback and not has_drain:
+                return False, (
+                    f"WEAK_POC: Claimed {vulnerability_class} but test has no callback contract "
+                    f"or balance drain assertion. A reentrancy PoC must deploy an attacker contract "
+                    f"with receive()/fallback() that re-enters the target, then assert funds were drained."
+                )
+
+        elif "fee_on_transfer" in vuln_lower or "fee_accounting" in vuln_lower:
+            # Fee-on-transfer PoCs MUST use a fee-on-transfer token, not a normal ERC20
+            has_fee_token = any(kw in test_lower for kw in [
+                "feeontransfer", "feetoken", "taxtoken", "transferfee",
+                "fee = ", "fee =", "_fee"
+            ])
+            has_accounting_check = any(kw in test_lower for kw in [
+                "balanceof(address(", "balancebefore", "balanceafter",
+                "accounting", "mismatch"
+            ])
+            if not has_fee_token:
+                return False, (
+                    f"WEAK_POC: Claimed {vulnerability_class} but test uses a normal ERC20 token. "
+                    f"A fee-on-transfer PoC must deploy a token that deducts a fee on transfer, "
+                    f"then show accountBalance > contract.balanceOf(token)."
+                )
+
+        elif "inflation" in vuln_lower or "first_depositor" in vuln_lower:
+            # First depositor PoCs MUST show totalSupply==0 scenario + donation
+            has_first_deposit = any(kw in test_lower for kw in [
+                "totalsupply", "first deposit", "inflation", "donate",
+                "0 shares", "zero shares", "exchange rate"
+            ])
+            if not has_first_deposit:
+                return False, (
+                    f"WEAK_POC: Claimed {vulnerability_class} but test doesn't demonstrate "
+                    f"the first-depositor attack pattern. Must show: 1) small deposit at totalSupply==0, "
+                    f"2) donate to inflate exchange rate, 3) show victim gets 0 shares."
+                )
+
+        elif "unprotected" in vuln_lower or "access_control" in vuln_lower or "privilege" in vuln_lower:
+            # Access control PoCs MUST call from a non-privileged address
+            has_prank = "vm.prank(" in test_code or "vm.startPrank(" in test_code
+            if not has_prank:
+                return False, (
+                    f"WEAK_POC: Claimed {vulnerability_class} but test doesn't use vm.prank() "
+                    f"to call from an unauthorized address. An access control PoC must demonstrate "
+                    f"that a non-privileged caller can execute the restricted function."
+                )
 
         return True, "AUTHENTIC"
 
@@ -2054,7 +2123,7 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                                 try:
                                     from src.utils.token_counter import get_token_counter
                                     input_text = "\n".join(m.get("content", "") for m in prompt)
-                                    _tw_model = getattr(self.llm_client, "model_name", "unknown")
+                                    _tw_model = self._get_llm_model_name()
                                     get_token_counter().record(
                                         "TestWriterWorker", _tw_model,
                                         input_text, content,
@@ -2117,6 +2186,7 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                                 # Authenticity check
                                 authentic, auth_reason = self._check_test_authenticity(
                                     full_test, finding.affected_contract, is_legacy,
+                                    vulnerability_class=getattr(finding, 'vulnerability_class', ''),
                                 )
                                 if authentic:
                                     print(f"  [TestWriter] ✓✓ EXPLOIT PROVEN via Harness Mode!")
@@ -2370,7 +2440,7 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                         from src.utils.token_counter import get_token_counter
                         input_text = "\n".join(m.get("content", "") for m in prompt)
                         # FIX-3: Use actual model name, not hardcoded
-                        _tw_model = getattr(self.llm_client, "model_name", "unknown")
+                        _tw_model = self._get_llm_model_name()
                         get_token_counter().record(
                             "TestWriterWorker", _tw_model,
                             input_text, content,
@@ -2577,6 +2647,7 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                                 test_code_generated,
                                 finding.affected_contract,
                                 is_legacy,
+                                vulnerability_class=getattr(finding, 'vulnerability_class', ''),
                             )
                         if not authentic:
                             print(f"  [TestWriter] FABRICATED PROOF REJECTED: {auth_reason}")
@@ -2700,6 +2771,7 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                                     # Check authenticity
                                     authentic, auth_reason = self._check_test_authenticity(
                                         var_code, finding.affected_contract, is_legacy,
+                                        vulnerability_class=getattr(finding, 'vulnerability_class', ''),
                                     )
                                     if authentic:
                                         print(f"  [TestWriter] ✓ VARIANT SUCCEEDED! Exploit proven via relaxed parameters")
@@ -2795,6 +2867,28 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                 "bridge_mode": is_legacy,
             }
         )
+
+    def _get_llm_model_name(self) -> str:
+        """Resolve the actual model name from the LLM client.
+
+        RateLimitedLLM wraps ChatAnthropic/ChatGoogleGenerativeAI, which use
+        .model or .model_name depending on provider. Falls back to env var.
+        """
+        llm = self.llm_client
+        # Try common attribute names
+        for attr in ("model_name", "model", "_model_name", "_model"):
+            val = getattr(llm, attr, None)
+            if val and val != "unknown":
+                return val
+        # Try the underlying wrapped LLM
+        inner = getattr(llm, "_llm", None)
+        if inner:
+            for attr in ("model_name", "model", "_model_name"):
+                val = getattr(inner, attr, None)
+                if val and val != "unknown":
+                    return val
+        # Final fallback: env var
+        return os.getenv("TEST_WRITER_MODEL_NAME", "unknown")
 
     def _clear_forge_cache(self, sandbox) -> None:
         """Clear the out/ and cache/ directories in the sandbox to force recompilation."""

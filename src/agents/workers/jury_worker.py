@@ -99,6 +99,24 @@ async def gate_evaluate(finding: Any, source_code: str, llm_client: Any) -> Gate
     hypothesis_text = finding.hypothesis or ""
     attack_path_text = " → ".join(finding.attack_path) if finding.attack_path else ""
 
+    # Run deterministic kill signals to provide factual evidence to the gate LLM
+    kill_signal_text = ""
+    try:
+        from src.agents.workers.kill_signals import check_kill_signals
+        kill_results = check_kill_signals(
+            vulnerability_class=finding.vulnerability_class or "",
+            source_code=source_code or "",
+            function_name=finding.affected_function or "",
+        )
+        if kill_results:
+            kill_lines = ["## Kill Signals (deterministic evidence — mitigations found in code)"]
+            for kr in kill_results:
+                kill_lines.append(f"- **{kr.signal_name}**: {kr.evidence}")
+                kill_lines.append(f"  → {kr.explanation}")
+            kill_signal_text = "\n".join(kill_lines) + "\n\n"
+    except Exception:
+        pass
+
     user_content = f"""## Finding Under Review
 Contract: {finding.affected_contract}
 Function: {finding.affected_function}
@@ -107,7 +125,7 @@ Confidence reported by analysis: {finding.confidence}
 Attack path: {attack_path_text}
 Hypothesis: {hypothesis_text}
 
-## Source Code
+{kill_signal_text}## Source Code
 ```solidity
 {source_code or "// Source code not available"}
 ```

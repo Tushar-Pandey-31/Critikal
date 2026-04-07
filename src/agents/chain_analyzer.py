@@ -287,7 +287,12 @@ def run_chain_analysis(findings: list[Finding]) -> list[ChainHypothesis]:
 
 
 def _apply_chain_to_findings(chain: ChainHypothesis) -> None:
-    """Apply chain metadata back onto the involved findings."""
+    """Apply chain metadata back onto the involved findings.
+
+    IMPORTANT: Does NOT overwrite severity_estimate. The chain severity is stored
+    as metadata (chain_severity_upgrade) and only applied after jury validation
+    via apply_chain_severity_upgrades().
+    """
     enabler = chain.enabler_finding
     blocked = chain.blocked_finding
 
@@ -301,16 +306,51 @@ def _apply_chain_to_findings(chain: ChainHypothesis) -> None:
     enabler.chain_role = "enabler"
     blocked.chain_role = "blocked"
 
-    # Severity upgrade on the blocked finding
+    # Store PROPOSED severity upgrade as metadata — do NOT overwrite severity_estimate yet.
+    # The actual upgrade happens in apply_chain_severity_upgrades() AFTER jury validation.
     blocked_rank = _SEVERITY_RANK.get(blocked.severity_estimate.upper(), 1)
     chain_rank = _SEVERITY_RANK.get(chain.chain_severity.upper(), 1)
     if chain_rank > blocked_rank:
-        original = blocked.severity_estimate
-        blocked.chain_severity_upgrade = f"{original} → {chain.chain_severity}"
-        blocked.severity_estimate = chain.chain_severity
+        blocked.chain_severity_upgrade = f"{blocked.severity_estimate} → {chain.chain_severity}"
+        # NOTE: We intentionally do NOT set blocked.severity_estimate = chain.chain_severity here.
+        # That caused CRITICAL labels on findings that the jury later rejected.
 
     # If the blocked finding was REFUTED/PARTIAL, upgrade to at least PARTIAL/CONTESTED
     if blocked.verdict in (FindingVerdict.REFUTED, "REFUTED"):
         blocked.verdict = FindingVerdict.PARTIAL
     elif blocked.verdict in (FindingVerdict.UNASSESSED, "UNASSESSED"):
         blocked.verdict = FindingVerdict.CONTESTED
+
+
+def apply_chain_severity_upgrades(findings: list[Finding]) -> None:
+    """Apply chain severity upgrades to findings that survived jury validation.
+
+    Call this AFTER jury deliberation. Only findings with verdict CONFIRMED or PARTIAL
+    get their severity upgraded. Rejected findings keep their original severity.
+    """
+    for finding in findings:
+        upgrade = getattr(finding, "chain_severity_upgrade", "")
+        if not upgrade or " → " not in upgrade:
+            continue
+
+        # Only upgrade severity for confirmed/partial findings
+        if finding.verdict not in (
+            FindingVerdict.CONFIRMED, "CONFIRMED",
+            FindingVerdict.PARTIAL, "PARTIAL",
+            FindingVerdict.CONTESTED, "CONTESTED",
+        ):
+            logger.info(
+                f"[Chain] Skipping severity upgrade for {finding.affected_contract}::"
+                f"{finding.affected_function} — verdict={finding.verdict}, upgrade={upgrade}"
+            )
+            continue
+
+        # Apply the upgrade
+        _, new_severity = upgrade.split(" → ", 1)
+        original = finding.severity_estimate
+        finding.severity_estimate = new_severity
+        logger.info(
+            f"[Chain] Post-jury severity upgrade: {finding.affected_contract}::"
+            f"{finding.affected_function}: {original} → {new_severity}"
+        )
+
