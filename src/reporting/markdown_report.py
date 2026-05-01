@@ -1,5 +1,6 @@
 from collections import defaultdict
 from datetime import datetime
+import re
 
 from src.models.finding import FindingStatus
 from src.utils.node_ids import normalize_node_id
@@ -21,6 +22,95 @@ def _assign_finding_ids(findings: list) -> list:
         prefix = _SEV_PREFIX.get(sev, "F")
         f.report_id = f"{prefix}-{counters[sev]:02d}"
     return findings
+
+
+def _normalize_vuln_class(vc: str) -> str:
+    """Normalize vulnerability class strings for dedup comparison.
+    
+    Maps variant names to a canonical form so that e.g.
+    'initializer_replay', 'Unprotected initializer ...', and
+    'Uninitialized Implementation ...' all collapse to the same key.
+    """
+    vc = vc.lower().strip()
+    # Strip common prefixes/suffixes
+    vc = re.sub(r'[^a-z0-9_]', '_', vc)
+    vc = re.sub(r'_+', '_', vc).strip('_')
+    
+    # Canonical mappings for common synonyms
+    _CANONICAL = {
+        'initializer_replay': 'initializer_frontrun',
+        'unprotected_initializer': 'initializer_frontrun',
+        'uninitialized_implementation': 'initializer_frontrun',
+        'initializer_frontrun': 'initializer_frontrun',
+        'access_control': 'access_control',
+        'unprotected_function': 'access_control',
+        'keeper_drain': 'admin_privilege',
+        'admin_privilege': 'admin_privilege',
+        'rug_pull': 'admin_privilege',
+    }
+    
+    # Check exact match first
+    if vc in _CANONICAL:
+        return _CANONICAL[vc]
+    
+    # Check substring match for longer titles
+    for pattern, canonical in _CANONICAL.items():
+        if pattern in vc:
+            return canonical
+    
+    return vc
+
+
+def _deduplicate_findings(findings: list) -> list:
+    """Merge findings that share the same (contract, function, vuln_class).
+    
+    Assigns root_cause_group to duplicates and keeps only the highest-confidence
+    representative per group. This prevents reports with 4 variants of the same
+    initializer bug submitted as separate findings.
+    """
+    # Build groups by (contract, function, normalized_vuln_class)
+    groups: dict[str, list] = {}
+    for f in findings:
+        norm_vc = _normalize_vuln_class(f.vulnerability_class or "")
+        key = f"{f.affected_contract}::{f.affected_function}::{norm_vc}"
+        groups.setdefault(key, []).append(f)
+    
+    deduplicated: list = []
+    for key, group in groups.items():
+        if len(group) == 1:
+            deduplicated.append(group[0])
+            continue
+        
+        # Sort by confidence (desc), then severity weight
+        sev_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+        group.sort(key=lambda f: (-f.confidence, sev_order.get(f.severity_estimate, 4)))
+        
+        # Keep the best representative
+        best = group[0]
+        # Assign root_cause_group label
+        rcg_label = f"{best.affected_contract}::{best.affected_function} ({_normalize_vuln_class(best.vulnerability_class or '')})"
+        best.root_cause_group = rcg_label
+        
+        # Absorb info from duplicates into the best finding's description
+        dup_titles = [f.title for f in group[1:] if f.title and f.title != best.title]
+        if dup_titles:
+            dedup_note = "Also reported as: " + "; ".join(dup_titles)
+            if best.impact:
+                best.impact = best.impact + "\n\n" + dedup_note
+            else:
+                best.impact = dedup_note
+        
+        # Use highest severity from the group
+        for f in group:
+            if sev_order.get(f.severity_estimate, 4) < sev_order.get(best.severity_estimate, 4):
+                best.severity_estimate = f.severity_estimate
+        
+        deduplicated.append(best)
+        
+        merged_count = len(group) - 1
+        print(f"  [Dedup] Merged {merged_count} duplicate(s) into {best.report_id or best.id[:8]}: {rcg_label}")
+    
+    return deduplicated
 
 
 def _group_by_root_cause(findings: list) -> list[list]:
@@ -51,6 +141,9 @@ def render_markdown_report(
 ) -> str:
     """Returns a Markdown report suitable for HackerOne / Immunefi submission."""
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+
+    # Deduplicate findings sharing the same root cause before assigning IDs
+    findings = _deduplicate_findings(findings)
 
     # Assign clean IDs
     findings = _assign_finding_ids(findings)
@@ -94,7 +187,9 @@ def render_markdown_report(
         lines.append(f"| {sev} | {c['total']} | {c['proven']} |")
 
     # Jury summary
-    jury_confirmed = sum(1 for f in findings if getattr(f, "jury_decision", "") in ("CONFIRMED", "CONFIRMED_UNPROVABLE", "ESCALATE"))
+    # FIX: ESCALATE means jurors disagreed — do NOT count as Confirmed.
+    # ESCALATE is already counted in its own row below.
+    jury_confirmed = sum(1 for f in findings if getattr(f, "jury_decision", "") in ("CONFIRMED", "CONFIRMED_UNPROVABLE"))
     jury_rejected_count = len(jury_rejected) if jury_rejected else 0
     jury_unprovable_count = sum(1 for f in findings if getattr(f, "jury_decision", "") == "CONFIRMED_UNPROVABLE")
 
@@ -320,15 +415,23 @@ def _render_finding(finding, leads: list[dict]) -> list[str]:
     if finding.impact:
         lines += ["### Impact", "", finding.impact, ""]
 
-    # v2: RAG references
+    # v2: RAG references (deduplicated by source path)
     rag_matches = getattr(finding, "rag_matches", []) or []
     if rag_matches:
-        lines.append("### Historical References (RAG)\n")
-        for m in rag_matches[:3]:
+        seen_sources: set[str] = set()
+        unique_matches: list[dict] = []
+        for m in rag_matches:
             source = m.get("source", "Unknown")
-            snippet = m.get("snippet", "")[:120]
-            lines.append(f"- **{source}**: {snippet}...")
-        lines.append("")
+            if source not in seen_sources:
+                seen_sources.add(source)
+                unique_matches.append(m)
+        if unique_matches:
+            lines.append("### Historical References (RAG)\n")
+            for m in unique_matches[:3]:
+                source = m.get("source", "Unknown")
+                snippet = m.get("snippet", "")[:120]
+                lines.append(f"- **{source}**: {snippet}...")
+            lines.append("")
 
     # PoC code
     test_code = _find_test_code(finding, leads)
@@ -343,9 +446,7 @@ def _render_finding(finding, leads: list[dict]) -> list[str]:
             "### Reproduction",
             "",
             "```bash",
-            f'forge test --match-path "test/ExploitTest_{finding.affected_contract}'
-            f'_{finding.affected_function}.t.sol" \\',
-            '           --match-test test_exploit -vvv',
+            'forge test --match-test test_exploit -vvv',
             "```",
             "",
         ]

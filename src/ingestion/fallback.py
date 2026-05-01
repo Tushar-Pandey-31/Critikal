@@ -59,9 +59,22 @@ class FallbackCompiler:
         Returns a ClusterResult with the Slither object on success,
         or error details on failure.
         """
-        # Ensure correct solc version for this cluster
+        # Ensure correct solc version for this cluster. If the install/switch
+        # fails (e.g. slow GitHub download, unavailable version) we MUST stop
+        # here — otherwise compilation silently runs against whatever solc is
+        # globally active and produces misleading "requires different compiler
+        # version" errors downstream.
         if cluster.solc_version:
-            self.solc_manager.ensure_version(cluster.solc_version)
+            if not self.solc_manager.ensure_version(cluster.solc_version):
+                return ClusterResult(
+                    cluster_id=cluster.cluster_id,
+                    success=False,
+                    error=(
+                        f"solc {cluster.solc_version} unavailable: solc-select "
+                        f"install/switch failed (network issue or invalid version). "
+                        f"Run `solc-select install {cluster.solc_version}` manually."
+                    ),
+                )
 
         # Determine framework-specific args
         framework = cluster.framework

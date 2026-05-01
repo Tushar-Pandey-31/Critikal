@@ -142,11 +142,12 @@ class InvariantHunterWorker(WorkerAgent):
     Produces WorkerOutput objects compatible with the existing finding pipeline.
     """
 
-    model_name: str = "gemini-2.5-flash"
-
-    def __init__(self, llm_client: Any, model_name: str = "gemini-2.5-flash"):
+    def __init__(self, llm_client: Any, model_name: str | None = None):
         self.llm = llm_client
-        self.model_name = model_name
+        self.model_name = model_name or os.getenv(
+            "SEMANTIC_MODEL_NAME",
+            os.getenv("WORKER_MODEL_NAME", "gemini-3-flash-preview"),
+        )
 
     def get_worker_type(self) -> str:
         return "invariant_hunter"
@@ -161,6 +162,7 @@ class InvariantHunterWorker(WorkerAgent):
         """
         sol_files = task.context.get("sol_files", [])
         recon_context = task.context.get("recon_context", {})
+        max_chars = int(task.context.get("max_chars", 30000))
 
         if not sol_files:
             return WorkerOutput(
@@ -170,8 +172,7 @@ class InvariantHunterWorker(WorkerAgent):
                 confidence=0,
             )
 
-        # Read source files (cap at ~30k chars to stay within context window)
-        source_text = self._read_source_files(sol_files, max_chars=30000)
+        source_text = self._read_source_files(sol_files, max_chars=max_chars)
 
         # Build prompt
         protocol_type = recon_context.get("protocol_type", "unknown")
@@ -332,31 +333,66 @@ def _collect_sol_files(repo_path: str, max_files: int = 50) -> list[str]:
 async def run_semantic_discovery(
     repo_path: str,
     llm_client: Any,
-    model_name: str = "gemini-2.5-flash",
+    model_name: str | None = None,
     recon_context: dict | None = None,
+    sol_files: list[str] | None = None,
+    agents: list[str] | None = None,
+    max_chars: int | None = None,
 ) -> list[WorkerOutput]:
     """
-    Entry point for semantic discovery. Called by coordinator_node when
-    SEMANTIC_DISCOVERY_ENABLED=true.
+    Entry point for semantic discovery.
 
-    Runs four parallel agents, each specializing in a different 0-day class:
-    1. InvariantHunterWorker — protocol invariant violations
-    2. EconomicAttackerWorker — flash loan / sandwich / price manipulation
-    3. TrustBoundaryAnalyzer — privilege escalation / proxy abuse
-    4. CrossContractStateChecker — cross-contract reentrancy / stale state
+    Args:
+      sol_files: Explicit list of .sol files to analyze. When the caller (the
+        agent brain) has already done recon and knows which contracts matter,
+        pass them here — the workers will focus ONLY on these files. Paths
+        may be absolute or repo-relative.
+        When None, falls back to auto-collecting up to 50 largest non-test
+        files from the repo (legacy behavior).
+      agents: Subset of agents to run. Options: invariant_hunter,
+        economic_attacker, trust_boundary, cross_contract. None = run all.
+      max_chars: Override per-worker source-budget cap. Auto-selected based
+        on whether files were curated (more budget) or auto-collected (less).
 
-    Returns list of WorkerOutput objects (one per agent that found something).
+    Runs up to four parallel agents, each specializing in a different 0-day class.
+    Returns list of WorkerOutput objects (one per agent that produced a finding).
     """
-    sol_files = _collect_sol_files(repo_path)
+    focused_mode = bool(sol_files)
+
+    if sol_files:
+        # Caller supplied an explicit file list. Resolve any relative paths
+        # against repo_path and drop missing files (with a warning).
+        resolved: list[str] = []
+        missing: list[str] = []
+        for f in sol_files:
+            abs_path = f if os.path.isabs(f) else os.path.join(repo_path, f)
+            if os.path.isfile(abs_path):
+                resolved.append(os.path.abspath(abs_path))
+            else:
+                missing.append(f)
+        if missing:
+            print(f"[Semantic] Ignoring {len(missing)} missing file(s): {missing[:3]}...")
+        sol_files = resolved
+
+    if not sol_files:
+        sol_files = _collect_sol_files(repo_path)
+
     if not sol_files:
         print("[Semantic] No .sol files found in repo — skipping semantic discovery")
         return []
 
-    print(f"[Semantic] Found {len(sol_files)} .sol file(s) for semantic analysis")
+    mode = "FOCUSED" if focused_mode else "AUTO"
+    print(f"[Semantic] {mode} mode: {len(sol_files)} .sol file(s) for analysis")
+
+    # Focused mode = curated inputs; workers get a larger per-call budget so
+    # the brain's selected files are read in full instead of truncated.
+    if max_chars is None:
+        max_chars = 80000 if focused_mode else 30000
 
     context = {
         "sol_files": sol_files,
         "recon_context": recon_context or {},
+        "max_chars": max_chars,
     }
 
     # Instantiate all agents
@@ -370,29 +406,29 @@ async def run_semantic_discovery(
     trust = TrustBoundaryAnalyzer(llm_client=llm_client, model_name=model_name)
     cross = CrossContractStateChecker(llm_client=llm_client, model_name=model_name)
 
-    # Build tasks
-    tasks = [
-        ("InvariantHunter", hunter, WorkerTask(
-            task_id="semantic_invariant_hunt",
-            task_type="semantic_discovery",
-            context=context,
-        )),
-        ("EconomicAttacker", economic, WorkerTask(
-            task_id="semantic_economic_attack",
-            task_type="semantic_discovery",
-            context=context,
-        )),
-        ("TrustBoundary", trust, WorkerTask(
-            task_id="semantic_trust_boundary",
-            task_type="semantic_discovery",
-            context=context,
-        )),
-        ("CrossContract", cross, WorkerTask(
-            task_id="semantic_cross_contract",
-            task_type="semantic_discovery",
-            context=context,
-        )),
+    all_tasks = [
+        ("invariant_hunter", "InvariantHunter", hunter, "semantic_invariant_hunt"),
+        ("economic_attacker", "EconomicAttacker", economic, "semantic_economic_attack"),
+        ("trust_boundary", "TrustBoundary", trust, "semantic_trust_boundary"),
+        ("cross_contract", "CrossContract", cross, "semantic_cross_contract"),
     ]
+
+    if agents:
+        selected = {a.strip().lower() for a in agents}
+        all_tasks = [t for t in all_tasks if t[0] in selected]
+
+    tasks = [
+        (display_name, worker, WorkerTask(
+            task_id=task_id,
+            task_type="semantic_discovery",
+            context=context,
+        ))
+        for _, display_name, worker, task_id in all_tasks
+    ]
+
+    if not tasks:
+        print("[Semantic] No agents selected — returning early")
+        return []
 
     print(f"[Semantic] Launching {len(tasks)} semantic agent(s) in parallel...")
 

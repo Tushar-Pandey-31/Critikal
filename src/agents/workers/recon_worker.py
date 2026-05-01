@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import re
 from pathlib import Path
 from src.agents.base_worker import WorkerAgent, WorkerOutput, WorkerTask
@@ -105,15 +106,23 @@ class ReconWorker(WorkerAgent):
         raw_output contains full ReconReport
     """
 
-    model_name: str = "gemini-2.5-flash"
-
     def get_worker_type(self) -> str:
         return "recon"
 
-    def __init__(self, graph, llm_client, etherscan_client: EtherscanClient | None = None):
+    def __init__(
+        self,
+        graph,
+        llm_client,
+        etherscan_client: EtherscanClient | None = None,
+        model_name: str | None = None,
+    ):
         self.graph = graph
         self.llm = llm_client
         self.etherscan = etherscan_client or EtherscanClient()  # auto-stubs if no key
+        self.model_name = model_name or os.getenv(
+            "RECON_MODEL_NAME",
+            os.getenv("WORKER_MODEL_NAME", "gemini-3-flash-preview"),
+        )
 
     async def run(self, task: WorkerTask) -> WorkerOutput:
         input_data = task.context

@@ -150,7 +150,7 @@ class TestGlobalRateLimiter(unittest.TestCase):
         with patch.dict(os.environ, {"RATE_LIMIT_TIER": "free"}, clear=False):
             # Clear the override if set
             os.environ.pop("RATE_LIMIT_RPM_OVERRIDE", None)
-            limits = _resolve_limits("gemini-2.5-flash")
+            limits = _resolve_limits("gemini-3-flash-preview")
             self.assertEqual(limits["rpm"], 10)
             self.assertEqual(limits["tpm"], 250_000)
 
@@ -166,8 +166,8 @@ class TestGlobalRateLimiter(unittest.TestCase):
         from src.utils.rate_limiter import get_rate_limiter
         os.environ.pop("RATE_LIMIT_RPM_OVERRIDE", None)
         limiter = get_rate_limiter()
-        limiter.acquire_sync("gemini-2.5-flash", "testkey")
-        status = limiter.get_status("gemini-2.5-flash", "testkey")
+        limiter.acquire_sync("gemini-3-flash-preview", "testkey")
+        status = limiter.get_status("gemini-3-flash-preview", "testkey")
         self.assertEqual(status["rpm_used"], 1)
         self.assertGreater(status["rpm_remaining"], 0)
 
@@ -196,13 +196,13 @@ class TestRateLimitedLLM(unittest.TestCase):
         from src.utils.rate_limiter import RateLimitedLLM, get_rate_limiter
 
         mock_llm = MagicMock()
-        mock_llm.model = "gemini-2.5-flash"
+        mock_llm.model = "gemini-3-flash-preview"
         mock_llm.invoke.return_value = "response_text"
 
         wrapper = RateLimitedLLM(
             llm=mock_llm,
             limiter=get_rate_limiter(),
-            model_name="gemini-2.5-flash",
+            model_name="gemini-3-flash-preview",
         )
         result = wrapper.invoke("test prompt")
 
@@ -215,7 +215,7 @@ class TestRateLimitedLLM(unittest.TestCase):
         from src.utils.rate_limiter import RateLimitedLLM, get_rate_limiter
 
         mock_llm = MagicMock()
-        mock_llm.model = "gemini-2.5-flash"
+        mock_llm.model = "gemini-3-flash-preview"
 
         async def mock_ainvoke(*args, **kwargs):
             return "async_response"
@@ -225,7 +225,7 @@ class TestRateLimitedLLM(unittest.TestCase):
         wrapper = RateLimitedLLM(
             llm=mock_llm,
             limiter=get_rate_limiter(),
-            model_name="gemini-2.5-flash",
+            model_name="gemini-3-flash-preview",
         )
 
         result = asyncio.run(wrapper.ainvoke("test prompt"))
@@ -244,7 +244,7 @@ class TestRateLimitedLLM(unittest.TestCase):
         initial_key = pool.get_key("gemini")
 
         mock_llm = MagicMock()
-        mock_llm.model = "gemini-2.5-flash"
+        mock_llm.model = "gemini-3-flash-preview"
         call_count = 0
 
         def side_effect(*args, **kwargs):
@@ -261,7 +261,7 @@ class TestRateLimitedLLM(unittest.TestCase):
             limiter=get_rate_limiter(),
             key_pool=pool,
             provider="gemini",
-            model_name="gemini-2.5-flash",
+            model_name="gemini-3-flash-preview",
         )
         wrapper.set_key(initial_key)
 
@@ -275,13 +275,13 @@ class TestRateLimitedLLM(unittest.TestCase):
         from src.utils.rate_limiter import RateLimitedLLM, get_rate_limiter
 
         mock_llm = MagicMock()
-        mock_llm.model = "gemini-2.5-flash"
+        mock_llm.model = "gemini-3-flash-preview"
         mock_llm.some_custom_attr = "hello"
 
         wrapper = RateLimitedLLM(
             llm=mock_llm,
             limiter=get_rate_limiter(),
-            model_name="gemini-2.5-flash",
+            model_name="gemini-3-flash-preview",
         )
         self.assertEqual(wrapper.some_custom_attr, "hello")
 

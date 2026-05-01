@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Any, List
+from typing import Any, Dict, List
 import logging
 
 from src.agents.base_worker import WorkerOutput
@@ -145,18 +145,32 @@ class Finding:
             f"→ {self.plausibility_score} ({reason})"
         )
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializable dict view — used by report/export paths.
+
+        `dataclasses.asdict` recurses into nested dataclasses (e.g.
+        `EvidenceNode`). Enum members are coerced to their string values so the
+        result is JSON-serializable without a custom encoder.
+        """
+        data = asdict(self)
+        for k, v in list(data.items()):
+            if isinstance(v, Enum):
+                data[k] = v.value
+        return data
+
     def compute_mechanical_confidence(self) -> int:
         """
-        Composite = Evidence×0.35 + Consensus×0.25 + RAG×0.2 + LLM_raw×0.2
+        Composite = Evidence×0.40 + Consensus×0.30 + LLM_raw×0.30
         Evidence = max weight of any tag present
+        RAG match is informational only — displayed in reports but does not
+        inflate the confidence score (historical precedent ≠ current vuln).
         """
         tag_weights = [EVIDENCE_TAG_WEIGHTS.get(t, 0.0) for t in self.evidence_tags]
         evidence_score = max(tag_weights) if tag_weights else 0.2
-        rag_score = self.confidence_rag_match / 100
         consensus_score = self.confidence_consensus / 100
         llm_score = self.confidence_evidence / 100
-        composite = (evidence_score * 0.35 + consensus_score * 0.25 +
-                     rag_score * 0.2 + llm_score * 0.2)
+        composite = (evidence_score * 0.40 + consensus_score * 0.30 +
+                     llm_score * 0.30)
         return min(100, round(composite * 100))
 
     @classmethod

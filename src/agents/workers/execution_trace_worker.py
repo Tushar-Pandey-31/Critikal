@@ -318,7 +318,7 @@ Return ONLY the JSON object.
                 # Token tracking
                 try:
                     from src.utils.token_counter import get_token_counter
-                    model_name = os.getenv("EXECUTION_TRACE_MODEL_NAME", "gemini-2.5-pro")
+                    model_name = os.getenv("EXECUTION_TRACE_MODEL_NAME", "gemini-3-flash-preview")
                     input_text = "\n".join(
                         m.get("content", "") if isinstance(m, dict) else str(m)
                         for m in messages

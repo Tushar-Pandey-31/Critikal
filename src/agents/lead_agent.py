@@ -30,7 +30,7 @@ from src.agents.workers.recon_worker import ReconWorker
 from src.agents.workers.attack_hypothesis_worker import AttackHypothesisWorker
 from src.agents.workers.test_writer_worker import TestWriterWorker
 from src.models.finding import Finding, FindingStatus, FindingVerdict
-from src.utils.graph_queries import get_high_risk_hotspots, get_function_context, get_contract_signatures
+from src.utils.graph_queries import get_high_risk_hotspots, get_function_context, get_contract_signatures, get_callers
 from src.utils.node_ids import normalize_node_id
 from src.tools.etherscan_client import EtherscanClient
 from src.pipeline_config import get_config, PipelineConfig
@@ -68,6 +68,10 @@ try:
     from langchain_openai import ChatOpenAI
 except ImportError:
     ChatOpenAI = None
+
+# Provider detection + worker LLM construction moved to src/llm/providers.py.
+# Re-exported here for backward compatibility with existing call sites.
+from src.llm.providers import get_worker_llm, detect_provider as _detect_provider  # noqa: F401
 
 
 def _finding_priority(f: Finding) -> tuple:
@@ -228,7 +232,7 @@ def set_tools(tools: List[Any]):
 
 
 def get_llm(
-    model_name: str = os.getenv("MODEL_NAME", "gemini-2.5-pro"),
+    model_name: str = os.getenv("MODEL_NAME", "gemini-3-flash-preview"),
     temperature: float = 0.0,
     bind_tools: bool = True,
 ):
@@ -251,125 +255,8 @@ def get_llm(
     return llm
 
 
-def _detect_provider(model_name: str) -> str:
-    """Detect LLM provider from model name string."""
-    m = model_name.lower()
-    if m.startswith("gemini") or m.startswith("models/gemini"):
-        return "gemini"
-    if m.startswith("gpt") or m.startswith("o1") or m.startswith("o3") or m.startswith("o4"):
-        return "openai"
-    if m.startswith("claude"):
-        return "anthropic"
-    if m.startswith("grok"):
-        return "xai"
-    if m.startswith("openrouter/") or "/" in m:
-        # OpenRouter model names use the format "provider/model-name"
-        # e.g. "anthropic/claude-3.5-sonnet", "openrouter/anthropic/claude-3.5-sonnet"
-        return "openrouter"
-    return "gemini"  # default
-
-
-def get_worker_llm(
-    model_name: str = os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"),
-    temperature: float = 0.0,
-):
-    """
-    Returns a rate-limited LLM with NO tools bound.
-    Workers MUST use this. Never pass coordinator_llm to workers.
-
-    The returned object is a RateLimitedLLM wrapper that transparently
-    handles RPM throttling and API key rotation.
-    """
-    from src.utils.rate_limiter import get_rate_limiter, RateLimitedLLM
-    from src.utils.key_pool import get_key_pool
-
-    timeout = float(os.getenv("WORKER_LLM_TIMEOUT", "180"))
-    max_retries = int(os.getenv("WORKER_LLM_MAX_RETRIES", "0"))
-    provider = _detect_provider(model_name)
-    key_pool = get_key_pool()
-
-    # Get the next available API key from the pool
-    try:
-        api_key = key_pool.get_key(provider)
-    except ValueError:
-        # No keys in pool — fall back to default env var behavior
-        api_key = None
-
-    if provider == "anthropic":
-        if not ChatAnthropic:
-            raise ImportError("langchain-anthropic is not installed. Run: pip install langchain-anthropic")
-        llm = ChatAnthropic(
-            model=model_name,
-            temperature=temperature,
-            timeout=timeout,
-            api_key=api_key or os.getenv("ANTHROPIC_API_KEY"),
-        )
-    elif provider == "openrouter":
-        # OpenRouter exposes an OpenAI-compatible API. Pass the model name as-is.
-        # Strip optional "openrouter/" prefix so the model ID is clean.
-        if not ChatOpenAI:
-            raise ImportError("langchain-openai is not installed.")
-        clean_model = model_name.removeprefix("openrouter/") if model_name.lower().startswith("openrouter/") else model_name
-        llm = ChatOpenAI(
-            model=clean_model,
-            temperature=temperature,
-            timeout=timeout,
-            openai_api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
-            openai_api_base="https://openrouter.ai/api/v1",
-            default_headers={
-                "HTTP-Referer": "https://github.com/critikal",
-                "X-Title": "Critikal",
-            },
-            max_tokens=int(os.getenv("OPENROUTER_MAX_TOKENS", "16384")),
-        )
-    elif provider == "xai":
-        if not ChatOpenAI:
-            raise ImportError("langchain-openai is not installed.")
-        llm = ChatOpenAI(
-            model=model_name,
-            temperature=temperature,
-            timeout=timeout,
-            openai_api_key=api_key or os.getenv("XAI_API_KEY"),
-            openai_api_base="https://api.x.ai/v1",
-        )
-    elif provider == "openai":
-        if not ChatOpenAI:
-            raise ImportError("langchain-openai is not installed.")
-        llm = ChatOpenAI(
-            model=model_name,
-            temperature=temperature,
-            timeout=timeout,
-            openai_api_key=api_key or os.getenv("OPENAI_API_KEY"),
-        )
-    else:
-        # Default: Gemini
-        transport = os.getenv("WORKER_LLM_TRANSPORT", "rest")
-        kwargs: dict[str, Any] = {
-            "model": model_name,
-            "temperature": temperature,
-            "timeout": timeout,
-            "request_timeout": timeout,
-            "max_retries": max_retries,
-            "transport": transport,
-        }
-        if api_key:
-            kwargs["google_api_key"] = api_key
-        llm = ChatGoogleGenerativeAI(**kwargs)
-
-    # Wrap with rate limiter
-    limiter = get_rate_limiter()
-    wrapped = RateLimitedLLM(
-        llm=llm,
-        limiter=limiter,
-        key_pool=key_pool,
-        provider=provider,
-        model_name=model_name,
-    )
-    if api_key:
-        wrapped.set_key(api_key)
-
-    logger.info(f"[get_worker_llm] {model_name} (provider={provider})")
-    return wrapped
+# get_worker_llm and _detect_provider now live in src/llm/providers.py
+# and are re-exported at the top of this file for backward compatibility.
 
 
 # ════════════════════════════════════════════════════════════
@@ -476,6 +363,29 @@ def should_escalate_to_human(
             )
 
     return False, None
+
+
+# ════════════════════════════════════════════════════════════
+#  HELPERS
+# ════════════════════════════════════════════════════════════
+
+def _build_caller_context(graph, hotspot_node_id: str) -> list[dict]:
+    """Extract all callers of a hotspot and their access control status."""
+    if not graph or not hotspot_node_id:
+        return []
+    try:
+        callers = get_callers(graph, hotspot_node_id)
+        result = []
+        for caller_id in callers:
+            node_data = graph.nodes.get(caller_id, {})
+            result.append({
+                "caller": caller_id,
+                "is_protected": node_data.get("is_protected", False),
+                "access_control_type": node_data.get("access_control_type", "none"),
+            })
+        return result
+    except Exception:
+        return []
 
 
 # ════════════════════════════════════════════════════════════
@@ -696,7 +606,7 @@ async def coordinator_node(state: AgentState):
         if _execution_trace_enabled:
             try:
                 from src.agents.workers.execution_trace_worker import ExecutionTraceWorker
-                exec_trace_model = os.getenv("EXECUTION_TRACE_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-2.5-flash"))
+                exec_trace_model = os.getenv("EXECUTION_TRACE_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-3-flash-preview"))
                 exec_trace_llm = get_worker_llm(model_name=exec_trace_model)
                 execution_trace_worker = ExecutionTraceWorker(
                     graph=state["graph"],
@@ -1164,6 +1074,18 @@ async def coordinator_node(state: AgentState):
                 finding._jury_confirmed = True   # still confirmed — always to TestWriter
                 print(f"  [Jury] ~ CONFIRMED_UNPROVABLE: {finding.hotspot_node_id} — {judge_output.unprovable_reason[:80]}")
 
+                # Downgrade severity if preconditions require privileged role compromise
+                _privilege_keywords = ["admin", "router", "owner", "compromise", "malicious",
+                                       "privileged", "operator", "governance", "multisig"]
+                if finding.preconditions_missing:
+                    _pre_text = " ".join(finding.preconditions_missing).lower()
+                    if any(kw in _pre_text for kw in _privilege_keywords):
+                        _sev_map = {"CRITICAL": "HIGH", "HIGH": "MEDIUM", "MEDIUM": "MEDIUM", "LOW": "LOW"}
+                        _orig_sev = finding.severity_estimate
+                        finding.severity_estimate = _sev_map.get(_orig_sev, _orig_sev)
+                        logger.info(f"[Jury] Severity downgraded {_orig_sev} → {finding.severity_estimate} (unmet privilege precondition)")
+                        print(f"  [Jury] ↓ Severity {_orig_sev} → {finding.severity_estimate} (requires privileged role)")
+
             elif decision == "ESCALATE":
                 confirmed_findings.append(finding)
                 setattr(finding, "jury_escalate", True)
@@ -1573,6 +1495,7 @@ async def coordinator_node(state: AgentState):
                     "exploit_sequence": exploit_seq,
                     "jury_brief": jury_briefs.get(finding.hotspot_node_id, {}),
                     "jury_unprovable": getattr(finding, "jury_unprovable", False),
+                    "caller_context": _build_caller_context(state.get("graph"), finding.hotspot_node_id),
                 }
             )
             test_tasks.append(task)

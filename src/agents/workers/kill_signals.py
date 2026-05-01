@@ -33,6 +33,32 @@ class KillSignalResult:
     explanation: str           # Why this kills the finding
 
 
+_SIGNATURE_HEAD_CHARS = 500  # look at the header, not the body, for modifier checks
+
+
+def _function_signature_region(code: str, function_name: str = "") -> str:
+    """Return the signature portion (up to the opening `{`) of the target function.
+
+    Kill signals care about modifiers declared on the function signature — not
+    about tokens that happen to appear anywhere in the body (which can match
+    identifiers in strings, comments, or unrelated helper calls). When the
+    caller provides `function_name`, we carve out its signature window;
+    otherwise we fall back to the first signature in the blob.
+    """
+    if not code:
+        return ""
+    if function_name:
+        m = re.search(
+            rf'function\s+{re.escape(function_name)}\s*\([^)]*\)[^{{;]*',
+            code,
+        )
+        if m:
+            return m.group(0)
+    # Fallback: first function signature in the blob.
+    m = re.search(r'function\s+\w+\s*\([^)]*\)[^{;]*', code)
+    return m.group(0) if m else code[:_SIGNATURE_HEAD_CHARS]
+
+
 def check_kill_signals(
     vulnerability_class: str,
     source_code: str,
@@ -46,29 +72,34 @@ def check_kill_signals(
     results = []
     vuln = vulnerability_class.lower().replace(" ", "_").replace("-", "_")
     code = source_code or ""
+    signature = _function_signature_region(code, function_name)
 
     # ── Reentrancy / CEI Violation ──────────────────────────────
     if vuln in ("reentrancy", "cei_violation", "cross_contract_reentrancy"):
-        # Check for nonReentrant modifier
-        if re.search(r'\bnonReentrant\b', code):
+        # nonReentrant must appear on the target function's signature — a
+        # stray `nonReentrant` inside the body (string, comment, nested
+        # helper call) does not protect this function.
+        if re.search(r'\bnonReentrant\b', signature):
             results.append(KillSignalResult(
                 triggered=True,
                 signal_name="NONREENTRANT",
-                evidence="nonReentrant modifier found",
+                evidence="nonReentrant modifier on function signature",
                 confidence_cap=20,
                 explanation=(
-                    "Function or contract uses ReentrancyGuard (nonReentrant modifier). "
-                    "This blocks standard reentrancy attacks. Check if ALL cross-callable "
-                    "functions also have this guard before fully dismissing."
+                    "Function uses ReentrancyGuard (nonReentrant modifier on signature). "
+                    "This blocks standard single-function reentrancy. Check if ALL "
+                    "cross-callable functions also have this guard before dismissing."
                 ),
             ))
 
-        # Check for ReentrancyGuard import/inheritance
-        if re.search(r'ReentrancyGuard', code):
+        # Contract-level inheritance: still useful as a weaker signal. Require
+        # `is ... ReentrancyGuard` so we don't trip on identifiers inside
+        # string literals.
+        if re.search(r'\bis\b[^{]*\bReentrancyGuard\b', code):
             results.append(KillSignalResult(
                 triggered=True,
                 signal_name="REENTRANCY_GUARD_INHERITED",
-                evidence="ReentrancyGuard contract inherited",
+                evidence="Contract inherits ReentrancyGuard",
                 confidence_cap=25,
                 explanation=(
                     "Contract inherits ReentrancyGuard. Verify the modifier is applied "

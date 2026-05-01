@@ -1,10 +1,14 @@
 [tool.poetry]
-name = "Critikal"
+name = "critikal"
 version = "0.1.0"
-description = "Critikal: AI-Assisted Smart Contract Security System"
-authors = ["tuxsharx <tuxsharx@gmail.com>"]
+description = "Critikal: autonomous smart contract security research agent"
+authors = ["Critikal Contributors"]
 readme = "README.md"
+license = "MIT"
 packages = [{ include = "src" }]
+
+[tool.poetry.scripts]
+critikal = "src.cli:main"
 
 [tool.poetry.dependencies]
 python = ">=3.12.1,<3.13"
@@ -31,16 +35,39 @@ langgraph = "^0.3.0"
 # Embeddings
 sentence-transformers = "^3.0.0"
 
+# HTTP / config / CLI UX
+requests = "^2.32.0"
+PyYAML = "^6.0.1"
+rich = ">=13.7.0,<15.0.0"
+
+# TUI (default interactive mode)
+textual = { version = ">=8.2.3,<9.0.0", extras = ["syntax"] }
+
 # Utilities
 pypdf = "^4.0.0"
 python-dotenv = "1.0.1"
+apscheduler = "^3.10.0"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
-[dependency-groups]
-dev = [
-    "pytest (>=9.0.2,<10.0.0)",
-    "pytest-asyncio (>=1.3.0,<2.0.0)"
+[tool.poetry.group.dev.dependencies]
+pytest = ">=9.0.2,<10.0.0"
+pytest-asyncio = ">=1.3.0,<2.0.0"
+pytest-timeout = ">=2.3.0,<3.0.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Don't walk into cloned target repos or build artifacts — they ship their own
+# pytest suites (solady/wake etc.) that pull in deps we don't carry.
+norecursedirs = [
+    "data",
+    "data/scratch",
+    "benchmarks",
+    "proven_exploits",
+    ".venv",
+    "dist",
+    "build",
+    "node_modules",
 ]

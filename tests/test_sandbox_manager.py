@@ -36,16 +36,19 @@ def test_setup_foundry_project_failure(mock_run):
 
 def test_write_test_file():
     manager = SandboxManager()
-    
+
     filename = "test_sub/MyTest.t.sol"
     content = "contract MyTest {}"
-    
+
     manager.write_test_file(filename, content)
-    
+
     file_path = manager.tmp_dir / filename
     assert file_path.exists()
-    assert file_path.read_text(encoding='utf-8') == content
-    
+    written = file_path.read_text(encoding='utf-8')
+    # SPDX header is auto-prepended if missing
+    assert "SPDX-License-Identifier" in written
+    assert "contract MyTest {}" in written
+
     manager.cleanup()
 
 @patch('subprocess.run')

@@ -22,10 +22,13 @@ class RepoManager:
         func(path)
 
     def _normalize_repo_url(self, url: str) -> str:
-        """Convert GitHub HTTPS URLs to standard .git format if needed."""
+        """Convert GitHub HTTPS URLs to SSH format for auth, .git suffix if needed."""
         if url.startswith("https://github.com/"):
-            if not url.endswith(".git"):
-                return f"{url}.git"
+            # Convert to SSH: git@github.com:owner/repo.git
+            path = url.removeprefix("https://github.com/")
+            if path.endswith(".git"):
+                return f"git@github.com:{path}"
+            return f"git@github.com:{path}.git"
         return url
 
     def clone_repo(self, url: str) -> str:
@@ -67,12 +70,15 @@ class RepoManager:
             _init_submodules(target_path)
         else:
             _clone_timeout = int(os.environ.get("CLONE_TIMEOUT", "300"))
+            # Prevent git from hanging on interactive credential prompts
+            _env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
             try:
                 subprocess.run(
                     ["git", "clone", "--depth", "1", "--recurse-submodules", "--shallow-submodules", url, target_path],
                     check=True,
                     capture_output=True,
                     timeout=_clone_timeout,
+                    env=_env,
                 )
                 print("Clone successful (with submodules).")
             except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
@@ -80,14 +86,15 @@ class RepoManager:
                     print(f"Warning: Clone with submodules failed. Error: {e.stderr.decode('utf-8') if e.stderr else 'Unknown'}. Retrying without submodules...")
                 else:
                     print("Warning: Clone timed out. Retrying without submodules...")
-                
+
                 if os.path.exists(target_path):
                     shutil.rmtree(target_path, ignore_errors=True)
-                
+
                 subprocess.run(
                     ["git", "clone", "--depth", "1", url, target_path],
                     check=True, capture_output=True,
                     timeout=_clone_timeout,
+                    env=_env,
                 )
                 _init_submodules(target_path)
             _init_submodules(target_path)

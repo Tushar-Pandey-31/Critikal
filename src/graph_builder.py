@@ -346,7 +346,7 @@ class GraphBuilder:
                         if self.graph.has_node(t_cname) and hasattr(target_func, "name"):
                             target_id = f"{t_cname}::{target_func.name}"
                             if self.graph.has_node(target_id):
-                                self.graph.add_edge(caller_id, target_id, type="CROSS_CONTRACT_CALL")
+                                self.graph.add_edge(caller_id, target_id, relationship="CROSS_CONTRACT_CALL", call_type="cross_contract")
                                 self.graph.nodes[target_id]["reachable_from_cross_contract"] = True
 
     def _add_state_access_edges(self, contract, function):

@@ -289,6 +289,18 @@ Use get_high_risk_hotspots() to identify the highest-priority targets, then form
     print("Done.")
 
 def main():
+    import warnings
+    warnings.warn(
+        "src.main is the legacy LangGraph pipeline and is deprecated. "
+        "Use 'python -m src.cli --repo <url>' for the new agentic system. "
+        "This entry point will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    print("=" * 60)
+    print("⚠️  LEGACY MODE — Using old LangGraph pipeline")
+    print("   New agent: python -m src.cli --repo <url>")
+    print("=" * 60)
     asyncio.run(async_main())
 
 if __name__ == "__main__":

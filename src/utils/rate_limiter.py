@@ -47,17 +47,12 @@ _MODEL_LIMITS: dict[str, dict[str, dict[str, int]]] = {
         "free":    {"rpm": 10,  "tpm": 250_000,   "rpd": 500},
         "paid_t1": {"rpm": 300, "tpm": 1_000_000, "rpd": 1_500},
     },
-    "gemini-2.5-pro": {
-        "free":    {"rpm": 5,   "tpm": 250_000,   "rpd": 100},
-        "paid_t1": {"rpm": 150, "tpm": 1_000_000, "rpd": 1_500},
-        "paid_t2": {"rpm": 500, "tpm": 2_000_000, "rpd": 10_000},
-    },
-    "gemini-2.5-flash": {
+    "gemini-3-flash-preview": {
         "free":    {"rpm": 10,  "tpm": 250_000,   "rpd": 250},
         "paid_t1": {"rpm": 300, "tpm": 1_000_000, "rpd": 1_500},
         "paid_t2": {"rpm": 1500, "tpm": 2_000_000, "rpd": 10_000},
     },
-    "gemini-2.5-flash-lite": {
+    "gemini-3-flash-preview-lite": {
         "free":    {"rpm": 15,  "tpm": 250_000,   "rpd": 1_000},
         "paid_t1": {"rpm": 300, "tpm": 1_000_000, "rpd": 1_500},
     },
@@ -171,7 +166,7 @@ class GlobalRateLimiter:
         Async acquire — blocks until a request slot is available.
 
         Args:
-            model: Model name (e.g. "gemini-2.5-flash")
+            model: Model name (e.g. "gemini-3-flash-preview")
             key_id: API key identifier (last 4 chars, for per-key tracking)
             estimated_tokens: Estimated input+output tokens (for TPM tracking)
         """
@@ -326,48 +321,74 @@ class RateLimitedLLM:
         """Sync invoke with rate limiting."""
         key_suffix = self._current_key[-4:] if self._current_key else "default"
         self._limiter.acquire_sync(self._model_name, key_suffix)
-        try:
-            return self._llm.invoke(*args, **kwargs)
-        except Exception as e:
-            if (self._is_rate_limit_error(e) or self._is_auth_error(e)) and self._key_pool:
-                is_auth = self._is_auth_error(e)
-                # Auth errors (401/402): bench permanently (1 hour)
-                # Rate limits (429): bench temporarily (60s)
-                cooldown = 3600.0 if is_auth else None
-                self._key_pool.mark_cooldown(self._provider, self._current_key, cooldown)
-                err_type = "401/402 auth" if is_auth else "429 rate-limit"
-                logger.warning(
-                    f"[RateLimitedLLM] {err_type} on key ...{key_suffix}, "
-                    f"cooling down and retrying with next key..."
-                )
-                # Get a new key and retry once
-                new_key = self._key_pool.get_key(self._provider)
-                self._swap_key(new_key)
-                self._limiter.acquire_sync(self._model_name, new_key[-4:])
+        server_err_attempt = 0
+        max_server_retries = 2
+        while True:
+            try:
                 return self._llm.invoke(*args, **kwargs)
-            raise
+            except Exception as e:
+                if (self._is_rate_limit_error(e) or self._is_auth_error(e)) and self._key_pool:
+                    is_auth = self._is_auth_error(e)
+                    # Auth errors (401/402): bench permanently (1 hour)
+                    # Rate limits (429): bench temporarily (60s)
+                    cooldown = 3600.0 if is_auth else None
+                    self._key_pool.mark_cooldown(self._provider, self._current_key, cooldown)
+                    err_type = "401/402 auth" if is_auth else "429 rate-limit"
+                    logger.warning(
+                        f"[RateLimitedLLM] {err_type} on key ...{key_suffix}, "
+                        f"cooling down and retrying with next key..."
+                    )
+                    # Get a new key and retry once
+                    new_key = self._key_pool.get_key(self._provider)
+                    self._swap_key(new_key)
+                    self._limiter.acquire_sync(self._model_name, new_key[-4:])
+                    return self._llm.invoke(*args, **kwargs)
+                if self._is_server_error(e) and server_err_attempt < max_server_retries:
+                    server_err_attempt += 1
+                    backoff = 2.0 * (4 ** (server_err_attempt - 1))  # 2s, 8s
+                    logger.warning(
+                        f"[RateLimitedLLM] 5xx from {self._model_name} "
+                        f"(attempt {server_err_attempt}/{max_server_retries}), "
+                        f"backing off {backoff}s: {str(e)[:120]}"
+                    )
+                    time.sleep(backoff)
+                    continue
+                raise
 
     async def ainvoke(self, *args: Any, **kwargs: Any) -> Any:
         """Async invoke with rate limiting."""
         key_suffix = self._current_key[-4:] if self._current_key else "default"
         await self._limiter.acquire(self._model_name, key_suffix)
-        try:
-            return await self._llm.ainvoke(*args, **kwargs)
-        except Exception as e:
-            if (self._is_rate_limit_error(e) or self._is_auth_error(e)) and self._key_pool:
-                is_auth = self._is_auth_error(e)
-                cooldown = 3600.0 if is_auth else None
-                self._key_pool.mark_cooldown(self._provider, self._current_key, cooldown)
-                err_type = "401/402 auth" if is_auth else "429 rate-limit"
-                logger.warning(
-                    f"[RateLimitedLLM] {err_type} on key ...{key_suffix}, "
-                    f"cooling down and retrying with next key..."
-                )
-                new_key = await self._key_pool.get_key_async(self._provider)
-                self._swap_key(new_key)
-                await self._limiter.acquire(self._model_name, new_key[-4:])
+        server_err_attempt = 0
+        max_server_retries = 2
+        while True:
+            try:
                 return await self._llm.ainvoke(*args, **kwargs)
-            raise
+            except Exception as e:
+                if (self._is_rate_limit_error(e) or self._is_auth_error(e)) and self._key_pool:
+                    is_auth = self._is_auth_error(e)
+                    cooldown = 3600.0 if is_auth else None
+                    self._key_pool.mark_cooldown(self._provider, self._current_key, cooldown)
+                    err_type = "401/402 auth" if is_auth else "429 rate-limit"
+                    logger.warning(
+                        f"[RateLimitedLLM] {err_type} on key ...{key_suffix}, "
+                        f"cooling down and retrying with next key..."
+                    )
+                    new_key = await self._key_pool.get_key_async(self._provider)
+                    self._swap_key(new_key)
+                    await self._limiter.acquire(self._model_name, new_key[-4:])
+                    return await self._llm.ainvoke(*args, **kwargs)
+                if self._is_server_error(e) and server_err_attempt < max_server_retries:
+                    server_err_attempt += 1
+                    backoff = 2.0 * (4 ** (server_err_attempt - 1))  # 2s, 8s
+                    logger.warning(
+                        f"[RateLimitedLLM] 5xx from {self._model_name} "
+                        f"(attempt {server_err_attempt}/{max_server_retries}), "
+                        f"backing off {backoff}s: {str(e)[:120]}"
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+                raise
 
     def set_key(self, key: str) -> None:
         """Set the current API key on this wrapper and the underlying LLM."""
@@ -403,6 +424,19 @@ class RateLimitedLLM:
         return any(
             kw in err_str
             for kw in ["401", "402", "user not found", "unauthorized", "requires more credits"]
+        )
+
+    @staticmethod
+    def _is_server_error(e: Exception) -> bool:
+        """Check if an exception is a transient 5xx server error worth retrying."""
+        err_str = str(e).lower()
+        return any(
+            kw in err_str
+            for kw in [
+                "500 internal", "502 bad gateway", "503 service",
+                "504 deadline", "504 gateway", "deadline exceeded",
+                "service unavailable", "internal server error",
+            ]
         )
 
 

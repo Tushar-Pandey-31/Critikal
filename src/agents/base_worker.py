@@ -6,6 +6,7 @@ WorkerAgent and implement the `run()` coroutine. The Lead Agent (Coordinator)
 spawns workers via asyncio.gather() and collects WorkerOutput objects.
 """
 
+import os
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 from pydantic import BaseModel, Field, field_validator
@@ -49,7 +50,7 @@ class WorkerAgent(ABC):
     Abstract base class that every specialist worker must extend.
     """
 
-    model_name: str = "gemini-2.5-flash"
+    model_name: str = os.environ.get("WORKER_MODEL_NAME", "gemini-3-flash-preview")
 
     @abstractmethod
     def get_worker_type(self) -> str:

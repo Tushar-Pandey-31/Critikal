@@ -198,7 +198,7 @@ class GraphQueries:
             return []
         return [
             n for n in self.graph.predecessors(function_id)
-            if self.graph.get_edge_data(n, function_id).get("relationship") == "CALLS"
+            if self.graph.get_edge_data(n, function_id).get("relationship") in ("CALLS", "CROSS_CONTRACT_CALL")
         ]
 
     def get_call_graph(self, contract_name: str | None = None) -> Dict[str, Any]:

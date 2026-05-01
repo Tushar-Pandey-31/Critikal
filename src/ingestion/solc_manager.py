@@ -122,14 +122,15 @@ class SolcManager:
             try:
                 subprocess.run(
                     ["solc-select", "install", version],
-                    check=True, capture_output=True, timeout=60,
+                    check=True, capture_output=True, timeout=300,
                 )
                 self._installed_versions.add(version)
             except subprocess.CalledProcessError as e:
-                print(f"  Error installing solc {version}: {e}")
+                stderr = (e.stderr or b"").decode("utf-8", errors="replace").strip()
+                print(f"  Error installing solc {version}: {stderr or e}")
                 return False
             except subprocess.TimeoutExpired:
-                print(f"  solc-select install timed out for {version}.")
+                print(f"  solc-select install timed out for {version} (300s).")
                 return False
 
         # Switch only if not already active

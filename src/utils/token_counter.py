@@ -10,7 +10,7 @@ Thread-safe singleton that records per-agent:
 Usage:
     from src.utils.token_counter import get_token_counter
     tc = get_token_counter()
-    tc.record("AgentName", "gemini-2.5-flash", input_text, output_text, response_metadata)
+    tc.record("AgentName", "gemini-3-flash-preview", input_text, output_text, response_metadata)
     summary = tc.get_summary()
 """
 
@@ -33,9 +33,7 @@ _PRICING = {
     "gemini-3.1-flash-lite":        {"input": 0.075, "output": 0.30},
     "gemini-3-flash-preview":       {"input": 0.10, "output": 0.40},
     "gemini-3-flash":               {"input": 0.10, "output": 0.40},
-    "gemini-2.5-pro":               {"input": 1.25, "output": 5.00},
-    "gemini-2.5-flash":             {"input": 0.15, "output": 0.60},
-    "gemini-2.5-flash-lite":        {"input": 0.075, "output": 0.30},
+    "gemini-3-flash-preview-lite":  {"input": 0.075, "output": 0.30},
     "gemini-2.0-flash":             {"input": 0.10, "output": 0.40},
     "gemini-1.5-pro":               {"input": 1.25, "output": 5.00},
     "gemini-1.5-flash":             {"input": 0.075, "output": 0.30},
@@ -64,7 +62,7 @@ def _normalize_model_name(model: str) -> str:
     Examples:
         'openrouter/google/gemini-3.1-pro-preview' → 'gemini-3.1-pro-preview'
         'openrouter/anthropic/claude-sonnet-4.6'   → 'claude-sonnet-4.6'
-        'gemini-2.5-flash'                          → 'gemini-2.5-flash'
+        'gemini-3-flash-preview'                          → 'gemini-3-flash-preview'
     """
     name = model.lower().strip()
     if name.startswith("openrouter/"):
@@ -135,7 +133,7 @@ class TokenCounter:
 
         Args:
             agent_name: Identifier for the agent (e.g. "AttackHypothesisWorker")
-            model: Model name (e.g. "gemini-2.5-flash")
+            model: Model name (e.g. "gemini-3-flash-preview")
             input_text: Full prompt text sent to the LLM
             output_text: Full response text from the LLM
             response_metadata: LangChain response_metadata dict (may contain usage_metadata)
@@ -193,7 +191,7 @@ class TokenCounter:
             "agents": [
                 {
                     "agent_name": "AttackHypothesisWorker",
-                    "model": "gemini-2.5-flash",
+                    "model": "gemini-3-flash-preview",
                     "call_count": 5,
                     "input_tokens": 12000,
                     "output_tokens": 3000,

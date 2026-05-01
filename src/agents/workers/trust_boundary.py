@@ -116,11 +116,14 @@ class TrustBoundaryAnalyzer(WorkerAgent):
     No graph signals — pure LLM reasoning over raw source.
     """
 
-    model_name: str = "gemini-2.5-flash"
+    model_name: str = "gemini-3-flash-preview"
 
-    def __init__(self, llm_client: Any, model_name: str = "gemini-2.5-flash"):
+    def __init__(self, llm_client: Any, model_name: str | None = None):
         self.llm = llm_client
-        self.model_name = model_name
+        self.model_name = model_name or os.getenv(
+            "SEMANTIC_MODEL_NAME",
+            os.getenv("WORKER_MODEL_NAME", "gemini-3-flash-preview"),
+        )
 
     def get_worker_type(self) -> str:
         return "trust_boundary"
@@ -128,6 +131,7 @@ class TrustBoundaryAnalyzer(WorkerAgent):
     async def run(self, task: WorkerTask) -> WorkerOutput:
         sol_files = task.context.get("sol_files", [])
         recon_context = task.context.get("recon_context", {})
+        max_chars = int(task.context.get("max_chars", 30000))
 
         if not sol_files:
             return WorkerOutput(
@@ -135,7 +139,7 @@ class TrustBoundaryAnalyzer(WorkerAgent):
                 hypothesis="No source files provided.", confidence=0,
             )
 
-        source_text = self._read_source_files(sol_files, max_chars=30000)
+        source_text = self._read_source_files(sol_files, max_chars=max_chars)
         protocol_type = recon_context.get("protocol_type", "unknown")
 
         messages = [

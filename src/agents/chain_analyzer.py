@@ -98,6 +98,14 @@ def _classify_match_type(postcondition: str, precondition: str) -> str:
     return max(scores.items(), key=lambda x: x[1])[0] if max(scores.values()) > 0 else "STATE"
 
 
+_CHAIN_STOPWORDS = {
+    "balance", "amount", "transfer", "update", "storage",
+    "contract", "function", "state", "value", "token",
+    "address", "caller", "uint256", "require", "internal",
+    "external", "memory", "returns", "public", "private",
+}
+
+
 def _compute_match_strength(
     postcondition: str,
     precondition: str,
@@ -111,12 +119,13 @@ def _compute_match_strength(
     # STRONG: same contract or shared variable names
     if enabler.affected_contract == blocked.affected_contract:
         # Same contract — state changes are directly visible
-        if any(word in post_lower for word in pre_lower.split() if len(word) > 3):
+        if any(word in post_lower for word in pre_lower.split()
+               if len(word) > 3 and word not in _CHAIN_STOPWORDS):
             return "STRONG"
 
-    # Check for overlapping key terms (3+ character words)
-    post_words = set(w for w in post_lower.split() if len(w) > 3)
-    pre_words = set(w for w in pre_lower.split() if len(w) > 3)
+    # Check for overlapping key terms (3+ character words, excluding stopwords)
+    post_words = set(w for w in post_lower.split() if len(w) > 3 and w not in _CHAIN_STOPWORDS)
+    pre_words = set(w for w in pre_lower.split() if len(w) > 3 and w not in _CHAIN_STOPWORDS)
     overlap = post_words & pre_words
 
     if len(overlap) >= 3:
@@ -155,21 +164,19 @@ def _chain_severity(
 
     Rules:
     - Chain severity is NEVER lower than the higher of the two.
-    - REFUTED + confirmed enabler → re-evaluate as PARTIAL at enabler's severity.
-    - Same severity + same severity → upgrade by 1 tier.
-    - STRONG match → bonus upgrade chance.
+    - STRONG match → upgrade by 1 tier (capped at HIGH unless 3+ steps).
+    - Same severity no longer auto-upgrades (prevented false CRITICAL inflation).
+    - Max upgrade: 1 level from chain analysis alone.
     """
     rank_a = _SEVERITY_RANK.get(enabler_severity.upper(), 1)
     rank_b = _SEVERITY_RANK.get(blocked_severity.upper(), 1)
     base_rank = max(rank_a, rank_b)
 
-    # Same severity → upgrade by 1
-    if rank_a == rank_b and rank_a >= 2:
-        base_rank = min(base_rank + 1, 4)
-
-    # Strong match → additional upgrade if not already CRITICAL
-    if match_strength == "STRONG" and base_rank < 4:
-        base_rank = min(base_rank + 1, 4)
+    # Strong match → upgrade by 1 tier, capped at HIGH (rank 3)
+    # Chain analysis alone should not produce CRITICAL — that requires
+    # proven exploits or unanimous jury confirmation.
+    if match_strength == "STRONG" and base_rank < 3:
+        base_rank = min(base_rank + 1, 3)
 
     return _SEVERITY_FROM_RANK.get(base_rank, "HIGH")
 
@@ -344,6 +351,18 @@ def apply_chain_severity_upgrades(findings: list[Finding]) -> None:
                 f"{finding.affected_function} — verdict={finding.verdict}, upgrade={upgrade}"
             )
             continue
+
+        # Skip upgrade if finding has unmet privilege preconditions
+        _privilege_keywords = ["admin", "router", "owner", "compromise", "malicious",
+                               "privileged", "operator", "governance", "multisig"]
+        if finding.preconditions_missing:
+            _pre_text = " ".join(finding.preconditions_missing).lower()
+            if any(kw in _pre_text for kw in _privilege_keywords):
+                logger.info(
+                    f"[Chain] Skipping severity upgrade for {finding.affected_contract}::"
+                    f"{finding.affected_function} — unmet privilege precondition"
+                )
+                continue
 
         # Apply the upgrade
         _, new_severity = upgrade.split(" → ", 1)

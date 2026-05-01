@@ -8,6 +8,31 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+
+def _has_meaningful_assertions(test_code: str) -> bool:
+    """Check if test code contains actual assert/require statements, not just comments.
+
+    A test without assertions always passes (vacuous proof). This gate rejects
+    such tests so they are not marked as PROVEN exploits.
+    """
+    # Strip single-line comments
+    stripped = re.sub(r'//.*?\n', '\n', test_code)
+    # Strip multi-line comments
+    stripped = re.sub(r'/\*.*?\*/', '', stripped, flags=re.DOTALL)
+    # Check for Foundry/Solidity assertion patterns
+    return bool(re.search(
+        r'\b(assert\w*|require|vm\.expect\w*|assertTrue|assertFalse|assertEq|assertGt|assertLt|assertGe|assertLe|assertApproxEq)\s*\(',
+        stripped,
+    ))
+
+
+_VACUOUS_TEST_MSG = (
+    "CRITICAL: Your test_exploit() contains NO assertions (assert*, require, vm.expect*). "
+    "A test without assertions always passes \u2014 that proves nothing. "
+    "You MUST end with assertions that FAIL if the exploit doesn\'t work, e.g.: "
+    "assertGt(attacker_balance_after, attacker_balance_before, \'no profit extracted\');"
+)
+
 from src.agents.base_worker import WorkerAgent, WorkerTask, WorkerOutput
 from src.models.finding import Finding
 from src.agents.workers.test_writer_sandbox import SandboxManager
@@ -1634,6 +1659,26 @@ Hypothesis: {finding.hypothesis}
             f"Any other top-level function prefixed `test_` will be treated as WRONG.\n"
         )
 
+        # ── Caller context (cross-contract access control) ──────────────
+        caller_section = ""
+        caller_context = getattr(self, "_caller_context", None) or []
+        if caller_context:
+            caller_section = "\n## Function Reachability (Caller Access Control)\n"
+            all_protected = True
+            for c in caller_context:
+                prot = "PROTECTED" if c.get("is_protected") else "UNPROTECTED"
+                ac = c.get("access_control_type", "none")
+                caller_section += f"- {c['caller']} [{prot}, {ac}]\n"
+                if not c.get("is_protected"):
+                    all_protected = False
+            if all_protected:
+                caller_section += (
+                    "\nALL callers are protected (admin/owner-only). "
+                    "This function is NOT directly exploitable by unprivileged users. "
+                    "Your PoC must account for how the attacker gains the required role.\n"
+                )
+            caller_section += "\n"
+
         user_content = (
             f"Vulnerability Class: {finding.vulnerability_class}\n"
             f"Affected Contract: {finding.affected_contract}\n"
@@ -1641,6 +1686,7 @@ Hypothesis: {finding.hypothesis}
             f"Hypothesis: {finding.hypothesis}\n"
             f"Attack Path: {' -> '.join(finding.attack_path)}\n"
             f"Impact: {finding.impact}\n"
+            f"{caller_section}"
             f"{source_section}"
             f"{rag_context}\n"
             f"{error_rag}\n"
@@ -1855,6 +1901,7 @@ Nothing else matters. Just write the test."""
         relevant_code = task.context.get("relevant_code", {})
         repo_path = task.context.get("repo_path")
         contract_signatures = task.context.get("contract_signatures", {}) or {}
+        self._caller_context = task.context.get("caller_context", [])
 
         print(f"\n{'='*70}")
         print(f"  [TestWriter] === START === {finding.affected_contract}::{finding.affected_function}")
@@ -2189,10 +2236,14 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                                     vulnerability_class=getattr(finding, 'vulnerability_class', ''),
                                 )
                                 if authentic:
-                                    print(f"  [TestWriter] ✓✓ EXPLOIT PROVEN via Harness Mode!")
-                                    exploit_success = True
-                                    harness_succeeded = True
-                                    break
+                                    if not _has_meaningful_assertions(full_test):
+                                        print(f"  [TestWriter] REJECT: Test passed vacuously (no assertions found)")
+                                        harness_error_history.append(_VACUOUS_TEST_MSG)
+                                    else:
+                                        print(f"  [TestWriter] ✓✓ EXPLOIT PROVEN via Harness Mode!")
+                                        exploit_success = True
+                                        harness_succeeded = True
+                                        break
                                 else:
                                     print(f"  [TestWriter] Test passed but FABRICATED: {auth_reason}")
                                     harness_error_history.append(
@@ -2286,10 +2337,14 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                         test_res = sandbox.run("forge test --match-test test_exploit --no-cache -vvvv --ignored-error-codes 8429 --ignored-error-codes 2424")
                         test_logs = test_res.stdout or ""
                         if test_res.success:
-                            print(f"  [TestWriter] Template test PASSED — exploit proven!")
-                            compiled = True
-                            exploit_success = True
-                            break
+                            if not _has_meaningful_assertions(test_code_generated):
+                                print(f"  [TestWriter] REJECT: Template test passed vacuously (no assertions found)")
+                                error_history.append(_VACUOUS_TEST_MSG)
+                            else:
+                                print(f"  [TestWriter] Template test PASSED — exploit proven!")
+                                compiled = True
+                                exploit_success = True
+                                break
                         else:
                             print(f"  [TestWriter] Template compiled but test failed — falling through to LLM")
                             error_history.append(f"Code you wrote:\n```solidity\n{test_code_generated}\n```\n\nTemplate compiled but test failed.\nLogs:\n{test_logs[:400]}")
@@ -2631,6 +2686,11 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                     passed_by_logs = "[PASS]" in test_logs or "exploit succeeded" in test_logs.lower()
                     exploit_success = test_res.success and passed_by_logs
 
+                    if exploit_success and not _has_meaningful_assertions(test_code_generated):
+                        print(f"  [TestWriter] REJECT: Test passed vacuously (no assertions found)")
+                        exploit_success = False
+                        error_history.append(_VACUOUS_TEST_MSG)
+
                     print(f"  [TestWriter] COMPILED OK  |  forge_success={test_res.success}  |  [PASS] in logs={passed_by_logs}  |  exploit_success={exploit_success}")
                     print(f"  [TestWriter] FORGE STDOUT:\n{test_res.stdout}")   
 
@@ -2774,12 +2834,16 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                                         vulnerability_class=getattr(finding, 'vulnerability_class', ''),
                                     )
                                     if authentic:
-                                        print(f"  [TestWriter] ✓ VARIANT SUCCEEDED! Exploit proven via relaxed parameters")
-                                        exploit_success = True
-                                        variant_success = True
-                                        test_code_generated = var_code
-                                        test_logs = var_logs
-                                        break
+                                        if not _has_meaningful_assertions(var_code):
+                                            print(f"  [TestWriter] REJECT: Variant passed vacuously (no assertions found)")
+                                            error_history.append(_VACUOUS_TEST_MSG)
+                                        else:
+                                            print(f"  [TestWriter] ✓ VARIANT SUCCEEDED! Exploit proven via relaxed parameters")
+                                            exploit_success = True
+                                            variant_success = True
+                                            test_code_generated = var_code
+                                            test_logs = var_logs
+                                            break
                                     else:
                                         print(f"  [TestWriter] Variant passed but FABRICATED: {auth_reason}")
                                 else:

@@ -337,6 +337,8 @@ class SandboxManager:
     def write_test_file(self, filename: str, content: str) -> None:
         file_path = self.tmp_dir / filename
         file_path.parent.mkdir(parents=True, exist_ok=True)
+        if "SPDX-License-Identifier" not in content:
+            content = "// SPDX-License-Identifier: UNLICENSED\n" + content
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(content)
         print(f"  [Sandbox] Wrote test file: {file_path.relative_to(self.tmp_dir)}  ({len(content)} chars, {content.count(chr(10))+1} lines)")
