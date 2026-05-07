@@ -5,17 +5,16 @@ Tests the deterministic postcondition→precondition matching engine,
 severity upgrade matrix, and chain metadata application.
 """
 
-import pytest
 import uuid
-from src.agents.chain_analyzer import (
-    run_chain_analysis,
-    ChainHypothesis,
-    _compute_match_strength,
-    _chain_severity,
-    _classify_match_type,
-    _classify_actor,
-)
+
 from src.models.finding import Finding, FindingVerdict
+from src.pipeline.chain_analyzer import (
+    _chain_severity,
+    _classify_actor,
+    _classify_match_type,
+    _compute_match_strength,
+    run_chain_analysis,
+)
 
 
 def _make_finding(
@@ -56,13 +55,15 @@ def _make_finding(
 class TestChainSeverity:
     """Tests for the severity upgrade matrix."""
 
-    def test_same_medium_upgrades_to_high(self):
+    def test_same_medium_no_auto_upgrade(self):
+        # Same-severity auto-upgrade removed to prevent false CRITICAL inflation
         result = _chain_severity("MEDIUM", "MEDIUM", "MODERATE")
-        assert result == "HIGH"
+        assert result == "MEDIUM"
 
-    def test_same_high_upgrades_to_critical(self):
+    def test_same_high_no_auto_upgrade(self):
+        # Same-severity auto-upgrade removed; chain analysis caps at HIGH
         result = _chain_severity("HIGH", "HIGH", "MODERATE")
-        assert result == "CRITICAL"
+        assert result == "HIGH"
 
     def test_strong_match_upgrades_medium(self):
         result = _chain_severity("MEDIUM", "LOW", "STRONG")
@@ -129,8 +130,8 @@ class TestMatchStrength:
         enabler = _make_finding(contract="Vault", postconditions=["balance drained"])
         blocked = _make_finding(contract="Vault", preconditions_missing=["balance is zero"])
         strength = _compute_match_strength(
-            "balance drained completely to zero", 
-            "balance must be zero for overflow", 
+            "balance drained completely to zero",
+            "balance must be zero for overflow",
             enabler, blocked
         )
         assert strength == "STRONG"
@@ -205,9 +206,9 @@ class TestRunChainAnalysis:
             verdict="PARTIAL",
         )
         chains = run_chain_analysis([enabler, blocked])
-        # HIGH + HIGH should upgrade to CRITICAL
+        # Chain analysis now caps at HIGH (CRITICAL requires proven exploit or unanimous jury)
         if chains:
-            assert chains[0].chain_severity == "CRITICAL"
+            assert chains[0].chain_severity == "HIGH"
 
     def test_chain_applies_metadata_to_findings(self):
         enabler = _make_finding(

@@ -1,50 +1,61 @@
-FROM python:3.10-slim
+FROM python:3.12-slim
 
-# Install system dependencies
+# System dependencies
 RUN apt-get update && apt-get install -y \
     git \
     curl \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js (Version 20)
+# Node.js 20 (required by some Solidity toolchains)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install Foundry
+# Foundry
 ENV FOUNDRY_DIR=/root/.foundry
 ENV PATH="$FOUNDRY_DIR/bin:$PATH"
 RUN curl -L https://foundry.paradigm.xyz | bash && \
     foundryup
 
-# Install solc-select
+# solc-select
+RUN pip install --no-cache-dir solc-select && \
+    solc-select install 0.8.20 && \
+    solc-select use 0.8.20
 
-# Install solc-select
-RUN pip install solc-select
-RUN solc-select install 0.8.20 && solc-select use 0.8.20
-
-# Set working directory
 WORKDIR /app
 
-# Install poetry
-RUN pip install poetry
+# Poetry
+RUN pip install --no-cache-dir poetry && \
+    poetry config virtualenvs.create false
 
-# Copy project files
-COPY pyproject.toml .
-# Create a dummy src directory to allow poetry to install dependencies if needed, 
-# though for development we mount the volume.
-# However, we want the dependencies installed in the image.
-# If no lock file exists, poetry install might fail if no pyproject.toml is present used.
-# Let's copy the file first.
-
-# Configure poetry to not create a virtual environment
-RUN poetry config virtualenvs.create false
-
-# Install dependencies
+# Install deps first for better layer caching
+COPY pyproject.toml poetry.lock* ./
 RUN poetry install --no-interaction --no-ansi --no-root
 
-# Copy the rest of the application
+# App source
 COPY . .
 
-# Default command
-CMD ["python", "src/main.py"]
+# Install the project itself (exposes the `critikal` entry point)
+RUN poetry install --no-interaction --no-ansi
+
+# ── Security: run as non-root user ──
+# Foundry/solc were installed as root above; copy them into a shared
+# location so the non-root user can access them.
+RUN cp -r /root/.foundry /opt/foundry && \
+    cp -r /root/.solc-select /opt/solc-select && \
+    chmod -R a+rX /opt/foundry /opt/solc-select
+
+RUN groupadd --gid 1000 critikal && \
+    useradd --uid 1000 --gid critikal --create-home critikal && \
+    chown -R critikal:critikal /app
+
+USER critikal
+
+ENV FOUNDRY_DIR=/opt/foundry
+ENV SOLC_SELECT_DIR=/opt/solc-select
+ENV PATH="/opt/foundry/bin:/opt/solc-select:$PATH"
+ENV HOME=/home/critikal
+
+ENTRYPOINT ["critikal"]
+CMD ["--help"]

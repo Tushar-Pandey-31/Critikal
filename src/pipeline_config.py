@@ -35,7 +35,7 @@ Environment variables:
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 def _env_bool(key: str, default: bool) -> bool:
@@ -168,9 +168,8 @@ class PipelineConfig:
         overrides: dict[str, bool] = {}
 
         for field_name, env_key in _FIELD_TO_ENV.items():
-            env_val = os.getenv(env_key)
-            if env_val is not None:
-                overrides[field_name] = env_val.strip().lower() in ("true", "1", "yes")
+            if os.getenv(env_key) is not None:
+                overrides[field_name] = _env_bool(env_key, preset[field_name])
 
         # Merge: preset as base, overrides on top
         merged = {**preset, **overrides}

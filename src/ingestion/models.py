@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
-
 
 # ════════════════════════════════════════════════════════════
 #  Repo Size Classification
@@ -32,7 +30,7 @@ class ContractRoot:
     path: str                          # Absolute path
     sol_count: int
     depth: int                         # Relative to repo root
-    framework_hint: Optional[str] = None  # "foundry" | "hardhat" | "brownie" | None
+    framework_hint: str | None = None  # "foundry" | "hardhat" | "brownie" | None
     score: float = 0.0                 # Computed priority score
 
 
@@ -81,8 +79,8 @@ class CompilationCluster:
     sol_files: list[str] = field(default_factory=list)
     pragma_versions: set[str] = field(default_factory=set)
     import_graph: dict[str, list[str]] = field(default_factory=dict)
-    framework: Optional[str] = None              # "foundry" | "hardhat" | "brownie" | None
-    solc_version: Optional[str] = None           # Resolved target version
+    framework: str | None = None              # "foundry" | "hardhat" | "brownie" | None
+    solc_version: str | None = None           # Resolved target version
 
 
 # ════════════════════════════════════════════════════════════
@@ -96,7 +94,7 @@ class ClusterResult:
     success: bool
     slither_obj: object = None   # Slither | None (avoid import cycle)
     contracts_parsed: int = 0
-    error: Optional[str] = None
+    error: str | None = None
     fallback_level: int = 0      # 0=direct, 1=subdir, 2=SCC, 3=per-file
 
 

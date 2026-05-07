@@ -7,8 +7,8 @@ based on the total number of Solidity files in the repository.
 
 from __future__ import annotations
 
-import os
 import logging
+import os
 
 from src.ingestion.models import RepoSizeClass
 

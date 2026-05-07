@@ -1,0 +1,175 @@
+/* ═══════════════════════════════════════════════════════════════
+   Critikal TUI — Monochrome theme matching critikalai.com
+   Near-black canvas, off-white text, one cyan accent.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Palette (keep in sync with conversation_widget.py) ──
+   bg        #0a0a0a
+   surface   #111111    slightly elevated
+   border    #1f1f1f
+   fg        #e8e8e8
+   fg-bright #ffffff
+   dim       #8a8a8a
+   dimmer    #5a5a5a
+   faint     #3a3a3a
+   accent    #7dd3c0   cyan
+   danger    #e08a8a
+*/
+
+Screen {
+    background: #0a0a0a;
+    color: #e8e8e8;
+}
+
+/* ── Header: one line, minimal ── */
+Header {
+    dock: top;
+    height: 1;
+    background: #0a0a0a;
+    color: #7dd3c0;
+}
+
+HeaderIcon, HeaderTitle {
+    color: #e8e8e8;
+}
+
+HeaderClock {
+    color: #5a5a5a;
+}
+
+/* ── Footer ── */
+Footer {
+    background: #0a0a0a;
+    color: #8a8a8a;
+}
+
+Footer > .footer--key {
+    background: #0a0a0a;
+    color: #7dd3c0;
+}
+
+Footer > .footer--description {
+    background: #0a0a0a;
+    color: #8a8a8a;
+}
+
+/* ── Main container ── */
+#main-container {
+    height: 1fr;
+    width: 100%;
+    background: #0a0a0a;
+}
+
+#left-panel {
+    width: 1fr;
+    background: #0a0a0a;
+}
+
+#right-panel {
+    width: 42;
+    display: none;
+    background: #0a0a0a;
+    border-left: vkey #1f1f1f;
+}
+
+/* ── Conversation stream ── */
+ConversationWidget {
+    height: 1fr;
+    padding: 0 2;
+    background: #0a0a0a;
+    scrollbar-size: 1 1;
+    scrollbar-color: #1f1f1f;
+    scrollbar-color-hover: #3a3a3a;
+    scrollbar-color-active: #7dd3c0;
+    scrollbar-background: #0a0a0a;
+}
+
+/* ── Findings panel ── */
+FindingsWidget {
+    height: 1fr;
+    padding: 1 1;
+    background: #0a0a0a;
+}
+
+#findings-title {
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+FindingCard {
+    margin-bottom: 1;
+    padding: 1;
+    background: #111111;
+    border: round #1f1f1f;
+    height: auto;
+}
+
+FindingCard:hover {
+    border: round #7dd3c0;
+}
+
+/* ── Worker panel ── */
+WorkerWidget {
+    height: auto;
+    max-height: 10;
+    padding: 1;
+    background: #0a0a0a;
+    border-top: hkey #1f1f1f;
+}
+
+#workers-title {
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+WorkerEntry {
+    height: 1;
+    padding: 0 1;
+}
+
+/* ── Cost bar ── */
+CostBar {
+    dock: bottom;
+    height: 1;
+    background: #0a0a0a;
+    color: #8a8a8a;
+    padding: 0 1;
+}
+
+/* ── Prompt area ── */
+#prompt-area {
+    dock: bottom;
+    height: auto;
+    min-height: 3;
+    max-height: 8;
+    background: #0a0a0a;
+    padding: 0;
+}
+
+#prompt-separator {
+    height: 1;
+    background: #0a0a0a;
+    color: #1f1f1f;
+}
+
+#prompt-hint {
+    height: 1;
+    color: #5a5a5a;
+    padding: 0 2;
+    background: #0a0a0a;
+}
+
+PromptInput {
+    height: auto;
+    min-height: 1;
+    max-height: 6;
+    background: #0a0a0a;
+    color: #e8e8e8;
+    border: none;
+    padding: 0 2;
+    margin: 0;
+}
+
+PromptInput:focus {
+    border: none;
+}

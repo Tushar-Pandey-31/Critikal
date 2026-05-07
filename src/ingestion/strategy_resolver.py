@@ -8,12 +8,11 @@ and returns a prioritised list of ``ContractRoot`` objects.
 
 from __future__ import annotations
 
-import os
 import logging
-from typing import Optional
+import os
 
-from src.ingestion.models import ContractRoot
 from src.ingestion.framework_detector import FrameworkDetector
+from src.ingestion.models import ContractRoot
 
 logger = logging.getLogger(__name__)
 

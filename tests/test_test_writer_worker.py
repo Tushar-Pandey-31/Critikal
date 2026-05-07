@@ -1,10 +1,38 @@
-import pytest
-import json
 from unittest.mock import MagicMock
 
-from src.agents.workers.test_writer_worker import TestWriterWorker
-from src.agents.base_worker import WorkerTask
+import pytest
+
 from src.models.finding import Finding, FindingStatus
+from src.pipeline.base_worker import WorkerTask
+from src.pipeline.workers.test_writer_worker import TestWriterWorker
+
+
+@pytest.fixture(autouse=True)
+def _stub_rag(request, monkeypatch):
+    """
+    TestWriterWorker calls into RAG (sentence-transformers + ChromaDB) during a
+    real run. Loading the embedder the first time imports/initialises chromadb,
+    which times out tests. Stub `_fetch_rag_context` directly so we don't even
+    import the rag_system module.
+
+    Tests that exercise the real RAG path opt out via @pytest.mark.uses_rag.
+    """
+    if "uses_rag" in request.keywords:
+        return
+    monkeypatch.setattr(
+        TestWriterWorker,
+        "_fetch_rag_context",
+        lambda self, finding: "",
+    )
+    monkeypatch.setattr(
+        TestWriterWorker,
+        "_fetch_error_rag_context",
+        lambda self, error_history: "",
+    )
+    # Harness mode runs HarnessBuilder against a real graph + sandbox. None of
+    # these unit tests exercise it; disable so they take the full-prompt path.
+    monkeypatch.setenv("HARNESS_MODE", "false")
+
 
 @pytest.fixture
 def mock_llm():
@@ -40,32 +68,32 @@ async def test_missing_finding_in_context(mock_llm):
     worker = TestWriterWorker(llm_client=mock_llm)
     task = WorkerTask(task_id="t1", task_type="test_write", context={})
     output = await worker.run(task)
-    
+
     assert output.confidence == 0
     assert "error" in output.raw_output
     assert "Missing or invalid finding" in output.raw_output["error"]
 
 @pytest.mark.asyncio
 async def test_happy_path(mock_llm, dummy_finding, monkeypatch, tmp_path):
-    mock_llm.invoke.return_value = MagicMock(content="```solidity\npragma solidity ^0.8.0; contract ExploitTest { function test_exploit() public {} }\n```")
-    
+    mock_llm.invoke.return_value = MagicMock(content="```solidity\npragma solidity ^0.8.0; contract ExploitTest { function test_exploit() public { assertTrue(true); }}\n```")
+
     mock_sandbox = MagicMock()
     mock_sandbox.tmp_dir = tmp_path
     mock_sandbox.get_test_path.return_value = "test"
     # Single forge test call per attempt (compile + test combined)
     mock_sandbox.run.return_value = MagicMock(success=True, stdout="[PASS]", stderr="")
-    monkeypatch.setattr("src.agents.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
-    
+    monkeypatch.setattr("src.pipeline.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
+
     worker = TestWriterWorker(llm_client=mock_llm)
-    
+
     task = WorkerTask(
-        task_id="t1", 
-        task_type="test_write", 
+        task_id="t1",
+        task_type="test_write",
         context={"finding": dummy_finding, "relevant_code": {}}
     )
-    
+
     output = await worker.run(task)
-    
+
     assert output.confidence == 100  # exploit success -> 50 + 60 = 110 clamp 100
     assert output.raw_output["compiled"] is True
     assert output.raw_output["exploit_success"] is True
@@ -78,10 +106,10 @@ async def test_compile_fail_then_succeed(mock_llm, dummy_finding, monkeypatch, t
     # LLM will be called twice. Mock its responses.
     responses = [
         MagicMock(content="```solidity\npragma solidity ^0.8.0; contract ExploitTest { function test_exploit() public { invalid; } }\n```"),
-        MagicMock(content="```solidity\npragma solidity ^0.8.0; contract ExploitTest { function test_exploit() public {} }\n```")
+        MagicMock(content="```solidity\npragma solidity ^0.8.0; contract ExploitTest { function test_exploit() public { assertTrue(true); }}\n```")
     ]
     mock_llm.invoke.side_effect = responses
-    
+
     mock_sandbox = MagicMock()
     mock_sandbox.tmp_dir = tmp_path
     mock_sandbox.get_test_path.return_value = "test"
@@ -90,13 +118,13 @@ async def test_compile_fail_then_succeed(mock_llm, dummy_finding, monkeypatch, t
         MagicMock(success=False, stdout="Compiler run failed", stderr="Syntax error"), # attempt 1: compile error
         MagicMock(success=True, stdout="[PASS]", stderr="")  # attempt 2: success
     ]
-    monkeypatch.setattr("src.agents.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
-    
+    monkeypatch.setattr("src.pipeline.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
+
     worker = TestWriterWorker(llm_client=mock_llm)
-    
+
     task = WorkerTask(task_id="t1", task_type="test", context={"finding": dummy_finding})
     output = await worker.run(task)
-    
+
     assert output.raw_output["attempts"] == 2
     assert "function test_exploit()" in output.raw_output["test_code"]
     assert output.raw_output["compiled"] is True
@@ -106,19 +134,19 @@ async def test_compile_fail_then_succeed(mock_llm, dummy_finding, monkeypatch, t
 @pytest.mark.asyncio
 async def test_max_attempts_exceeded(mock_llm, dummy_finding, monkeypatch, tmp_path):
     mock_llm.invoke.return_value = MagicMock(content="```sol\npragma solidity ^0.8.0; contract ExploitTest { function test_exploit() public { invalid; } }\n```")
-    
+
     mock_sandbox = MagicMock()
     mock_sandbox.tmp_dir = tmp_path
     mock_sandbox.get_test_path.return_value = "test"
     mock_sandbox.run.return_value = MagicMock(success=False, stdout="Compiler run failed", stderr="Compiler Error")
-    monkeypatch.setattr("src.agents.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
-    
+    monkeypatch.setattr("src.pipeline.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
+
     worker = TestWriterWorker(llm_client=mock_llm)
     monkeypatch.setattr(worker, "_collect_repo_sources", lambda *a, **kw: {"Mock.sol": "contract Mock {}"})
-    
+
     task = WorkerTask(task_id="t1", task_type="test", context={"finding": dummy_finding})
     output = await worker.run(task)
-    
+
     assert output.raw_output["attempts"] == 6
     assert output.raw_output["compiled"] is False
     assert "Build Failed" in output.raw_output["last_error"]
@@ -129,7 +157,7 @@ async def test_extract_code_fallback(mock_llm, dummy_finding, monkeypatch, tmp_p
     # Attempt 1: chatter (rejected — no Solidity markers, no sandbox call)
     # Attempt 2: valid code but build fails
     # Attempt 3: valid code, build + test pass
-    valid_code = "```\npragma solidity ^0.8.0; contract ExploitTest { function test_exploit() public {} }\n```"
+    valid_code = "```\npragma solidity ^0.8.0; contract ExploitTest { function test_exploit() public { assertTrue(true); }}\n```"
     responses = [
         MagicMock(content="Wait what? I am not JSON"),
         MagicMock(content=valid_code),
@@ -145,7 +173,7 @@ async def test_extract_code_fallback(mock_llm, dummy_finding, monkeypatch, tmp_p
         MagicMock(success=False, stdout="Compiler run failed", stderr="Syntax error"),  # attempt 2 compile error
         MagicMock(success=True, stdout="[PASS]", stderr=""),  # attempt 3 success
     ]
-    monkeypatch.setattr("src.agents.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
+    monkeypatch.setattr("src.pipeline.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
 
     worker = TestWriterWorker(llm_client=mock_llm)
     monkeypatch.setattr(worker, "_collect_repo_sources", lambda *a, **kw: {"Mock.sol": "contract Mock {}"})
@@ -160,21 +188,21 @@ async def test_extract_code_fallback(mock_llm, dummy_finding, monkeypatch, tmp_p
 
 @pytest.mark.asyncio
 async def test_exploit_fails_but_compiles(mock_llm, dummy_finding, monkeypatch, tmp_path):
-    mock_llm.invoke.return_value = MagicMock(content="```solidity\npragma solidity ^0.8.0; contract ExploitTest { function test_exploit() public {} }\n```")
-    
+    mock_llm.invoke.return_value = MagicMock(content="```solidity\npragma solidity ^0.8.0; contract ExploitTest { function test_exploit() public { assertTrue(true); }}\n```")
+
     mock_sandbox = MagicMock()
     mock_sandbox.tmp_dir = tmp_path
     mock_sandbox.get_test_path.return_value = "test"
     # Single forge test call per attempt — compiles but exploit fails
     mock_sandbox.run.return_value = MagicMock(success=False, stdout="FAIL: revert", stderr="Test failed: Assertion Error")
-    monkeypatch.setattr("src.agents.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
-    
+    monkeypatch.setattr("src.pipeline.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
+
     worker = TestWriterWorker(llm_client=mock_llm)
     monkeypatch.setattr(worker, "_collect_repo_sources", lambda *a, **kw: {"Mock.sol": "contract Mock {}"})
-    
+
     task = WorkerTask(task_id="t1", task_type="test", context={"finding": dummy_finding})
     output = await worker.run(task)
-    
+
     assert output.raw_output["attempts"] == 6  # It will retry to fix it until max attempts
     assert output.raw_output["compiled"] is True
     assert output.raw_output["exploit_success"] is False
@@ -188,32 +216,32 @@ async def test_missing_test_code_key(mock_llm, dummy_finding, monkeypatch, tmp_p
     mock_sandbox = MagicMock()
     mock_sandbox.tmp_dir = tmp_path
     mock_sandbox.get_test_path.return_value = "test"
-    monkeypatch.setattr("src.agents.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
+    monkeypatch.setattr("src.pipeline.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
 
     worker = TestWriterWorker(llm_client=mock_llm)
     monkeypatch.setattr(worker, "_collect_repo_sources", lambda *a, **kw: {"Mock.sol": "contract Mock {}"})
-    
+
     task = WorkerTask(task_id="t1", task_type="test", context={"finding": dummy_finding})
     output = await worker.run(task)
-    
+
     assert output.raw_output["attempts"] == 6
     assert "No Solidity code returned by LLM" in output.raw_output["last_error"]
 
 def test_extract_test_code_direct():
     worker = TestWriterWorker(llm_client=None)
-    
+
     # 1. solidity case
     res1 = worker._extract_test_code("Here is the code:\n```solidity\ncontract A {}\n```")
     assert res1 == "contract A {}"
-    
+
     # 2. sol case
     res2 = worker._extract_test_code("```sol\ncontract B {}\n```")
     assert res2 == "contract B {}"
-    
+
     # 3. unmarked case
     res3 = worker._extract_test_code("```\ncontract C {}\n```")
     assert res3 == "contract C {}"
-    
+
     # 4. full fallback
     res4 = worker._extract_test_code("contract D {}")
     assert res4 == "contract D {}"
@@ -232,19 +260,20 @@ def test_has_exact_test_exploit():
 
 @pytest.mark.asyncio
 async def test_exit_code_takes_precedence_for_exploit_success(mock_llm, dummy_finding, monkeypatch, tmp_path):
-    mock_llm.invoke.return_value = MagicMock(content="```solidity\npragma solidity ^0.8.0; contract ExploitTest { function test_exploit() public {} }\n```")
+    mock_llm.invoke.return_value = MagicMock(content="```solidity\npragma solidity ^0.8.0; contract ExploitTest { function test_exploit() public { assertTrue(true); }}\n```")
     mock_sandbox = MagicMock()
     mock_sandbox.tmp_dir = tmp_path
     mock_sandbox.get_test_path.return_value = "test"
     # Single forge test call: exit code False but [PASS] in logs — exit code should win
     mock_sandbox.run.return_value = MagicMock(success=False, stdout="[PASS]", stderr="")
-    monkeypatch.setattr("src.agents.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
+    monkeypatch.setattr("src.pipeline.workers.test_writer_worker.SandboxManager", lambda repo_path=None: mock_sandbox)
 
     worker = TestWriterWorker(llm_client=mock_llm)
     output = await worker.run(WorkerTask(task_id="t_exit_code", task_type="test", context={"finding": dummy_finding}))
     assert output.raw_output["exploit_success"] is False
 
 
+@pytest.mark.uses_rag
 def test_fetch_rag_context_injects_into_prompt_when_rag_available(dummy_finding, monkeypatch):
     """RAG content appears in prompt when search_security_knowledge returns results."""
     mock_rag_results = [
@@ -270,6 +299,7 @@ def test_fetch_rag_context_injects_into_prompt_when_rag_available(dummy_finding,
     assert "Reentrancy exploit pattern" in user_content or "audit.pdf" in user_content
 
 
+@pytest.mark.uses_rag
 def test_fetch_rag_context_empty_when_rag_unavailable(dummy_finding, monkeypatch):
     """No RAG block when search returns empty."""
     monkeypatch.setattr(
@@ -584,7 +614,7 @@ async def test_error_history_dedup_on_repeated_missing_test_exploit(
         "import \"forge-std/Test.sol\";\n"
         "contract ExploitTest is Test {\n"
         "    function setUp() public {}\n"
-        "    function test_exploit() public {}\n"
+        "    function test_exploit() public { assertTrue(true); }\n"
         "}\n"
         "```"
     )
@@ -600,7 +630,7 @@ async def test_error_history_dedup_on_repeated_missing_test_exploit(
     # Only called after test_exploit() IS present (third attempt)
     mock_sandbox.run.return_value = MagicMock(success=True, stdout="[PASS]", stderr="")
     monkeypatch.setattr(
-        "src.agents.workers.test_writer_worker.SandboxManager",
+        "src.pipeline.workers.test_writer_worker.SandboxManager",
         lambda repo_path=None: mock_sandbox,
     )
 
@@ -674,7 +704,7 @@ async def test_minimal_prompt_activates_after_2_misses(
         "import \"forge-std/Test.sol\";\n"
         "contract ExploitTest is Test {\n"
         "    function setUp() public {}\n"
-        "    function test_exploit() public {}\n"
+        "    function test_exploit() public { assertTrue(true); }\n"
         "}\n"
         "```"
     )
@@ -689,7 +719,7 @@ async def test_minimal_prompt_activates_after_2_misses(
     mock_sandbox.get_test_path.return_value = "test"
     mock_sandbox.run.return_value = MagicMock(success=True, stdout="[PASS]", stderr="")
     monkeypatch.setattr(
-        "src.agents.workers.test_writer_worker.SandboxManager",
+        "src.pipeline.workers.test_writer_worker.SandboxManager",
         lambda repo_path=None: mock_sandbox,
     )
 

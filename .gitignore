@@ -5,21 +5,44 @@ env/
 venv/
 ENV/
 
-# Data and Temporary directories
-data/
+# Data and runtime directories (repo-root only — src/intelligence/data/
+# carries shipped YAML config and must stay tracked)
+/data/
 temp_solidity/
 scratch/
 
-# Debug and Output files
+# Debug and loose output files
 debug_*.py
-*.txt
 *.log
-*.json
-!pyproject.toml
-!package.json
-!tsconfig.json
-!README.md
+bounty_json_raw.txt
+extracted_json_raw.txt
+extracted_json.txt
+extracted_scope.txt
+script_line.txt
 vulnerability_leads.json
+*.html
+!docs/**/*.html
+
+# Research / external skill repos (not part of this codebase)
+research/
+
+# Generated PoC exploit tests (benchmark output)
+proven_exploits/*.t.sol
+proven_exploits/t*.sol
+
+# Foundry PoC scratch output under src/test/
+src/test/
+src/test/*.t.sol
+
+# Ad-hoc scraping / audit artifacts that sometimes land in repo root
+bounty_json_raw.txt
+extracted_json_raw.txt
+extracted_json.txt
+extracted_scope.txt
+script_line.txt
+charm_scope.html
+analysis.log
+output.log
 
 # Python cache
 __pycache__/
@@ -28,6 +51,12 @@ __pycache__/
 *.pyo
 *.pyd
 .ipynb_checkpoints/
+
+# JSON files (except config files)
+*.json
+!pyproject.toml
+!package.json
+!tsconfig.json
 
 # IDE
 .vscode/
@@ -40,8 +69,5 @@ __pycache__/
 Thumbs.db
 desktop.ini
 
-
-# Exploits
-proven_exploits/.env
-env
-env
+# Claude Code editor state (per-developer, not project config)
+.claude/

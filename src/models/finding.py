@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import uuid
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, List
 import logging
+import uuid
+from dataclasses import asdict, dataclass, field
+from enum import Enum
+from typing import Any
 
-from src.agents.base_worker import WorkerOutput
 from src.hotspot_engine import Hotspot
+from src.pipeline.base_worker import WorkerOutput
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +57,8 @@ class Finding:
     affected_function: str
     vulnerability_class: str
     hypothesis: str | None
-    attack_path: List[str]
-    evidence_nodes: List[EvidenceNode]
+    attack_path: list[str]
+    evidence_nodes: list[EvidenceNode]
     confidence: int
     severity_estimate: str
     impact: str | None
@@ -68,19 +68,19 @@ class Finding:
 
     # ── v2: Verdict taxonomy ──────────────────────────────────────
     verdict: str = FindingVerdict.UNASSESSED
-    evidence_tags: List[str] = field(default_factory=list)
+    evidence_tags: list[str] = field(default_factory=list)
 
     # ── v2: Chain analysis fields ─────────────────────────────────
     # preconditions: what must be true for this exploit to work
-    preconditions: List[str] = field(default_factory=list)
+    preconditions: list[str] = field(default_factory=list)
     # preconditions_missing: conditions NOT currently met (enables chain matching)
-    preconditions_missing: List[str] = field(default_factory=list)
+    preconditions_missing: list[str] = field(default_factory=list)
     # postconditions: state changes if this exploit succeeds (enables chain matching)
-    postconditions: List[str] = field(default_factory=list)
+    postconditions: list[str] = field(default_factory=list)
 
     # ── v2: Depth pass tracking ───────────────────────────────────
     depth_pass_count: int = 0
-    depth_verdicts: List[dict] = field(default_factory=list)  # [{agent, verdict, reasoning}]
+    depth_verdicts: list[dict] = field(default_factory=list)  # [{agent, verdict, reasoning}]
 
     # ── v2: Confidence decomposition ──────────────────────────────
     confidence_evidence: int = 0     # 0-100: strength of code/PoC evidence
@@ -90,10 +90,10 @@ class Finding:
     # ── v2: Report fields ─────────────────────────────────────────
     report_id: str = ""           # C-01, H-01, etc. (assigned at report time)
     root_cause_group: str = ""    # for consolidation: same root_cause_group → merged
-    rag_matches: List[dict] = field(default_factory=list)  # [{source, snippet}]
+    rag_matches: list[dict] = field(default_factory=list)  # [{source, snippet}]
 
     # ── v2: Chain analysis fields ─────────────────────────────────
-    chain_ids: List[str] = field(default_factory=list)      # CH-01, CH-02 if part of a chain
+    chain_ids: list[str] = field(default_factory=list)      # CH-01, CH-02 if part of a chain
     chain_role: str = ""                                     # "enabler" or "blocked" or ""
     chain_severity_upgrade: str = ""                         # "MEDIUM → HIGH" etc.
 
@@ -119,7 +119,7 @@ class Finding:
     # Each pipeline stage calls contribute_score() to add/subtract evidence.
     # Final promotion to TestWriter requires plausibility_score >= PROMOTE_THRESHOLD.
     plausibility_score: int = 0
-    plausibility_log: List[dict] = field(default_factory=list)   # [{stage, delta, reason}]
+    plausibility_log: list[dict] = field(default_factory=list)   # [{stage, delta, reason}]
 
     # Speculative findings: confidence at creation was in the 30-49 range.
     # These appear in the report's SPECULATIVE section, not Confirmed.
@@ -145,18 +145,32 @@ class Finding:
             f"→ {self.plausibility_score} ({reason})"
         )
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serializable dict view — used by report/export paths.
+
+        `dataclasses.asdict` recurses into nested dataclasses (e.g.
+        `EvidenceNode`). Enum members are coerced to their string values so the
+        result is JSON-serializable without a custom encoder.
+        """
+        data = asdict(self)
+        for k, v in list(data.items()):
+            if isinstance(v, Enum):
+                data[k] = v.value
+        return data
+
     def compute_mechanical_confidence(self) -> int:
         """
-        Composite = Evidence×0.35 + Consensus×0.25 + RAG×0.2 + LLM_raw×0.2
+        Composite = Evidence×0.40 + Consensus×0.30 + LLM_raw×0.30
         Evidence = max weight of any tag present
+        RAG match is informational only — displayed in reports but does not
+        inflate the confidence score (historical precedent ≠ current vuln).
         """
         tag_weights = [EVIDENCE_TAG_WEIGHTS.get(t, 0.0) for t in self.evidence_tags]
         evidence_score = max(tag_weights) if tag_weights else 0.2
-        rag_score = self.confidence_rag_match / 100
         consensus_score = self.confidence_consensus / 100
         llm_score = self.confidence_evidence / 100
-        composite = (evidence_score * 0.35 + consensus_score * 0.25 +
-                     rag_score * 0.2 + llm_score * 0.2)
+        composite = (evidence_score * 0.40 + consensus_score * 0.30 +
+                     llm_score * 0.30)
         return min(100, round(composite * 100))
 
     @classmethod

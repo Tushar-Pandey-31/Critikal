@@ -10,11 +10,10 @@ validates it BEFORE invoking Slither, catching errors early:
 
 from __future__ import annotations
 
+import logging
 import os
 import re
-import logging
 from collections import defaultdict
-from typing import Optional
 
 from src.ingestion.models import ImportValidation
 
@@ -65,7 +64,7 @@ class ImportResolver:
         (before remapping resolution).
         """
         try:
-            with open(sol_file, 'r', encoding='utf-8', errors='replace') as f:
+            with open(sol_file, encoding='utf-8', errors='replace') as f:
                 content = f.read()
         except Exception as e:
             logger.warning(f"Could not read {sol_file}: {e}")
@@ -82,7 +81,7 @@ class ImportResolver:
         import_path: str,
         from_file: str,
         base_dir: str,
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         Resolve an import path to an absolute filesystem path.
 
@@ -290,7 +289,7 @@ class ImportResolver:
         """Parse a remappings.txt file into a dict."""
         remappings: dict[str, str] = {}
         try:
-            with open(remappings_path, 'r') as f:
+            with open(remappings_path) as f:
                 for line in f:
                     line = line.strip()
                     if "=" in line and not line.startswith("#"):
@@ -305,7 +304,7 @@ class ImportResolver:
         """Extract remappings from foundry.toml."""
         remappings: dict[str, str] = {}
         try:
-            with open(toml_path, 'r') as f:
+            with open(toml_path) as f:
                 content = f.read()
 
             # Look for remappings = [...] section

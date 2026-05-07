@@ -1,12 +1,13 @@
-import pytest
-import uuid
 import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import networkx as nx
-from unittest.mock import MagicMock, AsyncMock, patch
-from src.agents.workers.attack_hypothesis_worker import AttackHypothesisWorker, CATEGORY_TO_CLASS
-from src.agents.base_worker import WorkerTask, WorkerOutput, WorkerAgent
+import pytest
+
 from src.hotspot_engine import Hotspot
 from src.models.finding import Finding, FindingStatus
+from src.pipeline.base_worker import WorkerAgent, WorkerOutput, WorkerTask
+from src.pipeline.workers.attack_hypothesis_worker import CATEGORY_TO_CLASS, AttackHypothesisWorker
 
 # =================================================================
 #  Fixtures
@@ -39,8 +40,8 @@ def reentrancy_hotspot():
         risk_categories=["reentrancy"],
         signals={
             "reentrancy_risk": True,
-            "state_write_after_external_call": True, 
-            "makes_external_call": True, 
+            "state_write_after_external_call": True,
+            "makes_external_call": True,
             "entry_points": ["Vault.withdraw"],
             "reachable_from_external_entry": True
         },
@@ -108,11 +109,17 @@ async def test_attack_path_is_ordered_list_of_strings(mock_graph, mock_llm, reen
 
 @pytest.mark.asyncio
 async def test_attack_path_starts_from_entry_point(mock_graph, mock_llm, reentrancy_hotspot):
-    # Walkthrough Gate: Confirm prompt instructions for entry point start
+    # Walkthrough Gate: prompt must instruct an externally-callable entry point
+    # and require the attack_path to be a multi-step call sequence. The exact
+    # phrasing has been rewritten across prompt overhauls; assert on the
+    # invariants instead of the literal sentence.
     worker = AttackHypothesisWorker(graph=mock_graph, llm_client=mock_llm)
     graph_context = {"signals_summary": reentrancy_hotspot.signals}
     prompt = worker._build_prompt(reentrancy_hotspot, graph_context, {})
-    assert "Start with the external entry point, end with the vulnerable function" in prompt[0]["content"]
+    body = prompt[0]["content"]
+    assert "external" in body and "public" in body
+    assert "attack_path" in body
+    assert "sequence" in body
 
 @pytest.mark.asyncio
 async def test_evidence_node_ids_is_list_of_strings(mock_graph, mock_llm, reentrancy_hotspot):
@@ -190,7 +197,7 @@ async def test_recon_context_included_in_prompt(mock_graph, mock_llm, reentrancy
 async def test_worker_does_not_crash_with_empty_recon_context(mock_graph, mock_llm, reentrancy_hotspot):
     mock_llm.ainvoke.return_value = MagicMock(content='{"vulnerability_class": "reentrancy", "confidence": 90, "attack_path": ["V"], "evidence_node_ids": ["E"]}')
     worker = AttackHypothesisWorker(graph=mock_graph, llm_client=mock_llm)
-    task = WorkerTask(task_id="t11", task_type="attack", hotspot=reentrancy_hotspot, context={}) 
+    task = WorkerTask(task_id="t11", task_type="attack", hotspot=reentrancy_hotspot, context={})
     output = await worker.run(task)
     assert output.confidence == 90
 
@@ -199,7 +206,7 @@ async def test_recon_context_read_not_requeried(mock_graph, mock_llm, reentrancy
     # Robust behavior test: Ensure it uses the value from the task context
     recon = {"protocol_type": "custom_protocol"}
     task = WorkerTask(task_id="t12", task_type="attack", hotspot=reentrancy_hotspot, context={"recon_context": recon})
-    
+
     worker = AttackHypothesisWorker(graph=mock_graph, llm_client=mock_llm)
     with patch.object(worker, '_build_prompt', wraps=worker._build_prompt) as mock_build:
         mock_llm.ainvoke.return_value = MagicMock(content='{"vulnerability_class": "reentrancy", "confidence": 90, "attack_path": ["V"], "evidence_node_ids": ["E"]}')
@@ -235,7 +242,7 @@ def test_finding_attack_path_matches_worker_output(reentrancy_hotspot):
         raw_output={}
     )
     finding = Finding.from_worker_output(output, reentrancy_hotspot)
-    assert finding.attack_path == ["Vault.withdraw", "Vault.balances"] 
+    assert finding.attack_path == ["Vault.withdraw", "Vault.balances"]
 
 def test_finding_evidence_nodes_match_evidence_node_ids(reentrancy_hotspot):
     ids = ["Vault.withdraw", "Vault.balances"]
@@ -250,10 +257,18 @@ def test_finding_evidence_nodes_match_evidence_node_ids(reentrancy_hotspot):
     assert [n.node_id for n in finding.evidence_nodes] == ["Vault.withdraw", "Vault.balances"]
 
 @pytest.mark.asyncio
-async def test_coordinator_suppresses_zero_confidence(mock_graph, reentrancy_hotspot):
+async def test_coordinator_suppresses_zero_confidence(
+    mock_graph, reentrancy_hotspot, monkeypatch
+):
     # Walkthrough Gate: At least one hotspot where confidence was 0 and Coordinator skipped it
-    from src.agents.lead_agent import coordinator_node
-    
+    from src.pipeline.lead_agent import coordinator_node
+
+    # Disable post-hoc workers added after this test was written; their absence
+    # is irrelevant to the suppression behaviour under test, and they would
+    # otherwise issue real LLM calls.
+    monkeypatch.setenv("ASSUMPTION_WORKER_ENABLED", "false")
+    monkeypatch.setenv("EXECUTION_TRACE_ENABLED", "false")
+
     state = {
         "graph": mock_graph,
         "messages": [],
@@ -263,13 +278,13 @@ async def test_coordinator_suppresses_zero_confidence(mock_graph, reentrancy_hot
         "contract_names": ["Vault"],
         "contract_addresses": {},
     }
-    
+
     # Mocking dependencies in lead_agent.py
-    with patch("src.agents.lead_agent.get_high_risk_hotspots", return_value=[reentrancy_hotspot]), \
-         patch("src.agents.lead_agent.ReconWorker") as mock_recon_cls, \
-         patch("src.agents.lead_agent.AttackHypothesisWorker") as mock_attack_cls, \
-         patch("src.agents.lead_agent.get_llm") as mock_get_llm:
-        
+    with patch("src.pipeline.lead_agent.get_high_risk_hotspots", return_value=[reentrancy_hotspot]), \
+         patch("src.pipeline.lead_agent.ReconWorker") as mock_recon_cls, \
+         patch("src.pipeline.lead_agent.AttackHypothesisWorker") as mock_attack_cls, \
+         patch("src.pipeline.lead_agent.get_llm") as mock_get_llm:
+
         # Mock LLM for coordinator
         mock_llm = MagicMock()
         mock_get_llm.return_value = mock_llm
@@ -277,19 +292,19 @@ async def test_coordinator_suppresses_zero_confidence(mock_graph, reentrancy_hot
         mock_msg = MagicMock()
         mock_msg.content = '{"vulnerability_leads": [], "target_nodes": [], "analysis_summary": {"strategy": "test"}, "escalation_needed": false}'
         mock_llm.invoke.return_value = mock_msg
-        
+
         # Mock ReconWorker returns context
         mock_recon = mock_recon_cls.return_value
         mock_recon.run = AsyncMock(return_value=WorkerOutput(
             worker_type="recon", confidence=0, raw_output={"protocol_type": "vault"}
         ))
-        
+
         # Mock AttackWorker returns zero confidence
         mock_attack = mock_attack_cls.return_value
         mock_attack.run = AsyncMock(return_value=WorkerOutput(
             worker_type="attack_hypothesis", confidence=0, raw_output={}
         ))
-        
+
         result = await coordinator_node(state)
         assert len(result.get("findings", [])) == 0
 

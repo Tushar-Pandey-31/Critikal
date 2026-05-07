@@ -1,8 +1,7 @@
-from datetime import datetime
 
-from src.agents.base_worker import WorkerOutput
 from src.hotspot_engine import Hotspot
 from src.models.finding import Finding
+from src.pipeline.base_worker import WorkerOutput
 
 
 def test_finding_normalizes_attack_and_evidence_ids():

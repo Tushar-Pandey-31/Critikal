@@ -1,11 +1,11 @@
 import networkx as nx
 
-from src.graph_builder import GraphBuilder
+from src.graph import GraphBuilder
 from src.utils.graph_queries import (
     GraphQueries,
     get_accounting_invariant_risks,
-    get_external_call_risks,
     get_exploit_targets,
+    get_external_call_risks,
 )
 
 

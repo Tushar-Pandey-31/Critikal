@@ -1,7 +1,7 @@
-import pytest
 import networkx as nx
-from src.graph_builder import GraphBuilder
-from src.utils.graph_queries import GraphQueries
+
+from src.graph import GraphBuilder
+
 
 def _add_contract(g: nx.DiGraph, name: str):
     g.add_node(name, type="contract", name=name)
@@ -31,9 +31,9 @@ class TestExternalCallReasoner:
         f = _add_func(g, "DeFi", "deposit", reentrancy_risk=True) # Has low level reentrancy match
         target = _add_func(g, "ERC20", "transferFrom")
         g.add_edge(f, target, relationship="EXTERNAL_CALL", target_expression="token.transferFrom", return_value_checked=True)
-        
+
         _run_analyzer(g)
-        
+
         # Token transfer matched with reentrancy should get 10pts instead of 45pts.
         assert "TOKEN_TRANSFER" in g.nodes[f]["external_call_classes"]
         assert g.nodes[f]["external_call_risk_score"] == 10
@@ -45,9 +45,9 @@ class TestExternalCallReasoner:
         f = _add_func(g, "Vuln", "withdraw", reentrancy_risk=True, state_write_after_external_call=True)
         target = _add_func(g, "Unknown", "fallback")
         g.add_edge(f, target, relationship="EXTERNAL_CALL", target_expression="msg.sender.call{value: 1}()", return_value_checked=True)
-        
+
         _run_analyzer(g)
-        
+
         # LOW_LEVEL_CALL + Write After Call + Reentrancy = 45pts (reentrancy) + 30pts (dep risk)
         assert "LOW_LEVEL_CALL" in g.nodes[f]["external_call_classes"]
         assert "REENTRANCY_RISK" in g.nodes[f]["external_risk_tags"]
@@ -60,9 +60,9 @@ class TestExternalCallReasoner:
         f = _add_func(g, "DeFi", "checkPrice")
         target = _add_func(g, "Oracle", "latestRoundData")
         g.add_edge(f, target, relationship="EXTERNAL_CALL", target_expression="oracle.latestRoundData()", return_value_checked=True)
-        
+
         _run_analyzer(g)
-        
+
         assert "ORACLE" in g.nodes[f]["external_call_classes"]
         assert g.nodes[f]["external_call_risk_score"] == 0
         assert "EXTERNAL_DEPENDENCY_RISK" not in g.nodes[f]["external_risk_tags"]
@@ -73,9 +73,9 @@ class TestExternalCallReasoner:
         f = _add_func(g, "Vuln", "badCall")
         target = _add_func(g, "Unknown", "doSomething")
         g.add_edge(f, target, relationship="EXTERNAL_CALL", target_expression="target.call(data)", return_value_checked=False)
-        
+
         _run_analyzer(g)
-        
+
         assert "LOW_LEVEL_CALL" in g.nodes[f]["external_call_classes"]
         assert "UNCHECKED_RETURN" in g.nodes[f]["external_risk_tags"]
         # Assuming NO write after call here. Just the unchecked risky call.
@@ -90,9 +90,9 @@ class TestExternalCallReasoner:
         target = _add_func(g, "Unknown", "anyFunc")
         # Let's say it's standard call syntax, but untrusted target
         g.add_edge(f, target, relationship="EXTERNAL_CALL", target_expression="target(addr).callFunc()", return_value_checked=True)
-        
+
         _run_analyzer(g)
-        
+
         assert "UNTRUSTED_CONTRACT" in g.nodes[f]["external_call_classes"]
         assert "EXTERNAL_DEPENDENCY_RISK" in g.nodes[f]["external_risk_tags"]
         assert g.nodes[f]["external_call_risk_score"] == 30

@@ -7,7 +7,7 @@ Threat Intelligence Layer (P0)
   false-positive guards, and prompt-injectable bundles.
 """
 
-from src.intelligence.threat_profiler import ThreatProfiler
 from src.intelligence.attack_vector_db import AttackVectorDB
+from src.intelligence.threat_profiler import ThreatProfiler
 
-__all__ = ["ThreatProfiler", "AttackVectorDB"]
+__all__ = ["AttackVectorDB", "ThreatProfiler"]

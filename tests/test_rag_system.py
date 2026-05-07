@@ -1,8 +1,9 @@
+
 import pytest
-import asyncio
-from src.models.finding import Finding
-from src.knowledge.rag_system import rag_mandatory_sweep
+
 import src.knowledge.rag_system
+from src.knowledge.rag_system import rag_mandatory_sweep
+
 
 class MockFinding:
     def __init__(self, v_class="test", hyp="test", confidence=50):
@@ -13,12 +14,27 @@ class MockFinding:
         self.confidence = confidence
         self.evidence_tags = []
 
+def _match(vuln_class: str, relevance: float = 0.4):
+    return {
+        "content": "x" * 50,
+        "source": "s1",
+        "vulnerability_class": vuln_class,
+        "relevance_score": relevance,
+    }
+
 def mock_search_results(query: str, k: int = 3):
-    if "zero_matches" in query:
+    # _compute_rag_confidence keys off vulnerability_class + relevance_score,
+    # so mocks must include both. _build_exploit_query() replaces "_" with
+    # " " before embedding, so route on the un-underscored class name.
+    if "zero matches" in query:
         return []
-    if "five_matches" in query:
-        return [{"content": "x"*50, "source": "s1"}] * 5
-    return [{"content": "x"*50, "source": "s1"}]
+    if "five matches" in query:
+        # Five high-quality, same-class matches → high_quality >= 2 → 100
+        return [_match("five_matches", 0.5)] * 5
+    # Single moderate match (different class so it scores as moderate, not
+    # high_quality) → moderate >= 1 → 40, and best_relevance >= 0.4 so the
+    # [RAG-MATCH] tag is appended.
+    return [_match("other_class", 0.4)]
 
 @pytest.fixture(autouse=True)
 def mock_rag_db(monkeypatch):

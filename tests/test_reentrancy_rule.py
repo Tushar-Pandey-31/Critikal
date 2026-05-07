@@ -1,13 +1,15 @@
 import os
 import sys
+
 import pytest
 
 # Add src to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 from analysis_engine import AnalysisEngine
-from graph_builder import GraphBuilder
+from src.graph import GraphBuilder
 from utils.graph_queries import GraphQueries
+
 
 @pytest.fixture(scope="module")
 def graph_and_queries():
@@ -26,16 +28,16 @@ def test_reentrancy_risk_low_level_call(graph_and_queries):
     graph, _ = graph_and_queries
     node_id = "ExternalCallTest::lowLevelCall"
     data = graph.nodes[node_id]
-    
+
     # This should be a risk: external entry, makes call, writes state, CEI violation
     assert data.get("reentrancy_risk") == True
     assert data.get("reentrancy_risk_score") >= 10
-    
+
 def test_reentrancy_risk_safe_pull(graph_and_queries):
     graph, _ = graph_and_queries
     node_id = "ExternalCallTest::safePull"
     data = graph.nodes[node_id]
-    
+
     # This should NOT be a risk: safe CEI
     assert data.get("reentrancy_risk") == False
     assert data.get("reentrancy_risk_score") == 0
@@ -44,7 +46,7 @@ def test_reentrancy_risk_no_mutation(graph_and_queries):
     graph, _ = graph_and_queries
     node_id = "ExternalCallTest::externalCallNoMutation"
     data = graph.nodes[node_id]
-    
+
     # This should NOT be a risk: no mutation
     assert data.get("reentrancy_risk") == False
     assert data.get("reentrancy_risk_score") == 0
@@ -115,7 +117,7 @@ def test_cei_violation_only_for_transfer(graph_and_queries):
 def test_query_reentrancy_risks(graph_and_queries):
     _, queries = graph_and_queries
     risks = queries.get_reentrancy_risks(contract_name="ExternalCallTest")
-    
+
     risk_ids = [r["function_id"] for r in risks]
     assert "ExternalCallTest::lowLevelCall" in risk_ids
     assert "ExternalCallTest::callThenWrite" in risk_ids
@@ -126,7 +128,7 @@ def test_query_reentrancy_risks(graph_and_queries):
     assert "ExternalCallTest::sendThenWrite" not in risk_ids
     assert "ExternalCallTest::sendEther" not in risk_ids
     assert "ExternalCallTest::viewCallThenWrite" not in risk_ids
-    
+
     for r in risks:
         assert r["reentrancy_risk_score"] >= 10
         assert len(r["propagated_state_variables"]) > 0

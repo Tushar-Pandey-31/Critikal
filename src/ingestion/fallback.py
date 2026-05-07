@@ -14,20 +14,18 @@ Fallback levels:
 
 from __future__ import annotations
 
-import os
 import logging
-import traceback
-from typing import Optional
+import os
 
 from slither.slither import Slither
 
-from src.ingestion.models import (
-    CompilationCluster,
-    ClusterResult,
-)
-from src.ingestion.solc_manager import SolcManager
 from src.ingestion.framework_detector import FrameworkDetector
 from src.ingestion.import_resolver import ImportResolver
+from src.ingestion.models import (
+    ClusterResult,
+    CompilationCluster,
+)
+from src.ingestion.solc_manager import SolcManager
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +57,22 @@ class FallbackCompiler:
         Returns a ClusterResult with the Slither object on success,
         or error details on failure.
         """
-        # Ensure correct solc version for this cluster
+        # Ensure correct solc version for this cluster. If the install/switch
+        # fails (e.g. slow GitHub download, unavailable version) we MUST stop
+        # here — otherwise compilation silently runs against whatever solc is
+        # globally active and produces misleading "requires different compiler
+        # version" errors downstream.
         if cluster.solc_version:
-            self.solc_manager.ensure_version(cluster.solc_version)
+            if not self.solc_manager.ensure_version(cluster.solc_version):
+                return ClusterResult(
+                    cluster_id=cluster.cluster_id,
+                    success=False,
+                    error=(
+                        f"solc {cluster.solc_version} unavailable: solc-select "
+                        f"install/switch failed (network issue or invalid version). "
+                        f"Run `solc-select install {cluster.solc_version}` manually."
+                    ),
+                )
 
         # Determine framework-specific args
         framework = cluster.framework
@@ -151,10 +162,10 @@ class FallbackCompiler:
     def _try_compile(
         self,
         target: str,
-        framework: Optional[str],
+        framework: str | None,
         solc_args: str,
         solc_remaps: list[str],
-    ) -> Optional[Slither]:
+    ) -> Slither | None:
         """
         Try a single Slither invocation on the target.
 
@@ -193,10 +204,10 @@ class FallbackCompiler:
     def _compile_subdirs(
         self,
         cluster: CompilationCluster,
-        framework: Optional[str],
+        framework: str | None,
         solc_args: str,
         solc_remaps: list[str],
-    ) -> Optional[ClusterResult]:
+    ) -> ClusterResult | None:
         """
         Try compiling each subdirectory of the cluster root that
         contains .sol files.
@@ -257,7 +268,7 @@ class FallbackCompiler:
         solc_args: str,
         solc_remaps: list[str],
         repo_path: str,
-    ) -> Optional[ClusterResult]:
+    ) -> ClusterResult | None:
         """
         Build import graph for the cluster's files, find connected
         components, and compile each component separately.
@@ -327,7 +338,7 @@ class FallbackCompiler:
         cluster: CompilationCluster,
         solc_args: str,
         solc_remaps: list[str],
-    ) -> Optional[ClusterResult]:
+    ) -> ClusterResult | None:
         """
         Last resort: compile each .sol file individually.
         """
@@ -365,7 +376,7 @@ class FallbackCompiler:
     @staticmethod
     def _get_compilation_args(
         cluster_path: str,
-        framework: Optional[str],
+        framework: str | None,
         repo_path: str,
     ) -> tuple[str, list[str]]:
         """
@@ -390,7 +401,7 @@ class FallbackCompiler:
         return solc_args, solc_remaps
 
 
-def merge_slither_objects(objects: list[Slither]) -> Optional[Slither]:
+def merge_slither_objects(objects: list[Slither]) -> Slither | None:
     """
     Merge multiple Slither objects into a single combined object.
 

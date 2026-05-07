@@ -1,9 +1,10 @@
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-from src.agents.workers.recon_worker import ReconWorker
-from src.agents.base_worker import WorkerAgent, WorkerOutput
-from src.tools.etherscan_client import EtherscanClient
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
+from src.pipeline.base_worker import WorkerAgent, WorkerOutput
+from src.pipeline.workers.recon_worker import ReconWorker
+from src.tools.etherscan_client import EtherscanClient
 
 # ------------------------------------------------------------------ #
 #  Fixtures                                                             #
@@ -27,8 +28,8 @@ def stub_etherscan():
 
 @pytest.fixture
 def recon_worker(mock_graph, mock_llm, stub_etherscan):
-    with patch("src.agents.workers.recon_worker.get_external_entry_points") as mock_ep, \
-         patch("src.agents.workers.recon_worker.get_privileged_roles") as mock_roles:
+    with patch("src.pipeline.workers.recon_worker.get_external_entry_points") as mock_ep, \
+         patch("src.pipeline.workers.recon_worker.get_privileged_roles") as mock_roles:
 
         mock_ep.return_value = [
             {"name": "deposit", "node_id": "Vault.deposit"},
@@ -56,7 +57,7 @@ def test_recon_worker_extends_worker_agent(recon_worker):
 async def test_recon_worker_returns_worker_output(recon_worker):
     with patch.object(recon_worker, "_gather_rag_intel", new_callable=AsyncMock) as mock_rag:
         mock_rag.return_value = {"sources_used": [], "additional_patterns": [], "raw_results": []}
-        from src.agents.base_worker import WorkerTask
+        from src.pipeline.base_worker import WorkerTask
         task = WorkerTask(task_id="test", task_type="recon", context={"contract_names": ["Vault"], "contract_addresses": {}})
         result = await recon_worker.run(task)
     assert isinstance(result, WorkerOutput)
@@ -66,7 +67,7 @@ async def test_recon_worker_returns_worker_output(recon_worker):
 async def test_recon_worker_type_is_recon(recon_worker):
     with patch.object(recon_worker, "_gather_rag_intel", new_callable=AsyncMock) as mock_rag:
         mock_rag.return_value = {"sources_used": [], "additional_patterns": [], "raw_results": []}
-        from src.agents.base_worker import WorkerTask
+        from src.pipeline.base_worker import WorkerTask
         task = WorkerTask(task_id="test", task_type="recon", context={"contract_names": ["Vault"], "contract_addresses": {}})
         result = await recon_worker.run(task)
     assert result.worker_type == "recon"
@@ -76,7 +77,7 @@ async def test_recon_worker_type_is_recon(recon_worker):
 async def test_recon_worker_confidence_always_zero(recon_worker):
     with patch.object(recon_worker, "_gather_rag_intel", new_callable=AsyncMock) as mock_rag:
         mock_rag.return_value = {"sources_used": [], "additional_patterns": [], "raw_results": []}
-        from src.agents.base_worker import WorkerTask
+        from src.pipeline.base_worker import WorkerTask
         task = WorkerTask(task_id="test", task_type="recon", context={"contract_names": ["Vault"], "contract_addresses": {}})
         result = await recon_worker.run(task)
     assert result.confidence == 0
@@ -86,7 +87,7 @@ async def test_recon_worker_confidence_always_zero(recon_worker):
 async def test_recon_worker_attack_path_always_empty(recon_worker):
     with patch.object(recon_worker, "_gather_rag_intel", new_callable=AsyncMock) as mock_rag:
         mock_rag.return_value = {"sources_used": [], "additional_patterns": [], "raw_results": []}
-        from src.agents.base_worker import WorkerTask
+        from src.pipeline.base_worker import WorkerTask
         task = WorkerTask(task_id="test", task_type="recon", context={"contract_names": ["Vault"], "contract_addresses": {}})
         result = await recon_worker.run(task)
     assert result.attack_path == []
@@ -105,7 +106,7 @@ async def test_raw_output_has_all_required_keys(recon_worker):
     ]
     with patch.object(recon_worker, "_gather_rag_intel", new_callable=AsyncMock) as mock_rag:
         mock_rag.return_value = {"sources_used": [], "additional_patterns": [], "raw_results": []}
-        from src.agents.base_worker import WorkerTask
+        from src.pipeline.base_worker import WorkerTask
         task = WorkerTask(task_id="test", task_type="recon", context={"contract_names": ["Vault"], "contract_addresses": {}})
         result = await recon_worker.run(task)
     for key in required_keys:
@@ -120,7 +121,7 @@ async def test_onchain_risk_signals_has_required_keys(recon_worker):
     ]
     with patch.object(recon_worker, "_gather_rag_intel", new_callable=AsyncMock) as mock_rag:
         mock_rag.return_value = {"sources_used": [], "additional_patterns": [], "raw_results": []}
-        from src.agents.base_worker import WorkerTask
+        from src.pipeline.base_worker import WorkerTask
         task = WorkerTask(task_id="test", task_type="recon", context={"contract_names": ["Vault"], "contract_addresses": {}})
         result = await recon_worker.run(task)
     signals = result.raw_output["onchain_risk_signals"]
@@ -132,7 +133,7 @@ async def test_onchain_risk_signals_has_required_keys(recon_worker):
 async def test_raw_output_data_source_is_stub_when_no_addresses(recon_worker):
     with patch.object(recon_worker, "_gather_rag_intel", new_callable=AsyncMock) as mock_rag:
         mock_rag.return_value = {"sources_used": [], "additional_patterns": [], "raw_results": []}
-        from src.agents.base_worker import WorkerTask
+        from src.pipeline.base_worker import WorkerTask
         task = WorkerTask(task_id="test", task_type="recon", context={"contract_names": ["Vault"], "contract_addresses": {}})
         result = await recon_worker.run(task)
     assert result.raw_output["onchain_risk_signals"]["data_source"] == "stub"
@@ -142,7 +143,7 @@ async def test_raw_output_data_source_is_stub_when_no_addresses(recon_worker):
 async def test_raw_output_known_attack_patterns_is_non_empty(recon_worker):
     with patch.object(recon_worker, "_gather_rag_intel", new_callable=AsyncMock) as mock_rag:
         mock_rag.return_value = {"sources_used": [], "additional_patterns": [], "raw_results": []}
-        from src.agents.base_worker import WorkerTask
+        from src.pipeline.base_worker import WorkerTask
         task = WorkerTask(task_id="test", task_type="recon", context={"contract_names": ["Vault"], "contract_addresses": {}})
         result = await recon_worker.run(task)
     assert len(result.raw_output["known_attack_patterns"]) > 0
@@ -173,7 +174,7 @@ def test_unknown_classification_on_no_matches(recon_worker):
 def test_unknown_type_still_returns_attack_patterns(recon_worker):
     graph_intel = {"function_names": ["randomFunc"], "privileged_roles": {}, "entry_point_count": 1}
     protocol_type = recon_worker._classify_protocol(graph_intel)
-    from src.agents.workers.recon_worker import KNOWN_ATTACK_PATTERNS
+    from src.pipeline.workers.recon_worker import KNOWN_ATTACK_PATTERNS
     patterns = KNOWN_ATTACK_PATTERNS.get(protocol_type, KNOWN_ATTACK_PATTERNS["unknown"])
     assert len(patterns) > 0
 
@@ -210,8 +211,8 @@ async def test_recon_worker_survives_etherscan_failure(mock_graph, mock_llm):
     broken_etherscan = MagicMock()
     broken_etherscan.get_contract_info.side_effect = Exception("Network error")
 
-    with patch("src.agents.workers.recon_worker.get_external_entry_points") as mock_ep, \
-         patch("src.agents.workers.recon_worker.get_privileged_roles") as mock_roles:
+    with patch("src.pipeline.workers.recon_worker.get_external_entry_points") as mock_ep, \
+         patch("src.pipeline.workers.recon_worker.get_privileged_roles") as mock_roles:
         mock_ep.return_value = [{"name": "deposit", "node_id": "V.deposit"}]
         mock_roles.return_value = []
 
@@ -223,7 +224,7 @@ async def test_recon_worker_survives_etherscan_failure(mock_graph, mock_llm):
 
         with patch.object(worker, "_gather_rag_intel", new_callable=AsyncMock) as mock_rag:
             mock_rag.return_value = {"sources_used": [], "additional_patterns": [], "raw_results": []}
-            from src.agents.base_worker import WorkerTask
+            from src.pipeline.base_worker import WorkerTask
         task = WorkerTask(task_id="test", task_type="recon", context={"contract_names": ["Vault"], "contract_addresses": {"Vault": "0x1234"}})
         result = await worker.run(task)
 
@@ -257,9 +258,10 @@ def test_recon_context_passed_to_worker_task_context():
     # WorkerTask might not be defined in base_worker, need to check or skip if complex
     # Let's assume it exists or just test the logic
     try:
-        from src.agents.lead_agent import WorkerOutput as WO # just for visibility
-    except: pass
-    
+        pass  # just for visibility
+    except Exception:
+        pass
+
     recon_context = {"protocol_type": "vault", "known_attack_patterns": ["reentrancy"]}
     # Mocking a task object
     task = MagicMock()

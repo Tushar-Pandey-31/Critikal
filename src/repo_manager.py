@@ -1,10 +1,8 @@
 import logging
 import os
-import subprocess
 import shutil
-from typing import Optional
-
 import stat
+import subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +20,20 @@ class RepoManager:
         func(path)
 
     def _normalize_repo_url(self, url: str) -> str:
-        """Convert GitHub HTTPS URLs to standard .git format if needed."""
-        if url.startswith("https://github.com/"):
-            if not url.endswith(".git"):
-                return f"{url}.git"
+        """
+        Optionally convert GitHub HTTPS URLs to SSH form. Off by default —
+        public repos clone fine over HTTPS (CI runners and fresh installs
+        don't have an SSH key configured). Set ``CRITIKAL_GIT_USE_SSH=1`` to
+        opt in when cloning private repos that require SSH auth.
+        """
+        if (
+            os.environ.get("CRITIKAL_GIT_USE_SSH", "").lower() in ("1", "true", "yes")
+            and url.startswith("https://github.com/")
+        ):
+            path = url.removeprefix("https://github.com/")
+            if path.endswith(".git"):
+                return f"git@github.com:{path}"
+            return f"git@github.com:{path}.git"
         return url
 
     def clone_repo(self, url: str) -> str:
@@ -39,9 +47,9 @@ class RepoManager:
         repo_name = os.path.basename(os.path.normpath(url))
         if repo_name.endswith(".git"):
             repo_name = repo_name[:-4]
-        
+
         target_path = os.path.join(self.workspace_dir, repo_name)
-        
+
         if os.path.exists(target_path):
             print(f"Directory {target_path} already exists. Removing it to clone fresh...")
             try:
@@ -50,15 +58,23 @@ class RepoManager:
                 print(f"shutil.rmtree failed: {e}. Trying system command...")
                 abs_target = os.path.abspath(target_path)
                 if os.name == 'nt':
-                    # Windows specific robust delete. Use powershell for better path handling.
-                    subprocess.run(["powershell", "-Command", f"Remove-Item -Recurse -Force '{abs_target}'"], check=False)
+                    # -LiteralPath bypasses PowerShell wildcard interpretation and the
+                    # path is passed as a separate argv token, so a crafted repo name
+                    # like  ';rm -rf /;'  cannot break out of the quoting.
+                    subprocess.run(
+                        [
+                            "powershell", "-NoProfile", "-NonInteractive", "-Command",
+                            "Remove-Item", "-LiteralPath", abs_target, "-Recurse", "-Force",
+                        ],
+                        check=False,
+                    )
                 else:
-                    subprocess.run(["rm", "-rf", abs_target], check=False)
-            
+                    subprocess.run(["rm", "-rf", "--", abs_target], check=False)
+
             # Double check
             if os.path.exists(target_path):
                 print(f"Warning: Failed to completely remove {target_path}. Clone may fail.")
-            
+
         # Check if local directory
         if os.path.isdir(url):
             print(f"Copying local directory {url} to {target_path}...")
@@ -67,12 +83,15 @@ class RepoManager:
             _init_submodules(target_path)
         else:
             _clone_timeout = int(os.environ.get("CLONE_TIMEOUT", "300"))
+            # Prevent git from hanging on interactive credential prompts
+            _env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
             try:
                 subprocess.run(
                     ["git", "clone", "--depth", "1", "--recurse-submodules", "--shallow-submodules", url, target_path],
                     check=True,
                     capture_output=True,
                     timeout=_clone_timeout,
+                    env=_env,
                 )
                 print("Clone successful (with submodules).")
             except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
@@ -80,14 +99,15 @@ class RepoManager:
                     print(f"Warning: Clone with submodules failed. Error: {e.stderr.decode('utf-8') if e.stderr else 'Unknown'}. Retrying without submodules...")
                 else:
                     print("Warning: Clone timed out. Retrying without submodules...")
-                
+
                 if os.path.exists(target_path):
                     shutil.rmtree(target_path, ignore_errors=True)
-                
+
                 subprocess.run(
                     ["git", "clone", "--depth", "1", url, target_path],
                     check=True, capture_output=True,
                     timeout=_clone_timeout,
+                    env=_env,
                 )
                 _init_submodules(target_path)
             _init_submodules(target_path)
@@ -102,7 +122,7 @@ class RepoManager:
         Detects project type (Foundry or Hardhat) and installs dependencies.
         """
         print(f"Checking for dependencies in {repo_path}...")
-        
+
         # Check for Foundry
         if os.path.exists(os.path.join(repo_path, "foundry.toml")):
             print("Foundry project detected.")
@@ -113,7 +133,7 @@ class RepoManager:
                 print(f"Error installing Foundry dependencies: {e.stderr.decode()}")
             except FileNotFoundError:
                 print("Warning: 'forge' executable not found. Skipping Foundry dependency installation.")
-                
+
         # Check for Hardhat
         if os.path.exists(os.path.join(repo_path, "hardhat.config.js")) or \
            os.path.exists(os.path.join(repo_path, "hardhat.config.ts")):

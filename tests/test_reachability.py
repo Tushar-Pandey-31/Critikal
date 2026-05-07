@@ -6,23 +6,24 @@ and leaves dead code unmarked.
 """
 import os
 import sys
+
 import pytest
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 from analysis_engine import AnalysisEngine
-from graph_builder import GraphBuilder
+from src.graph import GraphBuilder
 
 
 @pytest.fixture(scope="module")
 def graph():
     """Build graph from all test contracts."""
     contract_path = os.path.join(os.getcwd(), 'tests', 'contracts')
-    
+
     engine = AnalysisEngine()
     slither_obj = engine.run_analysis(contract_path)
     assert slither_obj is not None, "Slither analysis failed"
-    
+
     builder = GraphBuilder()
     builder.build_graph(slither_obj)
     return builder.graph

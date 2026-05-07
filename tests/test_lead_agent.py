@@ -1,19 +1,21 @@
-import pytest
-import json
 import warnings
 from unittest.mock import MagicMock, patch
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from src.agents.lead_agent import (
-    lead_researcher_node,
+
+import pytest
+from langchain_core.messages import AIMessage
+
+from src.pipeline.lead_agent import (
+    _finding_priority,
+    _repo_name_from_url,
     coordinator_node,
     get_llm,
+    lead_researcher_node,
     set_tools,
-    _repo_name_from_url,
-    _finding_priority,
 )
 from src.utils.node_ids import normalize_node_id
 
-@patch("src.agents.lead_agent.ChatGoogleGenerativeAI")
+
+@patch("src.pipeline.lead_agent.ChatGoogleGenerativeAI")
 def test_get_llm(mock_chat):
     """1. Test LLM initialization (Fix 1 - Option A)."""
     # Test without tools
@@ -21,16 +23,16 @@ def test_get_llm(mock_chat):
     llm = get_llm(model_name="gemini-test")
     assert llm is not None
     mock_chat.assert_called()
-    
+
     # Test with tools
     mock_tool = MagicMock()
     set_tools([mock_tool])
     llm_with_tools = get_llm(model_name="gemini-test")
-    
+
     # Verify bind_tools was called on the instance returned by ChatGoogleGenerativeAI
     mock_chat.return_value.bind_tools.assert_called_with([mock_tool])
 
-@patch("src.agents.lead_agent.get_llm")
+@patch("src.pipeline.lead_agent.get_llm")
 @pytest.mark.asyncio
 async def test_coordinator_node_json_output(mock_get_llm):
     """2. Test coordinator parsing JSON output (Fix 1 - Option A)."""
@@ -56,7 +58,7 @@ async def test_coordinator_node_json_output(mock_get_llm):
     mock_llm_instance.invoke.return_value = AIMessage(content=mock_response_content)
     mock_llm_instance.invoke.return_value.tool_calls = []
     mock_get_llm.return_value = mock_llm_instance
-    
+
     mock_graph = MagicMock()
     mock_graph.number_of_nodes.return_value = 5
     mock_graph.number_of_edges.return_value = 3
@@ -67,7 +69,7 @@ async def test_coordinator_node_json_output(mock_get_llm):
         "worker_outputs": [],
         "graph": mock_graph
     }
-    
+
     result = await coordinator_node(state)
     assert len(result["vulnerability_leads"]) == 1
     assert result["strategy"] == "Analyze reentrancy"
@@ -82,10 +84,10 @@ async def test_lead_researcher_node_alias_warning():
         warnings.simplefilter("always")
         # Call with mock state to avoid LLM call in this unit test
         # We only care that the warning fires before it calls coordinator_node
-        with patch("src.agents.lead_agent.coordinator_node") as mock_coord:
+        with patch("src.pipeline.lead_agent.coordinator_node") as mock_coord:
             await lead_researcher_node(state={})
             assert mock_coord.called
-            
+
         assert len(w) >= 1
         assert issubclass(w[0].category, DeprecationWarning)
         assert "deprecated" in str(w[0].message).lower()

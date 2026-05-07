@@ -1,8 +1,8 @@
 services:
-  penteam:
+  critikal:
     build: .
     volumes:
       - .:/app
     tty: true
     stdin_open: true
-    command: /bin/bash
+    entrypoint: /bin/bash

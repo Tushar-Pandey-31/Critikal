@@ -1,8 +1,9 @@
-import sys
-import os
 import argparse
 import asyncio
 import json
+import os
+import sys
+
 import networkx as nx
 from dotenv import load_dotenv
 
@@ -10,19 +11,19 @@ load_dotenv()
 
 # Silence broken ChromaDB telemetry logger (posthog capture() API mismatch)
 import logging as _logging
+
 _logging.getLogger("chromadb.telemetry").setLevel(_logging.CRITICAL + 1)
 
 from langchain_core.messages import HumanMessage
-from langgraph.graph import StateGraph, START, END
-from langgraph.prebuilt import ToolNode
+from langgraph.graph import END, START, StateGraph
 
-from src.agents.state import AgentState, get_checkpointer
-from src.agents.lead_agent import coordinator_node, set_tools
-from src.agents.tools import create_coordinator_tools, create_graph_tools
-from src.repo_manager import RepoManager
 from src.analysis_engine import AnalysisEngine
-from src.graph_builder import GraphBuilder
+from src.graph import GraphBuilder
+from src.pipeline.lead_agent import coordinator_node, set_tools
+from src.pipeline.state import AgentState
+from src.pipeline.tools import create_coordinator_tools
 from src.pipeline_config import get_config
+from src.repo_manager import RepoManager
 
 
 def _parse_contract_addresses(raw: str | None) -> dict[str, str]:
@@ -145,10 +146,10 @@ async def async_main():
     if config.slither_enabled:
         print("Running Static Analysis (Slither)...")
         engine = AnalysisEngine()
-        
+
         # Optional: logic to detect specific targets could go here
         targets = None
-        
+
         slither_obj, ingestion_report = engine.run_analysis_v2(repo_path, targets=targets)
         if not slither_obj:
             print("WARNING: Slither analysis failed — continuing with semantic-only analysis.")
@@ -170,7 +171,7 @@ async def async_main():
             builder = GraphBuilder()
             builder.build_graph(slither_obj)
             graph = builder.graph
-            
+
             builder.export_json("./data/graph_debug.json")
             print(f"Graph built with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges.")
     else:
@@ -196,18 +197,18 @@ async def async_main():
             contracts.add(data.get("name", node_id))
         elif data.get("type") == "function":
             functions.append(node_id)
-    
+
     contract_list = ", ".join(contracts) if contracts else "Unknown"
-    
+
     initial_message = HumanMessage(content=f"""Assess the risk landscape for: {contract_list}
 
 The Knowledge Graph contains {len(functions)} function nodes across {len(contracts)} contract(s).
 
 Use get_high_risk_hotspots() to identify the highest-priority targets, then formulate your analysis strategy.
 """)
-    
+
     langgraph_config = {"configurable": {"thread_id": "live_run_1"}}
-    
+
     # Run the graph
     initial_state = {
         "messages": [initial_message],
@@ -225,9 +226,9 @@ Use get_high_risk_hotspots() to identify the highest-priority targets, then form
         "repo_url": args.repo,
         "escalate": False,
     }
-    
+
     events = app.astream(initial_state, langgraph_config, stream_mode="values")
-    
+
     final_state = None
     async for event in events:
         final_state = event
@@ -256,21 +257,21 @@ Use get_high_risk_hotspots() to identify the highest-priority targets, then form
             contract = lead.get("affected_contract") or "N/A"
             func = lead.get("affected_function") or "N/A"
             test_code = lead.get("test_code")
-            
+
             status_str = " → [PROVEN]" if success else ""
             print(f"  • {severity} | {title} (Confidence: {confidence}%){status_str}")
             print(f"    Contract: {contract} | Function: {func}")
-            
+
             raw_output = lead.get("raw_output", {})
             if "test-writer" in str(lead.get("worker_type")).lower() or test_code:
                 attempts = raw_output.get("attempts", "N/A")
                 if success:
                     print(f"    Test Writer: Exploit succeeded ({attempts} attempts)")
                 elif raw_output.get("compiled"):
-                    print(f"    Test Writer: Compiled but exploit failed")
+                    print("    Test Writer: Compiled but exploit failed")
                 elif raw_output.get("error"):
                     print(f"    Test Writer: Failed to compile ({raw_output.get('error')[:50]}...)")
-            
+
             if test_code:
                 print("    Test Code Snippet:")
                 snippet = "\n".join(test_code.splitlines()[:15])
@@ -282,13 +283,25 @@ Use get_high_risk_hotspots() to identify the highest-priority targets, then form
                 print("")
         else:
             print(f"  • {lead}\n")
-    
+
     if final_state and final_state.get("strategy"):
         print(f"Strategy: {final_state['strategy']}")
-            
+
     print("Done.")
 
 def main():
+    import warnings
+    warnings.warn(
+        "src.main is the legacy LangGraph pipeline and is deprecated. "
+        "Use 'python -m src.cli --repo <url>' for the new agentic system. "
+        "This entry point will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    print("=" * 60)
+    print("⚠️  LEGACY MODE — Using old LangGraph pipeline")
+    print("   New agent: python -m src.cli --repo <url>")
+    print("=" * 60)
     asyncio.run(async_main())
 
 if __name__ == "__main__":

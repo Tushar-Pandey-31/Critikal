@@ -9,11 +9,10 @@ Tests:
 5. AttackVectorDB bundle generation
 """
 
-import pytest
 import networkx as nx
-from src.intelligence.threat_profiler import ThreatProfiler
-from src.intelligence.attack_vector_db import AttackVectorDB
 
+from src.intelligence.attack_vector_db import AttackVectorDB
+from src.intelligence.threat_profiler import ThreatProfiler
 
 # ═══════════════════════════════════════════════════════════
 #  Fixtures
@@ -244,7 +243,7 @@ class TestAttackVectorDB:
         """Every vector must have all required fields."""
         db = AttackVectorDB()
         for vec in db.get_all_vectors():
-            assert vec.id, f"Vector missing id"
+            assert vec.id, "Vector missing id"
             assert vec.title, f"{vec.id} missing title"
             assert vec.root_cause, f"{vec.id} missing root_cause"
             assert vec.detection_pattern, f"{vec.id} missing detection_pattern"

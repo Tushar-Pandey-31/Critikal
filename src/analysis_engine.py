@@ -10,27 +10,25 @@ Public API:
     slither_obj, report = engine.run_analysis_v2(repo_path)  # new API
 """
 
-import os
 import logging
+import os
 import subprocess
 import traceback
-from typing import Optional
 
 from slither.slither import Slither
 
+from src.ingestion.cluster_builder import ClusterBuilder
+from src.ingestion.fallback import FallbackCompiler, merge_slither_objects
+from src.ingestion.framework_detector import FrameworkDetector
+from src.ingestion.memory_guard import MemoryGuard
 from src.ingestion.models import (
-    IngestionReport,
     ClusterResult,
     CompilationCluster,
+    IngestionReport,
     RepoSizeClass,
 )
-from src.ingestion.strategy_resolver import CompilationStrategyResolver
-from src.ingestion.cluster_builder import ClusterBuilder
-from src.ingestion.import_resolver import ImportResolver
 from src.ingestion.solc_manager import SolcManager
-from src.ingestion.memory_guard import MemoryGuard
-from src.ingestion.framework_detector import FrameworkDetector
-from src.ingestion.fallback import FallbackCompiler, merge_slither_objects
+from src.ingestion.strategy_resolver import CompilationStrategyResolver
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +214,7 @@ class AnalysisEngine:
         self,
         repo_path: str,
         targets=None,
-    ) -> Optional[Slither]:
+    ) -> Slither | None:
         """
         Backward-compatible entry point.
 
@@ -236,7 +234,7 @@ class AnalysisEngine:
         self,
         repo_path: str,
         targets=None,
-    ) -> tuple[Optional[Slither], IngestionReport]:
+    ) -> tuple[Slither | None, IngestionReport]:
         """
         Full cluster-based compilation pipeline.
 
@@ -457,7 +455,7 @@ class AnalysisEngine:
         self,
         file_path: str,
         report: IngestionReport,
-    ) -> tuple[Optional[Slither], IngestionReport]:
+    ) -> tuple[Slither | None, IngestionReport]:
         """Handle single .sol file compilation."""
         report.total_sol_files = 1
         report.clusters_detected = 1
@@ -500,7 +498,7 @@ class AnalysisEngine:
         targets,
         frameworks: list,
         report: IngestionReport,
-    ) -> tuple[Optional[Slither], IngestionReport]:
+    ) -> tuple[Slither | None, IngestionReport]:
         """
         Fall back to the original AnalysisEngine behavior when the
         cluster-based pipeline cannot form clusters or all clusters fail.

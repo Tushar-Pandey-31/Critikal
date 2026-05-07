@@ -1,8 +1,6 @@
-import html
 import json
 
 from src.models.finding import FindingStatus
-
 
 _NODE_COLORS = {
     "contract": "#58a6ff",

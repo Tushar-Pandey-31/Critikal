@@ -1,8 +1,8 @@
 import os
 import time
-import requests
 from dataclasses import dataclass
-from typing import Optional
+
+import requests
 
 
 class EtherscanRateLimitError(Exception):

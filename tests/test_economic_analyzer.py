@@ -1,6 +1,7 @@
-import pytest
 import networkx as nx
+
 from src.economic_analyzer import EconomicAnalyzer
+
 
 def _make_function(
     g: nx.DiGraph,
@@ -39,27 +40,27 @@ class TestEconomicAnalyzer:
     def test_denominator_manipulation(self):
         g = nx.DiGraph()
         s1 = _make_function(g, "Pool", "swap", has_taint_risk=True, uses_ratio_math=True)
-        
+
         analyzer = EconomicAnalyzer(g)
         chain_desc = {"steps": [s1]}
         score = analyzer.evaluate_chain_economic_impact(chain_desc)
-        
+
         assert score == 1.2
         assert "DENOMINATOR_MANIPULATION_RISK" in chain_desc["economic_distortion_flags"]
 
     def test_share_inflation_scenario(self):
         g = nx.DiGraph()
         s1 = _make_function(
-            g, "Vault", "deposit", 
-            has_taint_risk=True, 
-            mints_shares_proportionally=True, 
+            g, "Vault", "deposit",
+            has_taint_risk=True,
+            mints_shares_proportionally=True,
             is_protected=False # unprotected -> implies missing cap
         )
-        
+
         analyzer = EconomicAnalyzer(g)
         chain_desc = {"steps": [s1]}
         score = analyzer.evaluate_chain_economic_impact(chain_desc)
-        
+
         assert score == 1.5
         assert "UNBOUNDED_MINT_RISK" in chain_desc["economic_distortion_flags"]
         assert g.nodes[s1].get("unbounded_inflation_risk") is True
@@ -67,16 +68,16 @@ class TestEconomicAnalyzer:
     def test_reward_index_drift_scenario(self):
         g = nx.DiGraph()
         s1 = _make_function(
-            g, "Farm", "updateReward", 
-            has_taint_risk=True, 
-            updates_reward_index=True, 
+            g, "Farm", "updateReward",
+            has_taint_risk=True,
+            updates_reward_index=True,
             uses_division=True
         )
-        
+
         analyzer = EconomicAnalyzer(g)
         chain_desc = {"steps": [s1]}
         score = analyzer.evaluate_chain_economic_impact(chain_desc)
-        
+
         assert score == 1.1
         assert "PRECISION_DRIFT_RISK" in chain_desc["economic_distortion_flags"]
 
@@ -84,17 +85,17 @@ class TestEconomicAnalyzer:
         g = nx.DiGraph()
         # Even if protected, if MISSING_CAP_ENFORCEMENT is present, it's a risk
         s1 = _make_function(
-            g, "Token", "mint", 
-            has_taint_risk=True, 
-            writes_total_supply=True, 
+            g, "Token", "mint",
+            has_taint_risk=True,
+            writes_total_supply=True,
             is_protected=True,
             cap_enforcement_flags=["MISSING_CAP_ENFORCEMENT"]
         )
-        
+
         analyzer = EconomicAnalyzer(g)
         chain_desc = {"steps": [s1]}
         score = analyzer.evaluate_chain_economic_impact(chain_desc)
-        
+
         assert score == 1.5
         assert "UNBOUNDED_MINT_RISK" in chain_desc["economic_distortion_flags"]
 
@@ -102,17 +103,17 @@ class TestEconomicAnalyzer:
         g = nx.DiGraph()
         # Has ratio math and unbounded mint, but NO taint risk
         s1 = _make_function(
-            g, "SafeVault", "deposit", 
-            has_taint_risk=False, 
+            g, "SafeVault", "deposit",
+            has_taint_risk=False,
             uses_ratio_math=True,
             writes_total_supply=True,
             is_protected=False
         )
-        
+
         analyzer = EconomicAnalyzer(g)
         chain_desc = {"steps": [s1]}
         score = analyzer.evaluate_chain_economic_impact(chain_desc)
-        
+
         # Should remain 1.0 because attacker cannot influence it
         assert score == 1.0
         assert len(chain_desc["economic_distortion_flags"]) == 0
@@ -121,19 +122,19 @@ class TestEconomicAnalyzer:
         g = nx.DiGraph()
         # Multiple distortions in the same node
         s1 = _make_function(
-            g, "VulnerableEngine", "exploitMe", 
-            has_taint_risk=True, 
+            g, "VulnerableEngine", "exploitMe",
+            has_taint_risk=True,
             uses_ratio_math=True,            # +0.2
             updates_reward_index=True,       # +0.1
             uses_division=True,
             writes_total_supply=True,        # +0.5
-            is_protected=False               
+            is_protected=False
         )
-        
+
         analyzer = EconomicAnalyzer(g)
         chain_desc = {"steps": [s1]}
         score = analyzer.evaluate_chain_economic_impact(chain_desc)
-        
+
         # Combined multiplier would be 1.0 + 0.2 + 0.1 + 0.5 = 1.8
         # But it must be capped at 1.5
         assert score == 1.5

@@ -1,21 +1,21 @@
 import os
 import sys
-import networkx as nx
 
 # Add src to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 from analysis_engine import AnalysisEngine
-from graph_builder import GraphBuilder
+from src.graph import GraphBuilder
+
 
 def test_graph_builder():
     # Setup
     repo_path = os.path.join(os.getcwd(), 'tests', 'contracts', 'Complex.sol')
     print(f"Analyzing {repo_path}...")
-    
+
     engine = AnalysisEngine()
     slither_obj = engine.run_analysis(repo_path)
-    
+
     if not slither_obj:
         print("FAIL: Analysis failed, cannot test graph builder.")
         return
@@ -24,10 +24,10 @@ def test_graph_builder():
     print("Building Knowledge Graph...")
     builder = GraphBuilder()
     builder.build_graph(slither_obj)
-    
+
     graph = builder.graph
     print(f"Graph Stats: {builder.get_graph_stats()}")
-    
+
     # 1. Verify Inheritance: Complex -> Parent
     if graph.has_edge("Complex", "Parent"):
         print("PASS: Inheritance Edge Complex -> Parent found.")
@@ -74,7 +74,7 @@ def test_graph_builder():
     # Usually internal calls point to the definition.
     src_call = "Complex::callParent"
     dst_parent = "Parent::setParentVar" # Defined in Parent
-    
+
     # Check if edge exists to Parent::setParentVar
     if graph.has_edge(src_call, dst_parent):
         print(f"PASS: Call Edge {src_call} -> {dst_parent} found.")
@@ -85,7 +85,7 @@ def test_graph_builder():
              print(f"WARN: Call Edge points to {dst_complex} instead of {dst_parent}. Acceptable but noted.")
         else:
              print(f"FAIL: Call Edge from {src_call} to setParentVar MISSING.")
-    
+
     # Export
     output_path = "test_graph_complex.json"
     builder.export_json(output_path)
