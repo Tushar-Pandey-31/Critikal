@@ -174,7 +174,7 @@ class HookRegistry:
                         proc.communicate(input=payload_json.encode("utf-8")),
                         timeout=HOOK_TIMEOUT_S,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     proc.kill()
                     await proc.wait()
                     msg = f"hook timed out after {HOOK_TIMEOUT_S}s: {_short(entry.command)}"

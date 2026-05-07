@@ -4,8 +4,8 @@ ThreatIntelTool — Threat profiling and attack vector matching.
 Wraps: ThreatProfiler + AttackVectorDB
 """
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class ThreatIntelTool(Tool):
@@ -33,8 +33,8 @@ class ThreatIntelTool(Tool):
         ctx.ensure_config()
 
         try:
-            from src.intelligence.threat_profiler import ThreatProfiler
             from src.intelligence.attack_vector_db import AttackVectorDB
+            from src.intelligence.threat_profiler import ThreatProfiler
         except ImportError:
             return ToolResult.error("Threat intelligence module not available.")
 

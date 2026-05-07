@@ -1,21 +1,23 @@
+import os
 import sys
-import os
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
-from repo_manager import RepoManager
 import os
-import shutil
 import subprocess
+
+from repo_manager import RepoManager
+
 
 def test_ingestion():
     # Use a small public repo for testing
     # Using a simple foundry template
     repo_url = "https://github.com/PaulRBerg/foundry-template"
-    
+
     manager = RepoManager("./data/scratch")
-    
+
     print(f"Testing clone of {repo_url}...")
     repo_path = manager.clone_repo(repo_url)
-    
+
     if os.path.exists(repo_path) and os.listdir(repo_path):
         print(f"PASS: Repo cloned to {repo_path}")
     else:
@@ -25,7 +27,7 @@ def test_ingestion():
     print("Testing dependency installation...")
     # This repo uses foundry
     manager.install_dependencies(repo_path)
-    
+
     # Check if lib/forge-std exists (standard for foundry)
     lib_path = os.path.join(repo_path, "lib", "forge-std")
     if os.path.exists(lib_path):

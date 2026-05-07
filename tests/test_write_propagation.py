@@ -6,23 +6,24 @@ CALLS edges in the knowledge graph.
 """
 import os
 import sys
+
 import pytest
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 from analysis_engine import AnalysisEngine
-from graph_builder import GraphBuilder
+from src.graph import GraphBuilder
 
 
 @pytest.fixture(scope="module")
 def graph():
     """Build graph from all test contracts (including WritePropagationTest.sol)."""
     contract_path = os.path.join(os.getcwd(), 'tests', 'contracts')
-    
+
     engine = AnalysisEngine()
     slither_obj = engine.run_analysis(contract_path)
     assert slither_obj is not None, "Slither analysis failed"
-    
+
     builder = GraphBuilder()
     builder.build_graph(slither_obj)
     return builder.graph
@@ -34,15 +35,15 @@ class TestSimpleChain:
     def test_entry_has_indirect_writes(self, graph):
         data = graph.nodes["WritePropagationTest::entry"]
         assert data["indirect_writes_state"] is True
-    
+
     def test_entry_propagated_includes_counter(self, graph):
         data = graph.nodes["WritePropagationTest::entry"]
         assert "WritePropagationTest::counter" in data["propagated_state_variables"]
-    
+
     def test_entry_does_not_directly_write(self, graph):
         data = graph.nodes["WritePropagationTest::entry"]
         assert data["writes_state"] is False
-    
+
     def test_entry_propagation_depth(self, graph):
         data = graph.nodes["WritePropagationTest::entry"]
         assert data["propagation_depth"] == 1
@@ -59,11 +60,11 @@ class TestMultiLevel:
     def test_top_has_indirect_writes(self, graph):
         data = graph.nodes["WritePropagationTest::top"]
         assert data["indirect_writes_state"] is True
-    
+
     def test_top_propagated_includes_counter(self, graph):
         data = graph.nodes["WritePropagationTest::top"]
         assert "WritePropagationTest::counter" in data["propagated_state_variables"]
-    
+
     def test_top_propagation_depth(self, graph):
         data = graph.nodes["WritePropagationTest::top"]
         # mid doesn't write directly, bottom does -> depth should be 2
@@ -72,7 +73,7 @@ class TestMultiLevel:
         # mid.writes_state is False (only indirect), bottom.writes_state is True
         # So BFS: depth 1 = mid (no direct writes) -> depth 2 = bottom (direct writes) -> depth=2
         assert data["propagation_depth"] == 2
-    
+
     def test_mid_has_indirect_writes(self, graph):
         data = graph.nodes["WritePropagationTest::mid"]
         assert data["indirect_writes_state"] is True
@@ -86,11 +87,11 @@ class TestDiamond:
     def test_diamond_has_indirect_writes(self, graph):
         data = graph.nodes["WritePropagationTest::diamond"]
         assert data["indirect_writes_state"] is True
-    
+
     def test_diamond_propagated_includes_balance(self, graph):
         data = graph.nodes["WritePropagationTest::diamond"]
         assert "WritePropagationTest::balance" in data["propagated_state_variables"]
-    
+
     def test_no_duplicate_in_propagated(self, graph):
         data = graph.nodes["WritePropagationTest::diamond"]
         # balance should appear only once even though two paths lead to it
@@ -105,7 +106,7 @@ class TestCycle:
         """The graph should build without infinite loops."""
         data = graph.nodes["WritePropagationTest::cycleA"]
         assert "propagated_state_variables" in data
-    
+
     def test_cycleA_propagated_includes_both_vars(self, graph):
         data = graph.nodes["WritePropagationTest::cycleA"]
         # cycleA writes counter directly, cycleB writes balance
@@ -119,11 +120,11 @@ class TestDirectWriter:
     def test_direct_writer_not_indirect(self, graph):
         data = graph.nodes["WritePropagationTest::directWriter"]
         assert data["indirect_writes_state"] is False
-    
+
     def test_direct_writer_propagated_equals_direct(self, graph):
         data = graph.nodes["WritePropagationTest::directWriter"]
         assert data["propagated_state_variables"] == data["state_variables_written"]
-    
+
     def test_direct_writer_depth_zero(self, graph):
         data = graph.nodes["WritePropagationTest::directWriter"]
         assert data["propagation_depth"] == 0
@@ -135,12 +136,12 @@ class TestMixed:
     def test_mixed_has_indirect_writes(self, graph):
         data = graph.nodes["WritePropagationTest::mixedWriter"]
         assert data["indirect_writes_state"] is True
-    
+
     def test_mixed_propagated_includes_both(self, graph):
         data = graph.nodes["WritePropagationTest::mixedWriter"]
         assert "WritePropagationTest::balance" in data["propagated_state_variables"]
         assert "WritePropagationTest::counter" in data["propagated_state_variables"]
-    
+
     def test_mixed_direct_writes_only_balance(self, graph):
         data = graph.nodes["WritePropagationTest::mixedWriter"]
         assert "WritePropagationTest::balance" in data["state_variables_written"]

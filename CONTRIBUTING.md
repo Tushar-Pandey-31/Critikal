@@ -35,17 +35,17 @@ via the provided `Dockerfile`.
 - `src/cli.py` — entry point dispatcher.
 - `src/agent/` — Claude Code-style agentic loop, tools, permissions,
   memory, cost tracking. **This is the product.**
-- `src/agents/workers/` — specialized worker agents invoked by pipeline
+- `src/pipeline/workers/` — specialized worker agents invoked by pipeline
   tools (recon, jury, depth, test writer, …).
-- `src/agents/lead_agent.py` + `src/main.py` — deprecated legacy
+- `src/pipeline/lead_agent.py` + `src/main.py` — deprecated legacy
   LangGraph pipeline, reachable only via `critikal --legacy`. Do not
   add features here.
-- `src/graph_builder.py` — Slither → NetworkX graph construction.
+- `src/graph/ (modular)` — Slither → NetworkX graph construction.
 - `src/tui/` — Textual TUI.
 - `tests/` — unit tests; mark LLM-hitting tests with
   `@pytest.mark.integration` so they are skipped in CI.
 
-See `CLAUDE.md` for a denser architecture reference and `architecture.md`
+See `AI_CONTEXT.md` for a denser architecture reference and `architecture.md`
 for the long version.
 
 ## Reporting bugs

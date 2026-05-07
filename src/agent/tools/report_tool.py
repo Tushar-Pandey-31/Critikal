@@ -5,8 +5,8 @@ Wraps: ReportGenerator.generate()
 Produces: HTML, Markdown, graph visualization, exploit artifacts
 """
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class ReportTool(Tool):

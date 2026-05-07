@@ -26,7 +26,7 @@ CONSOLIDATED_FILE = "consolidated.md"
 class ConsolidationLock:
     """
     File-based mutex lock for the consolidation process.
-    
+
     Inspired by claurst's autoDream/consolidationLock.ts:
     - Lock file mtime = lastConsolidatedAt timestamp
     - PID-based ownership — stale locks (PID dead or >1h) are overwritten
@@ -47,7 +47,7 @@ class ConsolidationLock:
     def try_acquire(self) -> float | None:
         """
         Try to acquire the consolidation lock.
-        
+
         Returns prior mtime on success, None if already held by another process.
         """
         prior_mtime = self.read_last_consolidated_at()
@@ -99,10 +99,10 @@ class ConsolidationLock:
 class AutoDream:
     """
     Memory consolidation agent.
-    
+
     Reads all session memory entries for an engagement and uses an LLM
     to consolidate them into a structured knowledge document.
-    
+
     Inspired by claurst's 4-phase consolidation:
       1. Orient  — read existing consolidated.md
       2. Gather  — read new session entries since last consolidation
@@ -135,7 +135,7 @@ class AutoDream:
     async def consolidate(self, force: bool = False) -> bool:
         """
         Run the consolidation process.
-        
+
         Returns True if consolidation was performed, False if skipped.
         """
         # Try to acquire lock
@@ -165,7 +165,7 @@ class AutoDream:
 
             # Run LLM
             from src.llm.providers import get_worker_llm
-            model = os.getenv("DREAM_MODEL_NAME", "gemini-3-flash-preview")
+            model = os.getenv("DREAM_MODEL_NAME", "gpt-5.4-mini")
             llm = get_worker_llm(model_name=model, temperature=0.0)
 
             from langchain_core.messages import HumanMessage
@@ -211,7 +211,7 @@ class AutoDream:
     ) -> str:
         """
         Build the 4-phase consolidation prompt.
-        
+
         Inspired by claurst's autoDream/consolidationPrompt.ts.
         """
         entries_text = "\n".join(

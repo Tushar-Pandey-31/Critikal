@@ -6,12 +6,12 @@ Reads: ctx.findings, ctx.graph
 Writes: updates finding.jury_decision, jury_vote_summary, jury_reasoning
 """
 
-import os
 import asyncio
 import logging
+import os
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +49,11 @@ class JuryTool(Tool):
         return len(ctx.findings) > 0
 
     async def execute(self, params: dict, ctx: ToolContext) -> ToolResult:
-        from src.llm.providers import get_worker_llm
-        from src.agents.workers.jury_worker import JuryCoordinator
-        from src.agents.workers.jury_context import build_jury_context_package
-        from src.utils.graph_queries import get_function_context
         from src.hotspot_engine import Hotspot
+        from src.llm.providers import get_worker_llm
+        from src.pipeline.workers.jury_context import build_jury_context_package
+        from src.pipeline.workers.jury_worker import JuryCoordinator
+        from src.utils.graph_queries import get_function_context
 
         ctx.ensure_config()
         if not ctx.config.jury_enabled:
@@ -74,10 +74,10 @@ class JuryTool(Tool):
             return ToolResult.success("No findings eligible for jury debate.")
 
         # Jury models
-        skeptic_model = os.getenv("JURY_SKEPTIC_MODEL", "claude-sonnet-4-6")
-        attacker_model = os.getenv("JURY_ATTACKER_MODEL", "grok-3")
-        auditor_model = os.getenv("JURY_AUDITOR_MODEL", "gpt-4o")
-        judge_model = os.getenv("JURY_JUDGE_MODEL", "gemini-3-flash-preview")
+        skeptic_model = os.getenv("JURY_SKEPTIC_MODEL", "gpt-5.5")
+        attacker_model = os.getenv("JURY_ATTACKER_MODEL", "grok-4-1-fast-reasoning")
+        auditor_model = os.getenv("JURY_AUDITOR_MODEL", "gpt-5.4-mini")
+        judge_model = os.getenv("JURY_JUDGE_MODEL", "grok-4-1-fast-reasoning")
 
         jury_coordinator = JuryCoordinator(
             skeptic_llm=get_worker_llm(model_name=skeptic_model),
@@ -147,7 +147,7 @@ class JuryTool(Tool):
                         finding.contribute_score("jury_refuted", -20, "Jury rejected")
                         finding.jury_rejection_reason = judge_output.rejection_reason or judge_output.reasoning
                         refuted += 1
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning(f"Jury timeout for: {finding.title}")
                 except Exception as e:
                     logger.error(f"Jury error: {e}")

@@ -1,6 +1,6 @@
-import pytest
-from unittest.mock import patch, MagicMock
-from src.tools.etherscan_client import EtherscanClient, EtherscanRateLimitError
+from unittest.mock import MagicMock, patch
+
+from src.tools.etherscan_client import EtherscanClient
 
 
 def test_stub_mode_activates_without_api_key():

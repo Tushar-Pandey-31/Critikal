@@ -17,9 +17,8 @@ import logging
 import os
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +56,7 @@ class ScheduledTask:
 class CronScheduler:
     """
     Manages recurring audit schedules using APScheduler.
-    
+
     Usage:
         scheduler = CronScheduler()
         scheduler.add_task(ScheduledTask(

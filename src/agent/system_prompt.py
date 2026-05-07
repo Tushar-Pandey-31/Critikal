@@ -11,8 +11,8 @@ to reason about the target and choose its own path; the prompt gives
 mental models and heuristics, not a playbook.
 """
 
-from src.agent.tool import Tool
 from src.agent.context import ToolContext
+from src.agent.tool import Tool
 
 
 def build_system_prompt(tools: list[Tool], ctx: ToolContext) -> str:

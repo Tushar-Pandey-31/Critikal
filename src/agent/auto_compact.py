@@ -22,20 +22,36 @@ errors.
 
 import logging
 import os
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Approximate context window sizes (in tokens) per model family
+# Approximate context window sizes (in tokens) per model family.
+# Defaults route within {OpenAI gpt-5.x, xAI grok-4.x} only; the legacy
+# anthropic/gemini entries remain so users overriding via env still get
+# correct sizing instead of the conservative fallback.
 MODEL_CONTEXT_SIZES: dict[str, int] = {
-    "claude-opus-4": 200_000,
-    "claude-sonnet-4": 200_000,
-    "claude-haiku-4": 200_000,
+    # ── OpenAI (current) ─────────────────────────────────────
+    "gpt-5.5":            1_000_000,
+    "gpt-5.4":            1_000_000,
+    "gpt-5.4-mini":       1_000_000,
+    "gpt-5.4-nano":       1_000_000,
+    "gpt-5.1":            1_000_000,
+    "gpt-5":                400_000,
+    "gpt-4o":               128_000,
+    "gpt-4o-mini":          128_000,
+    # ── xAI (current) ───────────────────────────────────────
+    "grok-4-3":             256_000,
+    "grok-4-20":            256_000,
+    "grok-4-1-fast":        256_000,
+    "grok-code-fast-1":     256_000,
+    "grok-4":               256_000,
+    "grok-3":               131_072,
+    # ── Legacy / opt-in via env ─────────────────────────────
+    "claude-opus-4":        200_000,
+    "claude-sonnet-4":      200_000,
+    "claude-haiku-4":       200_000,
     "gemini-3-flash-preview": 1_000_000,
-    "gemini-2.0-flash": 1_000_000,
-    "gpt-4o": 128_000,
-    "gpt-4o-mini": 128_000,
-    "grok-3": 131_072,
+    "gemini-2.0-flash":       1_000_000,
 }
 
 TRIGGER_FRACTION_PROACTIVE = 0.75
@@ -142,7 +158,7 @@ class AutoCompactor:
     def __init__(self, model: str, compact_model: str | None = None):
         self.model = model
         self.compact_model = compact_model or os.getenv(
-            "COMPACT_MODEL_NAME", "gemini-3-flash-preview"
+            "COMPACT_MODEL_NAME", "gpt-5.4-mini"
         )
         self.context_size = _get_context_size(model)
         self.proactive_tokens = int(self.context_size * TRIGGER_FRACTION_PROACTIVE)

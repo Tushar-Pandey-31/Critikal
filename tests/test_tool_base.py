@@ -3,9 +3,9 @@ Tests for src/agent/tool.py — Tool ABC, ToolResult, PermissionLevel.
 """
 
 import pytest
-from src.agent.tool import Tool, ToolResult, PermissionLevel
-from src.agent.context import ToolContext
 
+from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 # ── Concrete test implementation of Tool ──
 

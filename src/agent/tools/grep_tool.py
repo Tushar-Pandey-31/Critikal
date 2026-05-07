@@ -9,8 +9,8 @@ import os
 import re
 from pathlib import Path
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 MAX_RESULTS = 250
 MAX_PATTERN_LEN = 1000

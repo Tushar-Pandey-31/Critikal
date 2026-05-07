@@ -17,12 +17,12 @@ logger = logging.getLogger(__name__)
 async def generate_away_summary(engagement_id: str, memory_dir: Path | None = None) -> str:
     """
     Generate a catch-up summary for a resumed engagement.
-    
+
     Returns a 1-5 sentence summary of what happened in previous sessions,
     or an empty string if no previous data exists.
     """
-    from src.agent.memory.session_memory import SessionMemory, MEMORY_BASE_DIR
     from src.agent.memory.auto_dream import AutoDream
+    from src.agent.memory.session_memory import MEMORY_BASE_DIR, SessionMemory
 
     base_dir = memory_dir or MEMORY_BASE_DIR
     sm = SessionMemory(engagement_id, base_dir)
@@ -55,7 +55,7 @@ async def generate_away_summary(engagement_id: str, memory_dir: Path | None = No
     # Generate summary via LLM
     try:
         from src.llm.providers import get_worker_llm
-        model = os.getenv("MEMORY_EXTRACT_MODEL", "gemini-3-flash-preview")
+        model = os.getenv("MEMORY_EXTRACT_MODEL", "gpt-5.4-mini")
         llm = get_worker_llm(model_name=model, temperature=0.0)
 
         from langchain_core.messages import HumanMessage
@@ -64,7 +64,7 @@ You are resuming a security research engagement. Based on the following
 context from previous sessions, write a brief catch-up summary (2-5 sentences)
 that tells the researcher what was accomplished and what's still open.
 
-Be specific — mention protocol names, vulnerability classes found, 
+Be specific — mention protocol names, vulnerability classes found,
 confidence levels, and any open investigation threads.
 
 {context}

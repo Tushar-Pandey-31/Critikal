@@ -11,19 +11,14 @@ Inspired by Claude Code's ToolUseContext:
   - agent identity tracking
 """
 
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, TYPE_CHECKING
 import os
 import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    import networkx as nx
-    from src.models.finding import Finding
-    from src.pipeline_config import PipelineConfig
-    from src.agent.cost import CostTracker
-    from src.agent.events import EventBus
-    from src.agent.task_store import TaskStore
+    pass
 
 
 @dataclass

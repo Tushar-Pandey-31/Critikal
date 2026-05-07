@@ -4,8 +4,8 @@ Graph query tools — Expose GraphQueries methods directly to the agent.
 Wraps: GraphQueries.get_function_context(), find_state_mutators(), get_modifiers()
 """
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class FunctionContextTool(Tool):
@@ -41,8 +41,9 @@ class FunctionContextTool(Tool):
     async def execute(self, params: dict, ctx: ToolContext) -> ToolResult:
         if "input" in params and isinstance(params["input"], dict):
             params = params["input"]
-        from src.utils.graph_queries import get_graph_queries
         import json
+
+        from src.utils.graph_queries import get_graph_queries
 
         node_id = params.get("node_id") or params.get("function") or params.get("id") or ""
         if not node_id:

@@ -1,5 +1,5 @@
-import pytest
-from src.models.finding import Finding, EvidenceNode
+from src.models.finding import Finding
+
 
 def _make_finding(tags: list[str], rag_conf=0, cons_conf=0, llm_conf=70) -> Finding:
     return Finding(

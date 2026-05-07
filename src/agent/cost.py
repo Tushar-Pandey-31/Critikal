@@ -15,17 +15,34 @@ from typing import Any
 # against the provider's current published rates before trusting the numbers.
 MODEL_PRICING: dict[str, tuple[float, float]] = {
     # (input_per_1M, output_per_1M)
-    "claude-opus-4-7": (15.0, 75.0),
-    "claude-opus-4-6": (15.0, 75.0),
-    "claude-sonnet-4-6": (3.0, 15.0),
-    "claude-sonnet-4-5": (3.0, 15.0),
-    "claude-haiku-4-5": (0.80, 4.0),
+    # ── OpenAI (current) ─────────────────────────────────────
+    "gpt-5.5":            (5.0,  30.0),
+    "gpt-5.5-pro":        (30.0, 180.0),
+    "gpt-5.4":            (2.5,  20.0),
+    "gpt-5.4-mini":       (0.4,  1.6),
+    "gpt-5.4-nano":       (0.1,  0.4),
+    "gpt-5.1":            (2.0,  8.0),
+    "gpt-5":              (2.0,  8.0),
+    "gpt-4o":             (2.5,  10.0),
+    "gpt-4o-mini":        (0.15, 0.60),
+    # ── xAI (current) ───────────────────────────────────────
+    "grok-4-3":                   (3.0, 15.0),
+    "grok-4-20-reasoning":        (3.0, 15.0),
+    "grok-4-20-non-reasoning":    (3.0, 15.0),
+    "grok-4-1-fast-reasoning":    (0.20, 0.50),
+    "grok-4-1-fast-non-reasoning":(0.20, 0.50),
+    "grok-code-fast-1":           (0.20, 1.50),
+    "grok-4":                     (3.0, 15.0),
+    "grok-3":                     (3.0, 15.0),
+    # ── Legacy / opt-in via env ─────────────────────────────
+    "claude-opus-4-7":      (15.0, 75.0),
+    "claude-opus-4-6":      (15.0, 75.0),
+    "claude-sonnet-4-6":    (3.0,  15.0),
+    "claude-sonnet-4-5":    (3.0,  15.0),
+    "claude-haiku-4-5":     (0.80, 4.0),
     "gemini-3-flash-preview": (0.15, 0.60),
-    "gemini-3-pro-preview": (1.25, 10.0),
-    "gemini-2.0-flash": (0.10, 0.40),
-    "gpt-4o": (2.50, 10.0),
-    "gpt-4o-mini": (0.15, 0.60),
-    "grok-3": (3.0, 15.0),
+    "gemini-3-pro-preview":   (1.25, 10.0),
+    "gemini-2.0-flash":       (0.10, 0.40),
 }
 
 

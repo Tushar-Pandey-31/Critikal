@@ -7,16 +7,14 @@ Handles:
 - Input history navigation (Up/Down)
 """
 
-from textual import on
-from textual.widgets import TextArea
 from textual.message import Message
-from textual.reactive import reactive
+from textual.widgets import TextArea
 
 
 class PromptInput(TextArea):
     """
     Multiline prompt input with slash command support.
-    
+
     Emits PromptInput.Submitted when the user presses Enter.
     Ctrl+Enter inserts a newline.
     """

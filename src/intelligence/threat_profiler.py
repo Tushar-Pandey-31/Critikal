@@ -21,8 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml
 import networkx as nx
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +234,7 @@ class ThreatProfiler:
             logger.warning(f"Threat profiles not found at {self._profiles_path}")
             return
         try:
-            with open(self._profiles_path, "r") as f:
+            with open(self._profiles_path) as f:
                 self._profiles_data = yaml.safe_load(f) or {}
             logger.info(f"Loaded {len(self._profiles_data)} threat profiles")
         except Exception as e:

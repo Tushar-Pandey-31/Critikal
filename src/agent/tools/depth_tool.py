@@ -6,12 +6,12 @@ Reads: ctx.findings, ctx.graph
 Writes: updates finding confidence and evidence
 """
 
-import os
 import asyncio
 import logging
+import os
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +49,10 @@ class DepthAnalysisTool(Tool):
 
     async def execute(self, params: dict, ctx: ToolContext) -> ToolResult:
         from src.llm.providers import get_worker_llm
-        from src.agents.workers.depth_workers import (
-            StateTraceDepthWorker,
+        from src.pipeline.workers.depth_workers import (
             EdgeCaseDepthWorker,
             ExternalDepthWorker,
+            StateTraceDepthWorker,
             _route_to_depth_worker,
         )
         from src.utils.graph_queries import get_function_context
@@ -61,7 +61,7 @@ class DepthAnalysisTool(Tool):
         if not ctx.config.depth_workers_enabled:
             return ToolResult.success("Depth workers are disabled in config.")
 
-        depth_model = os.getenv("DEPTH_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-3-flash-preview"))
+        depth_model = os.getenv("DEPTH_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gpt-5.4-mini"))
         depth_llm = get_worker_llm(model_name=depth_model)
 
         workers = {
@@ -112,7 +112,7 @@ class DepthAnalysisTool(Tool):
                         )
                         improved += 1
                     finding.depth_pass_count = getattr(finding, "depth_pass_count", 0) + 1
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning(f"Depth timeout for: {finding.title}")
                 except Exception as e:
                     logger.error(f"Depth error: {e}")

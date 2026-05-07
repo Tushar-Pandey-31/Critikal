@@ -9,18 +9,17 @@ Covers:
   Integration: Risk scoring, query layer, cross-function paths
 """
 
-import pytest
-import networkx as nx
 from unittest.mock import MagicMock
+
+import networkx as nx
 
 from src.utils.graph_queries import (
     GraphQueries,
-    get_taint_critical_paths,
     get_storage_sensitivity_tags,
-    get_tainted_variables,
+    get_taint_critical_paths,
     get_taint_risks,
+    get_tainted_variables,
 )
-
 
 # ═══════════════════════════════════════════════════════════════
 #  Helpers
@@ -79,7 +78,7 @@ def _make_state_var(
 
 
 def _run_sensitivity_tagging(graph: nx.DiGraph):
-    from src.graph_builder import GraphBuilder
+    from src.graph import GraphBuilder
     gb = GraphBuilder()
     gb.graph = graph
     gb._tag_storage_sensitivity()
@@ -88,7 +87,7 @@ def _run_sensitivity_tagging(graph: nx.DiGraph):
 
 def _run_taint_pipeline(graph: nx.DiGraph, slither_mock=None):
     """Run the full taint pipeline with a mock Slither (no real compilation)."""
-    from src.graph_builder import GraphBuilder
+    from src.graph import GraphBuilder
     gb = GraphBuilder()
     gb.graph = graph
     gb._tag_storage_sensitivity()
@@ -465,7 +464,7 @@ class TestTaintRiskScoring:
         defaults.update(func_attrs)
         g.add_node("C::target", **defaults)
         g.add_node("C", type="contract", name="C", tier="CORE")
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._compute_global_risk_scores()
@@ -740,12 +739,12 @@ class TestEndToEnd:
         # We don't have a real Slither CFG to trigger uses_tainted_math in `_analyze_function_taint`
         # We manually run the pipeline then patch the data to simulate the Slither CFG phase finding math
         _run_taint_pipeline(g)
-        
+
         data = g.nodes["Token::claim"]
         data["uses_tainted_math"] = True
-        
+
         # Now re-apply the heuristics so it captures the new uses_tainted_math tag
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         # To run _apply_taint_vulnerability_heuristics, we need `func_taint` structure.
         # Since _run_taint_pipeline ran without Slither, and it didn't use arithmetic, we manually mock the result it would have given:
         func_taint = {
@@ -761,11 +760,11 @@ class TestEndToEnd:
                 "uses_tainted_math": True
             }
         }
-        
+
         # Reset risk types and score to re-calculate
         data["taint_risk_types"] = []
         data["taint_risk_score"] = 0
-        
+
         builder = GraphBuilder()
         builder.graph = g
         builder._apply_taint_vulnerability_heuristics(func_taint)
@@ -779,21 +778,21 @@ class TestEndToEnd:
         g = nx.DiGraph()
         g.add_node("Vault", type="contract", name="Vault", tier="CORE")
         var_id = _make_state_var(g, "Vault", "userBalance")
-        
+
         # Function A: Writes tainted state (param -> userBalance)
         _make_function_node(g, "Vault", "depositFor",
             source_code='function depositFor(address u, uint256 a) external {\n  userBalance = a;\n}',
             visibility="external",
             writes_state=True,
             state_variables_written=[var_id])
-            
+
         # Function B: Reads userBalance and transfers funds (protected=False)
         _make_function_node(g, "Vault", "withdraw",
             source_code='function withdraw() external {\n  uint256 b = userBalance;\n  msg.sender.call{value: b}("");\n}',
             visibility="external",
             writes_state=False,
             is_protected=False)
-            
+
         # Hook edge to simulate _build_state_dependency_graph
         g.add_edge("Vault::depositFor", "Vault::withdraw",
                    relationship="STATE_DEPENDENCY",
@@ -812,7 +811,7 @@ class TestEndToEnd:
             "reader_protected": False,
             "score": 45
         }]
-        
+
         _run_taint_pipeline(g)
 
         # Force the state writes so the temporal exploit pipeline picks it up
@@ -823,14 +822,14 @@ class TestEndToEnd:
             "sensitivity": ["ACCOUNTING_CRITICAL"],
             "paths": [["Vault::depositFor"]]
         }]
-        
-        from src.graph_builder import GraphBuilder
+
+        from src.graph import GraphBuilder
         builder = GraphBuilder()
         builder.graph = g
         builder._generate_exploit_chains()
-        
+
         assert data.get("has_temporal_taint_exploit") is True
-        
+
         chains = data.get("exploit_chains", [])
         assert len(chains) > 0
         assert "TEMPORAL_TAINT_EXPLOIT" in chains[0]["danger_types"]

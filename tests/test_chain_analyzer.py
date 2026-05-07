@@ -5,17 +5,16 @@ Tests the deterministic postcondition→precondition matching engine,
 severity upgrade matrix, and chain metadata application.
 """
 
-import pytest
 import uuid
-from src.agents.chain_analyzer import (
-    run_chain_analysis,
-    ChainHypothesis,
-    _compute_match_strength,
-    _chain_severity,
-    _classify_match_type,
-    _classify_actor,
-)
+
 from src.models.finding import Finding, FindingVerdict
+from src.pipeline.chain_analyzer import (
+    _chain_severity,
+    _classify_actor,
+    _classify_match_type,
+    _compute_match_strength,
+    run_chain_analysis,
+)
 
 
 def _make_finding(
@@ -131,8 +130,8 @@ class TestMatchStrength:
         enabler = _make_finding(contract="Vault", postconditions=["balance drained"])
         blocked = _make_finding(contract="Vault", preconditions_missing=["balance is zero"])
         strength = _compute_match_strength(
-            "balance drained completely to zero", 
-            "balance must be zero for overflow", 
+            "balance drained completely to zero",
+            "balance must be zero for overflow",
             enabler, blocked
         )
         assert strength == "STRONG"

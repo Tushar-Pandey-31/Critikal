@@ -17,10 +17,9 @@ Rendering model:
     ℹ system message          — dim italic
 """
 
-from textual.widgets import RichLog
-from rich.text import Text
 from rich.markdown import Markdown
-
+from rich.text import Text
+from textual.widgets import RichLog
 
 # ── Monochrome palette (keep in sync with styles.tcss) ──
 FG        = "#e8e8e8"   # primary text

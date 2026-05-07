@@ -1,10 +1,8 @@
 import logging
 import os
-import subprocess
 import shutil
-from typing import Optional
-
 import stat
+import subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +40,9 @@ class RepoManager:
         repo_name = os.path.basename(os.path.normpath(url))
         if repo_name.endswith(".git"):
             repo_name = repo_name[:-4]
-        
+
         target_path = os.path.join(self.workspace_dir, repo_name)
-        
+
         if os.path.exists(target_path):
             print(f"Directory {target_path} already exists. Removing it to clone fresh...")
             try:
@@ -53,15 +51,23 @@ class RepoManager:
                 print(f"shutil.rmtree failed: {e}. Trying system command...")
                 abs_target = os.path.abspath(target_path)
                 if os.name == 'nt':
-                    # Windows specific robust delete. Use powershell for better path handling.
-                    subprocess.run(["powershell", "-Command", f"Remove-Item -Recurse -Force '{abs_target}'"], check=False)
+                    # -LiteralPath bypasses PowerShell wildcard interpretation and the
+                    # path is passed as a separate argv token, so a crafted repo name
+                    # like  ';rm -rf /;'  cannot break out of the quoting.
+                    subprocess.run(
+                        [
+                            "powershell", "-NoProfile", "-NonInteractive", "-Command",
+                            "Remove-Item", "-LiteralPath", abs_target, "-Recurse", "-Force",
+                        ],
+                        check=False,
+                    )
                 else:
-                    subprocess.run(["rm", "-rf", abs_target], check=False)
-            
+                    subprocess.run(["rm", "-rf", "--", abs_target], check=False)
+
             # Double check
             if os.path.exists(target_path):
                 print(f"Warning: Failed to completely remove {target_path}. Clone may fail.")
-            
+
         # Check if local directory
         if os.path.isdir(url):
             print(f"Copying local directory {url} to {target_path}...")
@@ -109,7 +115,7 @@ class RepoManager:
         Detects project type (Foundry or Hardhat) and installs dependencies.
         """
         print(f"Checking for dependencies in {repo_path}...")
-        
+
         # Check for Foundry
         if os.path.exists(os.path.join(repo_path, "foundry.toml")):
             print("Foundry project detected.")
@@ -120,7 +126,7 @@ class RepoManager:
                 print(f"Error installing Foundry dependencies: {e.stderr.decode()}")
             except FileNotFoundError:
                 print("Warning: 'forge' executable not found. Skipping Foundry dependency installation.")
-                
+
         # Check for Hardhat
         if os.path.exists(os.path.join(repo_path, "hardhat.config.js")) or \
            os.path.exists(os.path.join(repo_path, "hardhat.config.ts")):

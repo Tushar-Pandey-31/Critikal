@@ -31,9 +31,21 @@ poetry install
 
 ```bash
 cp .env.example .env
-# Required: at least one of ANTHROPIC_API_KEY, GOOGLE_API_KEY, XAI_API_KEY, OPENAI_API_KEY
+# Required (defaults): OPENAI_API_KEY and XAI_API_KEY
+#   Critikal's defaults route through GPT-5 and Grok-4 only. Set both
+#   keys for the out-of-the-box config to work.
+# Optional / opt-in: ANTHROPIC_API_KEY, GOOGLE_API_KEY, OPENROUTER_API_KEY
+#   Only needed if you override *_MODEL_NAME env vars to claude-* / gemini-* / openrouter/*.
 # Recommended: ETHERSCAN_API_KEY for on-chain recon
 ```
+
+> **Heads-up — model IDs.** The built-in defaults reference frontier models
+> (`grok-4-1-fast-reasoning`, `gpt-5.4-mini`, `gpt-5.5`, `grok-code-fast-1`)
+> that are not yet generally available on every account. If your API keys
+> don't have access to those exact IDs you'll get a 404 from the provider on
+> the first run. Override every `*_MODEL_NAME` env var in `.env` to a model
+> your account can actually call — see the **Model Routing** table below for
+> the full list.
 
 ### 3. Run
 
@@ -58,7 +70,7 @@ critikal [OPTIONS]
 --repo URL          Repository to audit (URL or local path)
 --headless PROMPT   Run with custom prompt (no TUI)
 --interactive       Force interactive TUI mode
---model MODEL       Override agent brain model (default: claude-sonnet-4-6)
+--model MODEL       Override agent brain model (default: grok-4-1-fast-reasoning)
 --budget USD        Maximum spend in USD
 --permission-mode   ask | auto | yolo (default: auto)
 --resume ID         Resume a previous engagement
@@ -97,19 +109,25 @@ Control via `AUDIT_MODE` env var (or set individual flags):
 
 ## Model Routing
 
-Different models handle different roles (all configurable via env vars):
+Defaults route through xAI (Grok) and OpenAI (GPT) only. Every role is
+overridable via env var — point any role at `claude-*`, `gemini-*`, or
+`openrouter/<provider>/<model>` and the matching API key will be used.
 
 | Role | Default | Env Var |
 |------|---------|---------|
-| Agent brain | `claude-sonnet-4-6` | `AGENT_MODEL_NAME` |
-| Attack worker | `grok-3` | `ATTACK_MODEL_NAME` |
-| Assumption / semantic workers | `gemini-3-flash-preview` | `ASSUMPTION_MODEL_NAME` |
-| Gate filter | `gemini-3-flash-preview` | `GATE_MODEL_NAME` |
-| Jury Skeptic | `claude-sonnet-4-6` | `JURY_SKEPTIC_MODEL` |
-| Jury Attacker | `grok-3` | `JURY_ATTACKER_MODEL` |
-| Jury Auditor | `gpt-4o` | `JURY_AUDITOR_MODEL` |
-| Jury Judge | `gemini-3-flash-preview` | `JURY_JUDGE_MODEL` |
-| TestWriter | `gemini-3-flash-preview` | `TEST_WRITER_MODEL_NAME` |
+| Agent brain | `grok-4-1-fast-reasoning` | `AGENT_MODEL_NAME` |
+| Attack worker (creative attacker) | `grok-4-1-fast-reasoning` | `ATTACK_MODEL_NAME` |
+| Assumption worker (zero-day) | `grok-4-1-fast-reasoning` | `ASSUMPTION_MODEL_NAME` |
+| Recon / Semantic / Execution-trace workers | `gpt-5.4-mini` | `RECON_MODEL_NAME`, `SEMANTIC_MODEL_NAME`, `EXECUTION_TRACE_MODEL_NAME` |
+| Gate filter | `gpt-5.4-mini` | `GATE_MODEL_NAME` |
+| Depth workers | `gpt-5.4-mini` | `DEPTH_MODEL_NAME` |
+| Jury Skeptic | `gpt-5.5` | `JURY_SKEPTIC_MODEL` |
+| Jury Attacker | `grok-4-1-fast-reasoning` | `JURY_ATTACKER_MODEL` |
+| Jury Auditor | `gpt-5.4-mini` | `JURY_AUDITOR_MODEL` |
+| Jury Judge | `grok-4-1-fast-reasoning` | `JURY_JUDGE_MODEL` |
+| TestWriter (Foundry PoC) | `grok-code-fast-1` | `TEST_WRITER_MODEL_NAME` |
+| Fuzz generator | `grok-code-fast-1` | `FUZZ_MODEL_NAME` |
+| Memory / dream / compact / sub-agent | `gpt-5.4-mini` | `MEMORY_EXTRACT_MODEL`, `DREAM_MODEL_NAME`, `COMPACT_MODEL_NAME`, `SUB_AGENT_MODEL_NAME` |
 
 ---
 
@@ -125,7 +143,7 @@ CLI (src/cli.py)
               ├── PermissionHandler
               └── SessionMemory (~/.critikal/memory/<id>/)
 
-Pipeline tools invoke workers from src/agents/workers/:
+Pipeline tools invoke workers from src/pipeline/workers/:
   ingest_repo        → RepoManager + AnalysisEngine + GraphBuilder
   run_recon          → ReconWorker (7 parallel intel sources)
   find_hotspots      → HotspotEngine + graph_queries
@@ -155,7 +173,7 @@ docker-compose build
 docker-compose run critikal /bin/bash
 ```
 
-The Docker image includes Python 3.10, Node.js 20, Foundry, and solc-select.
+The Docker image includes Python 3.12, Node.js 20, Foundry, and solc-select.
 
 ---
 

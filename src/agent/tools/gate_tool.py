@@ -6,12 +6,12 @@ Reads: ctx.findings, ctx.graph
 Writes: updates finding.gate_verdict, finding.plausibility_score
 """
 
-import os
 import asyncio
 import logging
+import os
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -51,14 +51,14 @@ class GateFilterTool(Tool):
 
     async def execute(self, params: dict, ctx: ToolContext) -> ToolResult:
         from src.llm.providers import get_worker_llm
-        from src.agents.workers.jury_worker import gate_evaluate
+        from src.pipeline.workers.jury_worker import gate_evaluate
         from src.utils.graph_queries import get_function_context
 
         ctx.ensure_config()
         if not ctx.config.gate_enabled:
             return ToolResult.success("Gate filter is disabled in config.")
 
-        gate_model = os.getenv("GATE_MODEL_NAME", "gemini-3-flash-preview")
+        gate_model = os.getenv("GATE_MODEL_NAME", "gpt-5.4-mini")
         gate_llm = get_worker_llm(model_name=gate_model)
 
         indices = params.get("finding_indices")
@@ -107,7 +107,7 @@ class GateFilterTool(Tool):
                     elif result.verdict == "GATE_DEMOTED":
                         finding.contribute_score("gate_demoted", -15, f"Demoted at gate {result.gate}")
                         demoted += 1
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning(f"Gate timeout for finding: {finding.title}")
                 except Exception as e:
                     logger.error(f"Gate error: {e}")

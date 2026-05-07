@@ -9,8 +9,8 @@ Three modes:
 
 import logging
 
-from src.agent.tool import Tool, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool
 
 logger = logging.getLogger(__name__)
 

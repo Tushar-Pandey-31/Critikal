@@ -7,10 +7,9 @@ in the repository tree, not just the root directory.
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
-import logging
-from typing import Optional
 
 from src.ingestion.models import FrameworkInstance
 
@@ -32,7 +31,7 @@ class FrameworkDetector:
     # ──────────────────────────────────────────────────────────
 
     @staticmethod
-    def detect_at(directory: str) -> Optional[str]:
+    def detect_at(directory: str) -> str | None:
         """
         Detect the primary framework at a specific directory.
 

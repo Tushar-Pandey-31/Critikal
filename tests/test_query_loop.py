@@ -4,15 +4,13 @@ Tests for src/agent/query_loop.py — the agentic reasoning loop.
 These tests use mock LLMs and tools to avoid real API calls.
 """
 
-import asyncio
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.agent.query_loop import QueryLoop, _summarize_args, TOOL_RESULT_BUDGET_CHARS
-from src.agent.context import ToolContext
-from src.agent.tool import Tool, ToolResult, PermissionLevel
-from src.agent.events import EventBus, EventType
+import pytest
 
+from src.agent.context import ToolContext
+from src.agent.query_loop import TOOL_RESULT_BUDGET_CHARS, QueryLoop, _summarize_args
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 # ── Test doubles ──
 
@@ -106,7 +104,7 @@ class TestToolResultBudget:
 
     def _make_loop(self) -> QueryLoop:
         ctx = ToolContext(permission_mode="yolo")
-        return QueryLoop(tools=[], ctx=ctx, model="claude-sonnet-4-6")
+        return QueryLoop(tools=[], ctx=ctx, model="grok-4-1-fast-reasoning")
 
     def test_short_result_unchanged(self):
         loop = self._make_loop()
@@ -184,10 +182,10 @@ class TestConversationStats:
 
     def test_initial_stats(self):
         ctx = ToolContext(permission_mode="yolo")
-        loop = QueryLoop(tools=[], ctx=ctx, model="claude-sonnet-4-6")
+        loop = QueryLoop(tools=[], ctx=ctx, model="grok-4-1-fast-reasoning")
         stats = loop.get_conversation_stats()
         assert stats["messages"] == 0
-        assert stats["model"] == "claude-sonnet-4-6"
+        assert stats["model"] == "grok-4-1-fast-reasoning"
         assert stats["findings"] == 0
         assert stats["recovery"]["using_fallback"] is False
 
@@ -265,7 +263,7 @@ class TestQueryLoopRun:
     async def test_run_returns_text_on_end_turn(self):
         """Agent returns immediately when LLM produces no tool calls."""
         ctx = ToolContext(permission_mode="yolo")
-        loop = QueryLoop(tools=[], ctx=ctx, model="claude-sonnet-4-6")
+        loop = QueryLoop(tools=[], ctx=ctx, model="grok-4-1-fast-reasoning")
 
         # Mock the LLM call to immediately return a text response
         with patch.object(loop, "_call_llm_with_recovery", new_callable=AsyncMock) as mock_llm:

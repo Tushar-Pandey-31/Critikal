@@ -5,8 +5,8 @@ Wraps: search_security_knowledge() + rag_mandatory_sweep()
 Reads: ctx.findings (for sweep mode)
 """
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class RAGSearchTool(Tool):
@@ -47,7 +47,7 @@ class RAGSearchTool(Tool):
 
         # Direct query
         if query and not sweep:
-            from src.agents.tools import search_security_knowledge
+            from src.pipeline.tools import search_security_knowledge
             try:
                 result = search_security_knowledge.invoke(query)
                 return ToolResult.success(result)
@@ -60,7 +60,7 @@ class RAGSearchTool(Tool):
             if not ctx.config.rag_enabled:
                 return ToolResult.success("RAG is disabled in config.")
 
-            from src.agents.tools import search_security_knowledge
+            from src.pipeline.tools import search_security_knowledge
             matched = 0
             for finding in ctx.findings:
                 search_query = f"{finding.title} {finding.hypothesis}"

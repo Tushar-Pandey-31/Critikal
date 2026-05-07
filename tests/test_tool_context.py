@@ -4,10 +4,8 @@ Tests for src/agent/context.py — ToolContext shared execution state.
 
 import os
 import tempfile
-import pytest
-from pathlib import Path
 
-from src.agent.context import ToolContext, FileReadState
+from src.agent.context import ToolContext
 
 
 class TestToolContextInit:

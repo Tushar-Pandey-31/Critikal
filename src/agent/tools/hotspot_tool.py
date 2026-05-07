@@ -5,9 +5,8 @@ Wraps: GraphQueries.get_high_risk_hotspots() + risk aggregation
 Reads: ctx.graph
 """
 
-import os
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class HotspotTool(Tool):
@@ -43,7 +42,7 @@ class HotspotTool(Tool):
         return ctx.has_graph()
 
     async def execute(self, params: dict, ctx: ToolContext) -> ToolResult:
-        from src.utils.graph_queries import GraphQueries, get_graph_queries
+        from src.utils.graph_queries import get_graph_queries
 
         min_score = params.get("min_score", 70)
 
@@ -92,6 +91,7 @@ class HotspotTool(Tool):
 
         summary_lines.append(f"\nReentrancy risks: {len(reentrancy)}")
         summary_lines.append(f"Unprotected mutators: {len(unprotected)}")
+        summary_lines.append(f"Privilege-escalation risks: {len(escalation)}")
         summary_lines.append(f"External calls: {len(external_calls)}")
 
         return ToolResult.success(
@@ -99,4 +99,5 @@ class HotspotTool(Tool):
             hotspots=hotspot_list,
             reentrancy_count=len(reentrancy),
             unprotected_count=len(unprotected),
+            escalation_count=len(escalation),
         )

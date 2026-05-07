@@ -13,8 +13,8 @@ import os
 import socket
 from urllib.parse import urlparse
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +227,7 @@ class WebFetchTool(Tool):
                         text = body.decode("utf-8", errors="replace")
                         break
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ToolResult.error(f"Request timed out after {timeout}s.")
         except Exception as e:
             return ToolResult.error(f"Fetch failed: {e}")
@@ -267,7 +267,7 @@ class WebFetchTool(Tool):
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout + 5
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ToolResult.error(f"curl timed out after {timeout}s.")
         except FileNotFoundError:
             return ToolResult.error("Neither aiohttp nor curl available.")

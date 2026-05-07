@@ -3,7 +3,8 @@ Tests for the TokenCounter utility module.
 """
 
 import pytest
-from src.utils.token_counter import TokenCounter, get_token_counter
+
+from src.utils.token_counter import get_token_counter
 
 
 @pytest.fixture(autouse=True)
@@ -114,8 +115,8 @@ class TestTokenCounterMetadata:
         tc.record("AgentA", "gemini-3-flash-preview", "p", "r", metadata)
 
         agent = tc.get_summary()["agents"][0]
-        # gemini-3-flash-preview: $0.15/M input + $0.60/M output = $0.75
-        assert abs(agent["estimated_cost_usd"] - 0.75) < 0.01
+        # gemini-3-flash-preview: $0.10/M input + $0.40/M output = $0.50
+        assert abs(agent["estimated_cost_usd"] - 0.50) < 0.01
 
     def test_empty_inputs(self):
         tc = get_token_counter()

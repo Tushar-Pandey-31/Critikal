@@ -12,13 +12,13 @@ except ImportError:
 
 from src.agent.context import ToolContext
 from src.agent.cost import CostTracker
-from src.agent.events import EventBus, Event, EventType
+from src.agent.events import Event, EventBus, EventType
 from src.agent.hooks import HookRegistry
+from src.agent.memory import AutoDream, SessionMemory
 from src.agent.permissions import PermissionHandler
 from src.agent.query_loop import QueryLoop
 from src.agent.task_store import TaskStore
 from src.agent.tools import get_all_tools
-from src.agent.memory import SessionMemory, AutoDream, generate_away_summary
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class HeadlessRunner:
         budget_usd: float | None = None,
         engagement_id: str | None = None,
     ):
-        self.model = model or os.getenv("AGENT_MODEL_NAME", "claude-sonnet-4-6")
+        self.model = model or os.getenv("AGENT_MODEL_NAME", "grok-4-1-fast-reasoning")
         self.permission_mode = permission_mode
         self.budget_usd = budget_usd
         self.engagement_id = engagement_id or str(uuid.uuid4())[:8]

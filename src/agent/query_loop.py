@@ -16,23 +16,21 @@ tool calling (Anthropic, Google, OpenAI, xAI, etc.).
 """
 
 import asyncio
-import json
 import logging
 import os
 import time
-import traceback
 from typing import Any
 
-from src.agent.tool import Tool, ToolResult
+from src.agent.auto_compact import AutoCompactor
 from src.agent.context import ToolContext
 from src.agent.events import Event, EventType
-from src.agent.auto_compact import AutoCompactor
 from src.agent.permissions import PermissionHandler
 from src.agent.system_prompt import build_system_prompt
+from src.agent.tool import Tool, ToolResult
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "grok-4-1-fast-reasoning"
 DEFAULT_MAX_TURNS = 200
 
 # ── Recovery constants (from Claude Code spec) ──
@@ -61,11 +59,16 @@ RATE_LIMIT_PATTERNS = (
     "overloaded",
 )
 
-# Fallback model chain
+# Fallback model chain — used when the primary model fails after retries.
+# Override via AGENT_FALLBACK_MODEL env var, or the chain below is used.
+# NOTE: Update these defaults to match models available on your API plan.
 FALLBACK_MODELS = {
-    "claude-sonnet-4-6": "gemini-3-flash-preview",
-    "claude-opus-4-6": "claude-sonnet-4-6",
-    "grok-3": "gemini-3-flash-preview",
+    "grok-4-1-fast-reasoning": "gpt-4.1-2025-04-14",
+    "grok-4-1-fast-non-reasoning": "gpt-4.1-2025-04-14",
+    "gpt-4.1-2025-04-14": "grok-4-1-fast-reasoning",
+    "gpt-4.1-mini-2025-04-14": "grok-4-1-fast-reasoning",
+    "gpt-4o": "grok-4-1-fast-reasoning",
+    "gpt-4o-mini": "grok-4-1-fast-reasoning",
 }
 
 
@@ -99,7 +102,11 @@ class QueryLoop:
         self.messages: list[dict[str, Any]] = []
         self.compactor = AutoCompactor(self.model)
         self.permissions = permission_handler or PermissionHandler()
-        self.fallback_model = fallback_model or FALLBACK_MODELS.get(self.model)
+        self.fallback_model = (
+            fallback_model
+            or os.getenv("AGENT_FALLBACK_MODEL")
+            or FALLBACK_MODELS.get(self.model)
+        )
 
         # Publish the permission handler on the context so sub-agents
         # spawned via SpawnAgentTool inherit the parent's policy rather
@@ -354,7 +361,10 @@ class QueryLoop:
         Falls back to ainvoke if streaming is not supported.
         """
         from langchain_core.messages import (
-            SystemMessage, HumanMessage, AIMessage, ToolMessage,
+            AIMessage,
+            HumanMessage,
+            SystemMessage,
+            ToolMessage,
         )
 
         llm = await self._get_llm()

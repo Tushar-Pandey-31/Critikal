@@ -1,12 +1,13 @@
 import os
 import sys
+
 import pytest
 
 # Add src to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 from analysis_engine import AnalysisEngine
-from graph_builder import GraphBuilder
+from src.graph import GraphBuilder
 from utils.graph_queries import GraphQueries
 
 
@@ -159,11 +160,11 @@ def test_multiple_external_calls(graph_and_queries):
     data = graph.nodes[node_id]
     assert data.get("makes_external_call") == True, \
         "multipleExternalCalls() should make external calls"
-    
+
     call_types = data.get("external_call_type", [])
     assert len(call_types) >= 2, \
         f"multipleExternalCalls() should have >= 2 call types, got {call_types}"
-    
+
     call_nodes = data.get("external_call_nodes", [])
     assert len(call_nodes) >= 2, \
         f"multipleExternalCalls() should have >= 2 call descriptions, got {len(call_nodes)}"
@@ -220,7 +221,7 @@ def test_multiple_writes_and_calls(graph_and_queries):
     data = graph.nodes[node_id]
     assert data.get("makes_external_call") == True, \
         "multipleWritesAndCalls() should make external call"
-    
+
     # Should be flagged as unsafe because of the second write AFTER the call
     assert data.get("state_write_after_external_call") == True, \
         "multipleWritesAndCalls() should flag state_write_after_external_call (second write is after call)"
@@ -240,7 +241,7 @@ def test_write_in_callee(graph_and_queries):
     data = graph.nodes[node_id]
     assert data.get("makes_external_call") == True, \
         "writeInCallee() should make external call"
-    
+
     # Should be flagged as unsafe because call happens before indirect write in _updateBalance
     assert data.get("state_write_after_external_call") == True, \
         "writeInCallee() should flag state_write_after_external_call (indirect write via internal call)"
@@ -261,7 +262,7 @@ def test_modifier_call_write(graph_and_queries):
     # Modifier makes external call, function body writes state -> Violation
     assert data.get("makes_external_call") == True, \
         "modifierCallWrite() should make external call (via modifier)"
-    
+
     assert data.get("state_write_after_external_call") == True, \
         "modifierCallWrite() should flag state_write_after_external_call (modifier call before body write)"
 
@@ -280,7 +281,7 @@ def test_conditional_write(graph_and_queries):
     data = graph.nodes[node_id]
     assert data.get("makes_external_call") == True, \
         "conditionalWrite() should make external call"
-    
+
     # Write inside if block is structurally after the call -> Violation
     assert data.get("state_write_after_external_call") == True, \
         "conditionalWrite() should flag state_write_after_external_call (conditional write)"
@@ -300,7 +301,7 @@ def test_safe_pull(graph_and_queries):
     data = graph.nodes[node_id]
     assert data.get("makes_external_call") == True, \
         "safePull() should make external call"
-    
+
     # Write happens before call -> Safe
     assert data.get("state_write_after_external_call") == False, \
         "safePull() should NOT flag state_write_after_external_call (safe check-effect-interaction)"
@@ -320,7 +321,7 @@ def test_external_call_no_mutation(graph_and_queries):
     data = graph.nodes[node_id]
     assert data.get("makes_external_call") == True, \
         "externalCallNoMutation() should make external call"
-    
+
     # No state writes anywhere -> Safe
     assert data.get("state_write_after_external_call") == False, \
         "externalCallNoMutation() should NOT flag state_write_after_external_call (no mutation)"
@@ -414,7 +415,7 @@ def test_external_call_edge_properties(graph_and_queries):
     assert edge["return_value_checked"] is True
     assert edge["target_expression"] != ""
 
-    print(f"✓ PASS: lowLevelCall EXTERNAL_CALL edge properties correct")
+    print("✓ PASS: lowLevelCall EXTERNAL_CALL edge properties correct")
     print(f"  - call_type={edge['call_type']} forwards_gas={edge['forwards_gas']}")
 
 
@@ -427,7 +428,7 @@ def test_transfer_edge_properties(graph_and_queries):
     assert edge["forwards_gas"] == "2300"
     assert edge["return_value_checked"] is True
 
-    print(f"✓ PASS: transferEther EXTERNAL_CALL edge has forwards_gas=2300")
+    print("✓ PASS: transferEther EXTERNAL_CALL edge has forwards_gas=2300")
 
 
 def test_delegatecall_edge_properties(graph_and_queries):
@@ -438,7 +439,7 @@ def test_delegatecall_edge_properties(graph_and_queries):
     assert edge["call_type"] == "delegatecall"
     assert edge["forwards_gas"] == "full"
 
-    print(f"✓ PASS: delegateCall EXTERNAL_CALL edge properties correct")
+    print("✓ PASS: delegateCall EXTERNAL_CALL edge properties correct")
 
 
 def test_send_edge_properties(graph_and_queries):
@@ -449,7 +450,7 @@ def test_send_edge_properties(graph_and_queries):
     assert edge["call_type"] == "send"
     assert edge["forwards_gas"] == "2300"
 
-    print(f"✓ PASS: sendEther EXTERNAL_CALL edge has forwards_gas=2300")
+    print("✓ PASS: sendEther EXTERNAL_CALL edge has forwards_gas=2300")
 
 
 # ================================================================
@@ -461,13 +462,13 @@ def test_view_interface_call_is_staticcall(graph_and_queries):
     assert graph.has_node(node_id)
 
     edges = queries.get_external_call_edges(node_id)
-    assert len(edges) >= 1, f"externalCallNoMutation should have EXTERNAL_CALL edges"
+    assert len(edges) >= 1, "externalCallNoMutation should have EXTERNAL_CALL edges"
 
     call_types = [e["call_type"] for e in edges]
     assert "staticcall" in call_types, \
         f"View function call should be classified as staticcall, got {call_types}"
 
-    print(f"✓ PASS: view interface call classified as staticcall")
+    print("✓ PASS: view interface call classified as staticcall")
 
 
 def test_view_call_then_write(graph_and_queries):
@@ -485,7 +486,7 @@ def test_view_call_then_write(graph_and_queries):
     call_types = [e["call_type"] for e in edges]
     assert "staticcall" in call_types
 
-    print(f"✓ PASS: viewCallThenWrite has CEI violation but NOT reentrant-capable")
+    print("✓ PASS: viewCallThenWrite has CEI violation but NOT reentrant-capable")
 
 
 def test_nonview_interface_is_not_staticcall(graph_and_queries):
@@ -498,7 +499,7 @@ def test_nonview_interface_is_not_staticcall(graph_and_queries):
         f"Non-view interface call should be 'interface', got {call_types}"
     assert "staticcall" not in call_types
 
-    print(f"✓ PASS: non-view interface call is 'interface', not 'staticcall'")
+    print("✓ PASS: non-view interface call is 'interface', not 'staticcall'")
 
 
 # ================================================================
@@ -516,7 +517,7 @@ def test_transfer_then_write_not_reentrant(graph_and_queries):
     assert data.get("state_write_after_reentrant_call") is False, \
         "transfer (2300 gas) should NOT flag state_write_after_reentrant_call"
 
-    print(f"✓ PASS: transferThenWrite is CEI violation but NOT reentrant-capable")
+    print("✓ PASS: transferThenWrite is CEI violation but NOT reentrant-capable")
 
 
 def test_send_then_write_not_reentrant(graph_and_queries):
@@ -531,7 +532,7 @@ def test_send_then_write_not_reentrant(graph_and_queries):
     assert data.get("state_write_after_reentrant_call") is False, \
         "send (2300 gas) should NOT flag state_write_after_reentrant_call"
 
-    print(f"✓ PASS: sendThenWrite is CEI violation but NOT reentrant-capable")
+    print("✓ PASS: sendThenWrite is CEI violation but NOT reentrant-capable")
 
 
 # ================================================================

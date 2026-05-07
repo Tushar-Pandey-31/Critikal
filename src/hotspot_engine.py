@@ -1,5 +1,5 @@
-from dataclasses import dataclass, field
-from typing import Any, List, Dict
+from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -8,8 +8,8 @@ class Hotspot:
     contract: str
     function: str
     risk_score: int
-    risk_categories: List[str]
-    signals: Dict[str, Any]
+    risk_categories: list[str]
+    signals: dict[str, Any]
     priority: str
     structural_score: int = 0
     exploitability_score: int = 0

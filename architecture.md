@@ -70,10 +70,10 @@ feeds results back, and continues until the model stops requesting tools or limi
 - Rate limit → exponential backoff (2s, 4s, 8s)
 - Prompt too long → reactive compact → fallback model
 - Max output tokens → retry up to 3×
-- Persistent failure → switch to fallback model (e.g., `claude-sonnet-4-6` → `gemini-3-flash-preview`)
+- Persistent failure → switch to fallback model (e.g., `grok-4-1-fast-reasoning` → `gpt-5.4-mini`)
 
 **Defaults:**
-- Model: `claude-sonnet-4-6` (env: `AGENT_MODEL_NAME`)
+- Model: `grok-4-1-fast-reasoning` (env: `AGENT_MODEL_NAME`)
 - Max turns: 200
 - Tool result budget: 80,000 chars
 
@@ -196,45 +196,45 @@ Per-engagement memory persisted at `~/.critikal/memory/<engagement_id>/session.j
 
 ---
 
-## Worker Layer (`src/agents/workers/`)
+## Worker Layer (`src/pipeline/workers/`)
 
 Pipeline tools delegate to these specialized workers. Workers are not called directly
 by the agent — they are invoked through their corresponding tool.
 
 ### Analysis Workers
 
-| Worker | File | Model | Purpose |
-|--------|------|-------|---------|
-| `ReconWorker` | `recon_worker.py` | `gemini-3-flash-preview` | 7 parallel intel sources: graph, RAG, Etherscan, docs, NatSpec, compiler, tests |
-| `AttackHypothesisWorker` | `attack_hypothesis_worker.py` | `grok-3` | Pattern-guided vulnerability discovery per hotspot |
-| `AssumptionWorker` | `assumption_worker.py` | `gemini-3-flash-preview` | First-principles zero-day discovery (no pattern hints) |
-| `ExecutionTraceWorker` | `execution_trace_worker.py` | `gemini-3-flash-preview` | Cross-function symmetry analysis |
+| Worker | File | Default Model | Purpose |
+|--------|------|---------------|---------|
+| `ReconWorker` | `recon_worker.py` | `gpt-5.4-mini` | 7 parallel intel sources: graph, RAG, Etherscan, docs, NatSpec, compiler, tests |
+| `AttackHypothesisWorker` | `attack_hypothesis_worker.py` | `grok-4-1-fast-reasoning` | Pattern-guided vulnerability discovery per hotspot |
+| `AssumptionWorker` | `assumption_worker.py` | `grok-4-1-fast-reasoning` | First-principles zero-day discovery (no pattern hints) |
+| `ExecutionTraceWorker` | `execution_trace_worker.py` | `gpt-5.4-mini` | Cross-function symmetry analysis |
 
 ### Semantic Discovery Workers (no Slither required)
 
-| Worker | File | Model | Focus |
-|--------|------|-------|-------|
-| `InvariantHunterWorker` | `semantic_discovery.py` | `gemini-3-flash-preview` | Derives protocol invariants, checks violations across all functions |
-| `EconomicAttackerWorker` | `economic_attacker.py` | `gemini-3-flash-preview` | Flash loan, sandwich, share inflation, rounding |
-| `TrustBoundaryAnalyzer` | `trust_boundary.py` | `gemini-3-flash-preview` | Privilege escalation, proxy abuse, delegatecall injection |
-| `CrossContractStateChecker` | `cross_contract.py` | `gemini-3-flash-preview` | Cross-contract reentrancy, stale state, callback exploitation |
+| Worker | File | Default Model | Focus |
+|--------|------|---------------|-------|
+| `InvariantHunterWorker` | `semantic_discovery.py` | `gpt-5.4-mini` | Derives protocol invariants, checks violations across all functions |
+| `EconomicAttackerWorker` | `economic_attacker.py` | `gpt-5.4-mini` | Flash loan, sandwich, share inflation, rounding |
+| `TrustBoundaryAnalyzer` | `trust_boundary.py` | `gpt-5.4-mini` | Privilege escalation, proxy abuse, delegatecall injection |
+| `CrossContractStateChecker` | `cross_contract.py` | `gpt-5.4-mini` | Cross-contract reentrancy, stale state, callback exploitation |
 
 ### Validation Workers
 
-| Worker | File | Model | Purpose |
-|--------|------|-------|---------|
-| `GateWorker` (via `gate_evaluate`) | `jury_worker.py` | `gemini-3-flash-preview` | 4-gate pre-filter: Refutation → Reachability → Trigger → Impact |
-| `JuryWorker` | `jury_worker.py` | Multi-model | Adversarial debate: Skeptic(Claude)/Attacker(Grok)/Auditor(GPT-4o)/Judge(Gemini) |
-| `StateTraceDepthWorker` | `depth_workers.py` | `gemini-3-flash-preview` | Re-analyze reentrancy/CEI/invariant/privilege findings |
-| `EdgeCaseDepthWorker` | `depth_workers.py` | `gemini-3-flash-preview` | Re-analyze arithmetic/rounding/boundary findings |
-| `ExternalDepthWorker` | `depth_workers.py` | `gemini-3-flash-preview` | Re-analyze flash loan/oracle/MEV findings |
+| Worker | File | Default Model | Purpose |
+|--------|------|---------------|---------|
+| `GateWorker` (via `gate_evaluate`) | `jury_worker.py` | `gpt-5.4-mini` | 4-gate pre-filter: Refutation → Reachability → Trigger → Impact |
+| `JuryWorker` | `jury_worker.py` | Multi-model | Adversarial debate: Skeptic(GPT-5.5)/Attacker(Grok-4.1)/Auditor(GPT-5.4-mini)/Judge(Grok-4.1) |
+| `StateTraceDepthWorker` | `depth_workers.py` | `gpt-5.4-mini` | Re-analyze reentrancy/CEI/invariant/privilege findings |
+| `EdgeCaseDepthWorker` | `depth_workers.py` | `gpt-5.4-mini` | Re-analyze arithmetic/rounding/boundary findings |
+| `ExternalDepthWorker` | `depth_workers.py` | `gpt-5.4-mini` | Re-analyze flash loan/oracle/MEV findings |
 
 ### Exploit Generation
 
-| Worker | File | Model | Purpose |
-|--------|------|-------|---------|
-| `TestWriterWorker` | `test_writer_worker.py` | `gemini-3-flash-preview` | Phoenix loop: generate → compile → fix → retry. Bridge mode for legacy contracts |
-| `FuzzGenerator` | `fuzz_generator.py` | `gemini-3-flash-preview` | Foundry invariant fuzz tests for CRITICAL proven findings |
+| Worker | File | Default Model | Purpose |
+|--------|------|---------------|---------|
+| `TestWriterWorker` | `test_writer_worker.py` | `grok-code-fast-1` | Phoenix loop: generate → compile → fix → retry. Bridge mode for legacy contracts |
+| `FuzzGenerator` | `fuzz_generator.py` | `grok-code-fast-1` | Foundry invariant fuzz tests for CRITICAL proven findings |
 
 ---
 
@@ -285,7 +285,7 @@ Consensus = derived from jury verdict (CONFIRMED=100, CONFIRMED_UNPROVABLE=75,
 
 ## Static Analysis Layer
 
-### GraphBuilder (`src/graph_builder.py`, ~5,600 lines)
+### GraphBuilder (`src/graph/ (modular)`, ~5,600 lines)
 
 Constructs a NetworkX `DiGraph` from Slither IR. This is the most complex single file
 in the codebase.
@@ -400,6 +400,6 @@ Textual-based terminal UI. Redirects all Python logging to
 
 ## Deprecated: Legacy Pipeline
 
-`src/main.py` → `src/agents/lead_agent.py:coordinator_node()` — the original
+`src/main.py` → `src/pipeline/lead_agent.py:coordinator_node()` — the original
 monolithic LangGraph pipeline. Still invocable via `critikal --legacy`. Will be removed.
 Do not add features here. The modern agent system (`src/agent/`) supersedes it entirely.

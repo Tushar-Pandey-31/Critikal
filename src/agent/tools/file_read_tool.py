@@ -7,8 +7,8 @@ Line-numbered output for precise referencing. Handles text and binary detection.
 import mimetypes
 from pathlib import Path
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 MAX_LINES = 2000
 
@@ -91,7 +91,7 @@ class FileReadTool(Tool):
                 pass
 
         try:
-            with open(p, "r", encoding="utf-8", errors="replace") as f:
+            with open(p, encoding="utf-8", errors="replace") as f:
                 all_lines = f.readlines()
         except Exception as e:
             return ToolResult.error(f"Failed to read {p}: {e}")

@@ -6,8 +6,9 @@ Sets: ctx.recon_context
 """
 
 import os
-from src.agent.tool import Tool, ToolResult, PermissionLevel
+
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class ReconTool(Tool):
@@ -37,14 +38,14 @@ class ReconTool(Tool):
 
     async def execute(self, params: dict, ctx: ToolContext) -> ToolResult:
         from src.llm.providers import get_worker_llm
-        from src.agents.workers.recon_worker import ReconWorker
-        from src.agents.base_worker import WorkerTask
+        from src.pipeline.base_worker import WorkerTask
+        from src.pipeline.workers.recon_worker import ReconWorker
 
         ctx.ensure_config()
 
         recon_model = os.getenv(
             "RECON_MODEL_NAME",
-            os.getenv("WORKER_MODEL_NAME", "gemini-3-flash-preview"),
+            os.getenv("WORKER_MODEL_NAME", "gpt-5.4-mini"),
         )
         recon_llm = get_worker_llm(model_name=recon_model)
 

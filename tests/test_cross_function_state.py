@@ -8,16 +8,14 @@ Covers:
   Integration: Risk scoring, query layer
 """
 
-import pytest
 import networkx as nx
 
 from src.utils.graph_queries import (
     GraphQueries,
-    get_state_dependencies,
     get_dangerous_sequences,
     get_exploit_chains,
+    get_state_dependencies,
 )
-
 
 # ═══════════════════════════════════════════════════════════════
 #  Helpers
@@ -99,7 +97,7 @@ def _link_writes(g, func_id, var_id):
 
 
 def _run_ds3(g: nx.DiGraph):
-    from src.graph_builder import GraphBuilder
+    from src.graph import GraphBuilder
     gb = GraphBuilder()
     gb.graph = g
     gb._build_state_dependency_graph()

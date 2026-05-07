@@ -63,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--model",
         type=str,
         default=os.getenv("AGENT_MODEL_NAME"),
-        help="Model for the agent brain (default: $AGENT_MODEL_NAME or claude-sonnet-4-6)",
+        help="Model for the agent brain (default: $AGENT_MODEL_NAME or grok-4-1-fast-reasoning)",
     )
     parser.add_argument(
         "--budget",
@@ -328,7 +328,7 @@ def _add_schedule(args):
     task_id = scheduler.add_task(task)
     print(f"✓ Scheduled task {task_id}: {args.schedule}")
     print(f"  Repo: {args.repo or '(custom prompt)'}")
-    print(f"  Run scheduler with: critikal --run-scheduler")
+    print("  Run scheduler with: critikal --run-scheduler")
 
 
 def _run_scheduler():

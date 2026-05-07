@@ -1,7 +1,7 @@
 """
 Provider detection and rate-limited LLM construction.
 
-Moved out of src/agents/lead_agent.py so the agent path no longer depends on
+Moved out of src/pipeline/lead_agent.py so the agent path no longer depends on
 the legacy coordinator. Only concern here is "given a model name, return a
 rate-limited, key-pool-backed chat LLM".
 """
@@ -31,7 +31,12 @@ except ImportError:
 
 
 def detect_provider(model_name: str) -> str:
-    """Detect provider id from a model name string."""
+    """Detect provider id from a model name string.
+
+    Raises ValueError on unknown prefixes. Falling back to a default provider
+    silently routes a typo'd model (e.g. ``claude-sonnet-4-7``-with-extra-chars)
+    to the wrong API and hides the misconfiguration behind a confusing 4xx.
+    """
     m = model_name.lower()
     if m.startswith("gemini") or m.startswith("models/gemini"):
         return "gemini"
@@ -43,7 +48,10 @@ def detect_provider(model_name: str) -> str:
         return "xai"
     if m.startswith("openrouter/") or "/" in m:
         return "openrouter"
-    return "gemini"
+    raise ValueError(
+        f"Unknown provider for model '{model_name}'. "
+        "Supported prefixes: claude-, gemini-, gpt-/o1/o3/o4, grok-, openrouter/<model>."
+    )
 
 
 _PROVIDER_ENV_KEYS: dict[str, tuple[str, ...]] = {
@@ -63,7 +71,10 @@ def check_provider_credentials(model_name: str) -> tuple[bool, str]:
     for preflight so we fail loudly *before* starting an agentic loop
     that would otherwise burn a retry cycle to discover the same thing.
     """
-    provider = detect_provider(model_name)
+    try:
+        provider = detect_provider(model_name)
+    except ValueError as e:
+        return False, str(e)
 
     try:
         from src.utils.key_pool import get_key_pool
@@ -98,11 +109,11 @@ def get_worker_llm(
     Workers must use this. Never bind tools to a worker LLM — the tool
     registry is for the coordinator/agent loop.
     """
-    from src.utils.rate_limiter import get_rate_limiter, RateLimitedLLM
     from src.utils.key_pool import get_key_pool
+    from src.utils.rate_limiter import RateLimitedLLM, get_rate_limiter
 
     if model_name is None:
-        model_name = os.getenv("WORKER_MODEL_NAME", "gemini-3-flash-preview")
+        model_name = os.getenv("WORKER_MODEL_NAME", "gpt-5.4-mini")
 
     timeout = float(os.getenv("WORKER_LLM_TIMEOUT", "180"))
     max_retries = int(os.getenv("WORKER_LLM_MAX_RETRIES", "0"))

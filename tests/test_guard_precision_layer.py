@@ -9,18 +9,17 @@ Covers:
   Query layer: graph_queries methods
 """
 
-import pytest
-import networkx as nx
 from unittest.mock import MagicMock
+
+import networkx as nx
 
 from src.utils.graph_queries import (
     GraphQueries,
-    get_guarded_initializers,
     get_access_control_types,
+    get_guarded_initializers,
     get_modifier_equivalences,
     get_safe_functions,
 )
-
 
 # ═══════════════════════════════════════════════════════════════
 #  Helpers — build minimal graph fragments for unit tests
@@ -105,7 +104,7 @@ class TestInitializerGuardDetection:
         g = nx.DiGraph()
         _make_function_node(g, "Vault", "initialize",
             source_code='function initialize() external {\n  require(!initialized);\n  initialized = true;\n}')
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -116,7 +115,7 @@ class TestInitializerGuardDetection:
         g = nx.DiGraph()
         _make_function_node(g, "Token", "init",
             source_code='function init() public {\n  require(initialized == false);\n}')
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -127,7 +126,7 @@ class TestInitializerGuardDetection:
         g = nx.DiGraph()
         _make_function_node(g, "Pool", "setup",
             source_code='function setup() external {\n  if (initialized) revert AlreadyInit();\n}')
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -138,7 +137,7 @@ class TestInitializerGuardDetection:
         g = nx.DiGraph()
         _make_function_node(g, "Proxy", "initialize",
             source_code='function initialize() external {\n  require(!_initialized);\n}')
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -149,7 +148,7 @@ class TestInitializerGuardDetection:
         g = nx.DiGraph()
         _make_function_node(g, "Vault", "initialize",
             source_code='function initialize() external {\n  owner = msg.sender;\n}')
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -163,7 +162,7 @@ class TestInitializerGuardDetection:
             source_code='function initialize() external initializer {\n  require(!initialized);\n}',
             modifiers=["initializer"],
             is_protected=True)
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -176,7 +175,7 @@ class TestInitializerGuardDetection:
         _make_function_node(g, "Vault", "initialize",
             source_code='function initialize() external {\n  require(!initialized);\n}',
             is_protected=False)
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -188,7 +187,7 @@ class TestInitializerGuardDetection:
         g = nx.DiGraph()
         _make_function_node(g, "V2", "init",
             source_code='function init() external {\n  require(_initialized == 0);\n}')
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -208,7 +207,7 @@ class TestRequireAccessControl:
         _make_function_node(g, "Vault", "setFee",
             source_code='function setFee(uint f) external {\n  require(msg.sender == owner);\n  fee = f;\n}',
             writes_state=True)
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -221,7 +220,7 @@ class TestRequireAccessControl:
         g = nx.DiGraph()
         _make_function_node(g, "Token", "mint",
             source_code='function mint(uint a) external {\n  require(hasRole(MINTER_ROLE, msg.sender));\n}')
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -234,7 +233,7 @@ class TestRequireAccessControl:
             source_code='function withdraw() external onlyOwner {\n  require(msg.sender == admin);\n}',
             modifiers=["onlyOwner"],
             has_access_control=True)
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -245,7 +244,7 @@ class TestRequireAccessControl:
         g = nx.DiGraph()
         _make_function_node(g, "Vault", "deposit",
             source_code='function deposit() external payable {\n  balances[msg.sender] += msg.value;\n}')
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -256,7 +255,7 @@ class TestRequireAccessControl:
         g = nx.DiGraph()
         _make_function_node(g, "Box", "store",
             source_code='function store(uint v) external {\n  if (msg.sender != owner) revert Unauthorized();\n}')
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -268,7 +267,7 @@ class TestRequireAccessControl:
         _make_state_var(g, "Vault", "owner")
         _make_function_node(g, "Vault", "setFee",
             source_code='function setFee(uint f) external {\n  require(msg.sender == owner);\n}')
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -281,7 +280,7 @@ class TestRequireAccessControl:
         _make_function_node(g, "Vault", "admin_only",
             source_code='function admin_only() external {\n  require(msg.sender == admin);\n}',
             is_protected=False)
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -298,7 +297,7 @@ class TestModifierEquivalence:
     def test_onlyOwner_classified_as_owner(self):
         g = nx.DiGraph()
         _make_modifier_node(g, "Owned", "onlyOwner")
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -307,7 +306,7 @@ class TestModifierEquivalence:
     def test_onlyAdmin_classified_as_admin(self):
         g = nx.DiGraph()
         _make_modifier_node(g, "Gov", "onlyAdmin")
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -316,7 +315,7 @@ class TestModifierEquivalence:
     def test_initializer_classified(self):
         g = nx.DiGraph()
         _make_modifier_node(g, "Proxy", "initializer")
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -325,7 +324,7 @@ class TestModifierEquivalence:
     def test_nonReentrant_classified(self):
         g = nx.DiGraph()
         _make_modifier_node(g, "Vault", "nonReentrant")
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -334,7 +333,7 @@ class TestModifierEquivalence:
     def test_lock_classified_as_reentrancy_guard(self):
         g = nx.DiGraph()
         _make_modifier_node(g, "Vault", "lock")
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -343,7 +342,7 @@ class TestModifierEquivalence:
     def test_custom_modifier_stays_custom(self):
         g = nx.DiGraph()
         _make_modifier_node(g, "Pool", "whenNotPaused")
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -354,7 +353,7 @@ class TestModifierEquivalence:
         _make_modifier_node(g, "Vault", "onlyOwner")
         _make_modifier_node(g, "Vault", "nonReentrant")
         _make_function_node(g, "Vault", "withdraw", modifiers=["onlyOwner", "nonReentrant"])
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -366,7 +365,7 @@ class TestModifierEquivalence:
         g = nx.DiGraph()
         _make_modifier_node(g, "Vault", "nonReentrant")
         _make_function_node(g, "Vault", "swap", modifiers=["nonReentrant"])
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -376,7 +375,7 @@ class TestModifierEquivalence:
         g = nx.DiGraph()
         _make_modifier_node(g, "Proxy", "initializer")
         _make_function_node(g, "Proxy", "initialize", modifiers=["initializer"])
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -385,7 +384,7 @@ class TestModifierEquivalence:
     def test_onlyRole_classified_as_admin(self):
         g = nx.DiGraph()
         _make_modifier_node(g, "Token", "onlyRole")
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -395,7 +394,7 @@ class TestModifierEquivalence:
         g = nx.DiGraph()
         _make_modifier_node(g, "Vault", "myCustomMod",
             conditions=[{"checks_msg_sender": True, "compared_variable": "boss"}])
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._classify_modifier_equivalence()
@@ -443,7 +442,7 @@ class TestRiskScoreDowngrade:
         defaults.update(func_attrs)
         g.add_node("C::target", **defaults)
         g.add_node("C", type="contract", name="C", tier="CORE")
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._compute_global_risk_scores()
@@ -604,7 +603,7 @@ class TestHotspotGateIntegration:
             is_unprotected_mutator=False,
             unprotected_risk_level="NONE",
         )
-        from src.graph_builder import GraphBuilder
+        from src.graph import GraphBuilder
         gb = GraphBuilder()
         gb.graph = g
         gb._compute_global_risk_scores()

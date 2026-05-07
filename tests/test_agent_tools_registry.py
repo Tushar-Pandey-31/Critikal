@@ -6,9 +6,8 @@ correctly, have unique names, valid JSON schemas, and proper permission
 levels.
 """
 
-import pytest
-from src.agent.tools import get_all_tools, get_pipeline_tools, get_generic_tools, get_agent_tools
-from src.agent.tool import Tool, PermissionLevel
+from src.agent.tool import PermissionLevel, Tool
+from src.agent.tools import get_agent_tools, get_all_tools, get_generic_tools, get_pipeline_tools
 
 
 class TestToolRegistry:
@@ -120,6 +119,7 @@ class TestToolAvailability:
     def test_graph_tools_available_with_graph(self):
         """Graph query tools become available once graph is loaded."""
         import networkx as nx
+
         from src.agent.context import ToolContext
 
         ctx = ToolContext()

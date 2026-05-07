@@ -5,12 +5,12 @@ Wraps: FuzzGeneratorWorker.run()
 EVM-only, for CRITICAL proven findings.
 """
 
-import os
 import asyncio
 import logging
+import os
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +47,8 @@ class FuzzGeneratorTool(Tool):
 
     async def execute(self, params: dict, ctx: ToolContext) -> ToolResult:
         from src.llm.providers import get_worker_llm
-        from src.agents.workers.fuzz_generator import FuzzGeneratorWorker
-        from src.agents.base_worker import WorkerTask
+        from src.pipeline.base_worker import WorkerTask
+        from src.pipeline.workers.fuzz_generator import FuzzGeneratorWorker
 
         ctx.ensure_config()
         if not ctx.config.fuzz_generator_enabled:
@@ -67,7 +67,7 @@ class FuzzGeneratorTool(Tool):
         if not eligible:
             return ToolResult.success("No critical proven findings eligible for fuzz generation.")
 
-        fuzz_model = os.getenv("WORKER_MODEL_NAME", "gemini-3-flash-preview")
+        fuzz_model = os.getenv("FUZZ_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "grok-code-fast-1"))
         fuzz_llm = get_worker_llm(model_name=fuzz_model)
 
         generated = 0

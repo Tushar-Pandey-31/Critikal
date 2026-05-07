@@ -6,12 +6,12 @@ Reads: ctx.graph, ctx.recon_context
 Writes: ctx.findings, ctx.worker_outputs
 """
 
-import os
 import asyncio
 import logging
+import os
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +65,9 @@ class AttackAnalysisTool(Tool):
 
     async def execute(self, params: dict, ctx: ToolContext) -> ToolResult:
         from src.llm.providers import get_worker_llm
-        from src.agents.workers.attack_hypothesis_worker import AttackHypothesisWorker
-        from src.agents.base_worker import WorkerTask
         from src.models.finding import Finding
+        from src.pipeline.base_worker import WorkerTask
+        from src.pipeline.workers.attack_hypothesis_worker import AttackHypothesisWorker
         from src.utils.graph_queries import get_graph_queries
 
         ctx.ensure_config()
@@ -88,15 +88,15 @@ class AttackAnalysisTool(Tool):
             return ToolResult.success("No hotspots to analyze.")
 
         # Initialize workers
-        attack_model = os.getenv("ATTACK_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "claude-sonnet-4-6"))
+        attack_model = os.getenv("ATTACK_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "grok-4-1-fast-reasoning"))
         attack_llm = get_worker_llm(model_name=attack_model)
         attack_worker = AttackHypothesisWorker(graph=ctx.graph, llm_client=attack_llm)
 
         assumption_worker = None
         include_assumption = params.get("include_assumption", True) and config.assumption_worker_enabled
         if include_assumption:
-            from src.agents.workers.assumption_worker import AssumptionWorker
-            assumption_model = os.getenv("ASSUMPTION_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-3-flash-preview"))
+            from src.pipeline.workers.assumption_worker import AssumptionWorker
+            assumption_model = os.getenv("ASSUMPTION_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "grok-4-1-fast-reasoning"))
             assumption_llm = get_worker_llm(model_name=assumption_model)
             assumption_worker = AssumptionWorker(graph=ctx.graph, llm_client=assumption_llm)
 
@@ -105,8 +105,8 @@ class AttackAnalysisTool(Tool):
         exec_enabled = os.getenv("EXECUTION_TRACE_ENABLED", "true").lower() in ("true", "1", "yes")
         if include_exec and exec_enabled:
             try:
-                from src.agents.workers.execution_trace_worker import ExecutionTraceWorker
-                exec_model = os.getenv("EXECUTION_TRACE_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gemini-3-flash-preview"))
+                from src.pipeline.workers.execution_trace_worker import ExecutionTraceWorker
+                exec_model = os.getenv("EXECUTION_TRACE_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gpt-5.4-mini"))
                 exec_llm = get_worker_llm(model_name=exec_model)
                 execution_trace_worker = ExecutionTraceWorker(graph=ctx.graph, llm_client=exec_llm)
             except Exception as e:
@@ -157,7 +157,7 @@ class AttackAnalysisTool(Tool):
             async with sem:
                 try:
                     return await asyncio.wait_for(worker.run(task), timeout=timeout)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning(f"TIMEOUT: {task.task_id}")
                     return None
                 except Exception as e:

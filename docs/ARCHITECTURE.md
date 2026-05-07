@@ -33,7 +33,7 @@ flowchart TB
     L --> M[ReportGenerator: html/md/graph/exploits]
 ```
 
-Important runtime detail: the LangGraph topology is minimal (`START -> Coordinator -> END`), and most orchestration happens inside `coordinator_node` in `src/agents/lead_agent.py`.
+Important runtime detail: the LangGraph topology is minimal (`START -> Coordinator -> END`), and most orchestration happens inside `coordinator_node` in `src/pipeline/lead_agent.py`.
 
 ## 3) Ingestion and Static Analysis
 
@@ -53,7 +53,7 @@ Implemented behavior:
 
 ## 4) Knowledge Graph Architecture
 
-Graph backend: `networkx.DiGraph` in `src/graph_builder.py`.
+Graph backend: `networkx.DiGraph` in `src/graph/ (modular)`.
 
 ### 4.1 Node Types (implemented)
 
@@ -198,10 +198,10 @@ Compatibility note: `get_function_context()` returns both `source_code` and `cod
 
 Key modules:
 - `src/main.py`
-- `src/agents/lead_agent.py`
-- `src/agents/workers/recon_worker.py`
-- `src/agents/workers/attack_hypothesis_worker.py`
-- `src/agents/workers/test_writer_worker.py`
+- `src/pipeline/lead_agent.py`
+- `src/pipeline/workers/recon_worker.py`
+- `src/pipeline/workers/attack_hypothesis_worker.py`
+- `src/pipeline/workers/test_writer_worker.py`
 
 Coordinator (`coordinator_node`) flow:
 1. Recon Worker (protocol + optional on-chain enrichment).
@@ -215,10 +215,10 @@ Coordinator (`coordinator_node`) flow:
 ## 9) TestWriter and Sandbox
 
 Core files:
-- `src/agents/workers/test_writer_worker.py`
-- `src/agents/workers/test_writer_sandbox.py`
-- `src/agents/workers/test_writer_prompts.py`
-- `src/agents/workers/bridge_interface_generator.py`
+- `src/pipeline/workers/test_writer_worker.py`
+- `src/pipeline/workers/test_writer_sandbox.py`
+- `src/pipeline/workers/test_writer_prompts.py`
+- `src/pipeline/workers/bridge_interface_generator.py`
 
 Implemented behavior:
 - Isolated sandbox setup per run.
@@ -267,11 +267,11 @@ Code-level deltas likely not captured by older docs:
 Primary code:
 - `src/main.py`
 - `src/analysis_engine.py`
-- `src/graph_builder.py`
+- `src/graph/ (modular)`
 - `src/utils/graph_queries.py`
-- `src/agents/lead_agent.py`
-- `src/agents/tools.py`
-- `src/agents/workers/*`
+- `src/pipeline/lead_agent.py`
+- `src/pipeline/tools.py`
+- `src/pipeline/workers/*`
 - `src/reporting/*`
 
 Representative tests:

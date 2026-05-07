@@ -321,7 +321,7 @@ def _build_finding_panels(findings: list, leads: list[dict], poc_files: list[dic
 def _build_leads_panel(leads: list[dict]) -> str:
     if not leads:
         return ""
-    
+
     rows = ""
     for idx, lead in enumerate(leads, 1):
         sev = html.escape(lead.get("severity", "UNKNOWN"))
@@ -330,7 +330,7 @@ def _build_leads_panel(leads: list[dict]) -> str:
         contract = html.escape(lead.get("affected_contract", "Unknown"))
         func = html.escape(lead.get("affected_function", "Unknown"))
         hyp = html.escape(lead.get("hypothesis", "No hypothesis provided."))
-        
+
         rows += f'''
         <div class="section" style="border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;">
           <h3 style="color: var(--text-bright); font-size: 14px; margin-bottom: 4px;">{idx}. {sev} | {title} (Confidence: {conf}%)</h3>
@@ -338,15 +338,15 @@ def _build_leads_panel(leads: list[dict]) -> str:
           <p style="font-size: 13px;">{hyp}</p>
         </div>'''
 
-    return f"""
+    return """
     <article class="finding-panel" id="raw-leads">
       <div class="finding-header">
-        <div class="badges">{{_badge('LEADS', '#8b949e', 'sev-badge')}}</div>
+        <div class="badges">{_badge('LEADS', '#8b949e', 'sev-badge')}</div>
         <h2>Raw Vulnerability Leads</h2>
         <p class="finding-title">The following leads were identified during the initial analysis phase. Note: These are preliminary hypotheses and may not be fully validated findings.</p>
       </div>
       <div class="section">
-        {{rows}}
+        {rows}
       </div>
     </article>"""
 

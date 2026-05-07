@@ -1,10 +1,9 @@
+import re
 from collections import defaultdict
 from datetime import datetime
-import re
 
 from src.models.finding import FindingStatus
 from src.utils.node_ids import normalize_node_id
-
 
 # ═══════════════════════════════════════════════════════════
 #  Finding ID helpers (Epic 7)
@@ -26,7 +25,7 @@ def _assign_finding_ids(findings: list) -> list:
 
 def _normalize_vuln_class(vc: str) -> str:
     """Normalize vulnerability class strings for dedup comparison.
-    
+
     Maps variant names to a canonical form so that e.g.
     'initializer_replay', 'Unprotected initializer ...', and
     'Uninitialized Implementation ...' all collapse to the same key.
@@ -35,7 +34,7 @@ def _normalize_vuln_class(vc: str) -> str:
     # Strip common prefixes/suffixes
     vc = re.sub(r'[^a-z0-9_]', '_', vc)
     vc = re.sub(r'_+', '_', vc).strip('_')
-    
+
     # Canonical mappings for common synonyms
     _CANONICAL = {
         'initializer_replay': 'initializer_frontrun',
@@ -48,22 +47,22 @@ def _normalize_vuln_class(vc: str) -> str:
         'admin_privilege': 'admin_privilege',
         'rug_pull': 'admin_privilege',
     }
-    
+
     # Check exact match first
     if vc in _CANONICAL:
         return _CANONICAL[vc]
-    
+
     # Check substring match for longer titles
     for pattern, canonical in _CANONICAL.items():
         if pattern in vc:
             return canonical
-    
+
     return vc
 
 
 def _deduplicate_findings(findings: list) -> list:
     """Merge findings that share the same (contract, function, vuln_class).
-    
+
     Assigns root_cause_group to duplicates and keeps only the highest-confidence
     representative per group. This prevents reports with 4 variants of the same
     initializer bug submitted as separate findings.
@@ -74,23 +73,23 @@ def _deduplicate_findings(findings: list) -> list:
         norm_vc = _normalize_vuln_class(f.vulnerability_class or "")
         key = f"{f.affected_contract}::{f.affected_function}::{norm_vc}"
         groups.setdefault(key, []).append(f)
-    
+
     deduplicated: list = []
     for key, group in groups.items():
         if len(group) == 1:
             deduplicated.append(group[0])
             continue
-        
+
         # Sort by confidence (desc), then severity weight
         sev_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
         group.sort(key=lambda f: (-f.confidence, sev_order.get(f.severity_estimate, 4)))
-        
+
         # Keep the best representative
         best = group[0]
         # Assign root_cause_group label
         rcg_label = f"{best.affected_contract}::{best.affected_function} ({_normalize_vuln_class(best.vulnerability_class or '')})"
         best.root_cause_group = rcg_label
-        
+
         # Absorb info from duplicates into the best finding's description
         dup_titles = [f.title for f in group[1:] if f.title and f.title != best.title]
         if dup_titles:
@@ -99,17 +98,17 @@ def _deduplicate_findings(findings: list) -> list:
                 best.impact = best.impact + "\n\n" + dedup_note
             else:
                 best.impact = dedup_note
-        
+
         # Use highest severity from the group
         for f in group:
             if sev_order.get(f.severity_estimate, 4) < sev_order.get(best.severity_estimate, 4):
                 best.severity_estimate = f.severity_estimate
-        
+
         deduplicated.append(best)
-        
+
         merged_count = len(group) - 1
         print(f"  [Dedup] Merged {merged_count} duplicate(s) into {best.report_id or best.id[:8]}: {rcg_label}")
-    
+
     return deduplicated
 
 
@@ -194,9 +193,9 @@ def render_markdown_report(
     jury_unprovable_count = sum(1 for f in findings if getattr(f, "jury_decision", "") == "CONFIRMED_UNPROVABLE")
 
     if jury_confirmed + jury_rejected_count > 0:
-        lines.append(f"\n### Jury Validation Summary\n")
-        lines.append(f"| Status | Count |")
-        lines.append(f"|--------|-------|")
+        lines.append("\n### Jury Validation Summary\n")
+        lines.append("| Status | Count |")
+        lines.append("|--------|-------|")
         lines.append(f"| Confirmed | {jury_confirmed - jury_unprovable_count} |")
         lines.append(f"| Confirmed (unprovable in isolation) | {jury_unprovable_count} |")
         lines.append(f"| Rejected (false positives) | {jury_rejected_count} |")
@@ -236,8 +235,8 @@ def render_markdown_report(
             lines.append(f"### {chain.chain_id}: {enabler.affected_function} → {blocked.affected_function}\n")
             lines.append(f"**Match:** {chain.match_strength} {chain.match_type}  ")
             lines.append(f"**Chain Severity:** `{chain.chain_severity}`\n")
-            lines.append(f"| Role | Finding | Contract | Function |")
-            lines.append(f"|------|---------|----------|----------|")
+            lines.append("| Role | Finding | Contract | Function |")
+            lines.append("|------|---------|----------|----------|")
             lines.append(
                 f"| Enabler | {e_id} | {enabler.affected_contract} | {enabler.affected_function} |"
             )
@@ -344,7 +343,7 @@ def _render_finding(finding, leads: list[dict]) -> list[str]:
         "### Description",
         "",
     ]
-    
+
     # Story 6.1: Render assumption/violation/proof for first-principles findings
     if getattr(finding, "vulnerability_class", "") == "first_principles":
         raw = getattr(finding, "raw_output", {}) or {}
@@ -404,9 +403,9 @@ def _render_finding(finding, leads: list[dict]) -> list[str]:
             unprovable_reason = getattr(finding, "jury_unprovable_reason", "")
             if unprovable_reason:
                 lines.append(f"**Why unprovable in isolation:** {unprovable_reason}\n")
-            lines.append(f"**Recommendation:** Test with mainnet fork or manual review\n")
+            lines.append("**Recommendation:** Test with mainnet fork or manual review\n")
         if jury_decision == "ESCALATE":
-            lines.append(f"**Action required:** Human review recommended — jurors disagreed\n")
+            lines.append("**Action required:** Human review recommended — jurors disagreed\n")
 
     if finding.attack_path:
         path_str = " → ".join(f"`{node}`" for node in finding.attack_path)

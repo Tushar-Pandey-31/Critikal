@@ -1,13 +1,15 @@
 
-import unittest
-import networkx as nx
-import sys
 import os
+import sys
+import unittest
+
+import networkx as nx
 
 # Add src to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 from utils.graph_queries import GraphQueries
+
 
 class TestGraphQueries(unittest.TestCase):
     def setUp(self):
@@ -19,12 +21,12 @@ class TestGraphQueries(unittest.TestCase):
         self.graph.add_node("A::func", type="function", source_code="function func() {}", modifiers=["view"])
         self.graph.add_node("B::caller", type="function")
         self.graph.add_node("C::callee", type="function")
-        
+
         self.graph.add_edge("B::caller", "A::func", relationship="CALLS")
         self.graph.add_edge("A::func", "C::callee", relationship="CALLS")
 
         context = self.queries.get_function_context("A::func")
-        
+
         self.assertEqual(context["node_id"], "A::func")
         self.assertEqual(context["source_code"], "function func() {}")
         self.assertEqual(context["code"], "function func() {}")

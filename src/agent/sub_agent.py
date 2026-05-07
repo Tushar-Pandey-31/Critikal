@@ -13,14 +13,17 @@ import logging
 import os
 import uuid
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SUB_AGENT_MODEL = "gemini-3-flash-preview"
+DEFAULT_SUB_AGENT_MODEL = "gpt-5.4-mini"
 DEFAULT_MAX_TURNS = 50
 SUB_AGENT_TIMEOUT = 600  # 10 min
+
+# Strong-ref set for fire-and-forget background tasks; prevents GC mid-flight.
+_BG_TASKS: set[asyncio.Task] = set()
 
 
 class SpawnAgentTool(Tool):
@@ -78,10 +81,10 @@ class SpawnAgentTool(Tool):
         }
 
     async def execute(self, params: dict, ctx: ToolContext) -> ToolResult:
-        from src.agent.tools import get_all_tools
-        from src.agent.query_loop import QueryLoop
-        from src.agent.permissions import PermissionHandler
         from src.agent.events import Event, EventType
+        from src.agent.permissions import PermissionHandler
+        from src.agent.query_loop import QueryLoop
+        from src.agent.tools import get_all_tools
 
         prompt = params["prompt"]
         description = params.get("description", "sub-agent task")
@@ -136,7 +139,7 @@ class SpawnAgentTool(Tool):
                 sub_loop.run(prompt),
                 timeout=SUB_AGENT_TIMEOUT,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             result = f"Sub-agent timed out after {SUB_AGENT_TIMEOUT}s."
             logger.warning(f"Sub-agent {task_id} timed out.")
         except Exception as e:
@@ -186,7 +189,7 @@ class SpawnAgentTool(Tool):
                     await ctx.task_store.update(
                         task_id, status="done", result=result[:5000]
                     )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if ctx.task_store:
                     await ctx.task_store.update(
                         task_id, status="failed", error="Timed out"
@@ -203,7 +206,9 @@ class SpawnAgentTool(Tool):
                         data={"task_id": task_id, "description": description},
                     ))
 
-        asyncio.create_task(_bg(), name=task_id)
+        _t = asyncio.create_task(_bg(), name=task_id)
+        _BG_TASKS.add(_t)
+        _t.add_done_callback(_BG_TASKS.discard)
 
         return ToolResult.success(
             f"Sub-agent '{description}' started in background.\n"

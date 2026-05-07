@@ -16,7 +16,6 @@ import logging
 import os
 import platform
 import shutil
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 

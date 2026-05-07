@@ -5,9 +5,8 @@ Monochrome: single accent color (cyan) for emphasis, dim grays elsewhere.
 Budget overflow uses a muted warning tint rather than bright red.
 """
 
-from textual.widgets import Static
 from rich.text import Text
-
+from textual.widgets import Static
 
 # ── Palette (keep in sync with conversation_widget.py) ──
 FG       = "#e8e8e8"

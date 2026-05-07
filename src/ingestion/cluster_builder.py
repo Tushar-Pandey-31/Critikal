@@ -11,18 +11,16 @@ Each cluster is compiled independently with its own solc version.
 
 from __future__ import annotations
 
-import os
 import logging
-from typing import Optional
+import os
 
-from src.ingestion.models import (
-    ContractRoot,
-    CompilationCluster,
-    RepoSizeClass,
-)
 from src.ingestion.import_resolver import ImportResolver
-from src.ingestion.solc_manager import SolcManager
 from src.ingestion.memory_guard import MemoryGuard
+from src.ingestion.models import (
+    CompilationCluster,
+    ContractRoot,
+)
+from src.ingestion.solc_manager import SolcManager
 from src.ingestion.strategy_resolver import CompilationStrategyResolver
 
 logger = logging.getLogger(__name__)
@@ -279,7 +277,7 @@ class ClusterBuilder:
     def _determine_framework(
         files: list[str],
         file_to_root: dict[str, ContractRoot],
-    ) -> Optional[str]:
+    ) -> str | None:
         """Determine framework for a set of files (majority vote)."""
         votes: dict[str, int] = {}
         for f in files:

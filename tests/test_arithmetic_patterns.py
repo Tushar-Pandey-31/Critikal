@@ -7,14 +7,11 @@ detection on function source_code strings.
 
 import os
 import sys
-import pytest
-import networkx as nx
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
-from graph_builder import GraphBuilder
+from src.graph import GraphBuilder
 from utils.graph_queries import GraphQueries
-
 
 # ════════════════════════════════════════════════════════════
 #  Inline Solidity Source Fragments

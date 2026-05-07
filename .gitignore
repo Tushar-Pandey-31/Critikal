@@ -68,5 +68,5 @@ __pycache__/
 Thumbs.db
 desktop.ini
 
-# Claude worktrees
-.claude/worktrees/
+# Claude Code editor state (per-developer, not project config)
+.claude/

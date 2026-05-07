@@ -7,13 +7,13 @@ Three layers (inspired by Claude Code's memdir + SessionMemory + autoDream):
   3. AwaySummary  — catch-up summary when resuming a previous engagement
 """
 
-from src.agent.memory.session_memory import SessionMemory, MemoryEntry
 from src.agent.memory.auto_dream import AutoDream
 from src.agent.memory.away_summary import generate_away_summary
+from src.agent.memory.session_memory import MemoryEntry, SessionMemory
 
 __all__ = [
-    "SessionMemory",
-    "MemoryEntry",
     "AutoDream",
+    "MemoryEntry",
+    "SessionMemory",
     "generate_away_summary",
 ]

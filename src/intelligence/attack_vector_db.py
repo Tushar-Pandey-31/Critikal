@@ -18,10 +18,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
-import yaml
 import networkx as nx
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +80,7 @@ class AttackVectorDB:
             return
 
         try:
-            with open(self._vectors_path, "r") as f:
+            with open(self._vectors_path) as f:
                 raw = yaml.safe_load(f) or {}
         except Exception as e:
             logger.error(f"Failed to load attack vectors: {e}")

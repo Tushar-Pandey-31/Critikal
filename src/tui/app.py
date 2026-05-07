@@ -25,27 +25,26 @@ import os
 import uuid
 from pathlib import Path
 
+from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.widgets import Header, Footer, Static
 from textual.binding import Binding
-from rich.text import Text
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Header, Static
 
 from src.agent.context import ToolContext
 from src.agent.cost import CostTracker
-from src.agent.events import EventBus, Event, EventType
+from src.agent.events import Event, EventBus, EventType
+from src.agent.memory import AutoDream, SessionMemory
 from src.agent.permissions import PermissionHandler
 from src.agent.query_loop import QueryLoop
 from src.agent.task_store import TaskStore
 from src.agent.tools import get_all_tools
-from src.agent.memory import SessionMemory, AutoDream
-
 from src.tui.widgets.conversation_widget import ConversationWidget
-from src.tui.widgets.findings_widget import FindingsWidget
-from src.tui.widgets.worker_widget import WorkerWidget
 from src.tui.widgets.cost_bar import CostBar
+from src.tui.widgets.findings_widget import FindingsWidget
 from src.tui.widgets.prompt_input import PromptInput
+from src.tui.widgets.worker_widget import WorkerWidget
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +56,7 @@ SLASH_COMMANDS = {
     "findings": "Toggle findings panel",
     "workers": "Toggle worker status panel",
     "status": "Show session status",
-    "model": "Switch model (e.g., /model claude-opus-4-6)",
+    "model": "Switch model (e.g., /model grok-4-3 or /model gpt-5.5)",
     "export": "Export findings to file",
     "dream": "Run memory consolidation now",
     "quit": "Exit Critikal",
@@ -68,7 +67,7 @@ SLASH_COMMANDS = {
 class CritikalApp(App):
     """
     Main Textual application for interactive Critikal sessions.
-    
+
     Connects the EventBus to live-updating widgets.
     """
 
@@ -94,9 +93,19 @@ class CritikalApp(App):
     ):
         super().__init__(**kwargs)
         self.repo_url = repo_url
-        self.model = model or os.getenv("AGENT_MODEL_NAME", "claude-sonnet-4-6")
+        self.model = model or os.getenv("AGENT_MODEL_NAME", "grok-4-1-fast-reasoning")
         self.budget_usd = budget_usd
-        self.permission_mode = permission_mode or "auto"
+        # The TUI does not yet ship a modal approval dialog, so "ask" cannot be
+        # honoured here without silently auto-approving (which would be a
+        # security misrepresentation). Coerce to "auto" and surface a warning
+        # at on_mount; users who need true "ask" should run headless mode.
+        requested_mode = permission_mode or "auto"
+        if requested_mode == "ask":
+            self._mode_coerced_from = "ask"
+            self.permission_mode = "auto"
+        else:
+            self._mode_coerced_from = None
+            self.permission_mode = requested_mode
         self.resume_engagement = resume_engagement
 
         # Generate or resume engagement ID
@@ -179,6 +188,12 @@ class CritikalApp(App):
 
         conv.add_system_message(f"Engagement: {self.engagement_id} │ Memory: {self._ctx.memory_dir}")
         conv.add_system_message(f"{len(tools)} tools loaded │ Type a message or /help")
+        if self._mode_coerced_from == "ask":
+            conv.add_system_message(
+                "Note: --permission-mode=ask is not supported in the TUI yet "
+                "(no modal dialog). Coerced to 'auto'. Use headless mode for "
+                "interactive approval."
+            )
 
         # If repo_url provided, auto-start audit
         if self.repo_url:
@@ -443,15 +458,23 @@ class CritikalApp(App):
             conv.add_system_message(f"Unknown command: /{cmd}. Type /help for available commands.")
 
     async def _permission_prompt(self, tool_name: str, params: dict, level: str) -> bool:
-        """Permission prompt for TUI mode — auto-approve reads, ask for writes."""
+        """Permission decision for TUI mode.
+
+        This callback only fires for tool calls the PermissionHandler did NOT
+        already auto-approve based on the active mode. With no modal dialog
+        implemented yet, the only honest options are: approve (yolo) or deny.
+        DANGEROUS calls in 'auto' mode land here — denying them by default
+        means destructive operations (e.g. raw shell, on-chain writes) cannot
+        run in the TUI without explicitly opting in via --permission-mode yolo.
+        """
+        conv = self.query_one("#conversation", ConversationWidget)
         if self.permission_mode == "yolo":
             return True
-        if self.permission_mode == "auto" and level == "read":
-            return True
-        # For now, auto-approve in TUI (TODO: proper dialog)
-        conv = self.query_one("#conversation", ConversationWidget)
-        conv.add_system_message(f"[auto-approved] {tool_name} ({level})")
-        return True
+        conv.add_system_message(
+            f"[blocked] {tool_name} ({level}) requires approval — "
+            f"relaunch with --permission-mode yolo to allow, or run headless."
+        )
+        return False
 
     def action_interrupt(self):
         """Handle Ctrl+C — interrupt the running agent."""

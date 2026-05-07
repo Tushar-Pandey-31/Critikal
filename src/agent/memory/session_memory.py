@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -187,7 +187,7 @@ class SessionMemory:
         try:
             # Use a fast, cheap model for extraction
             from src.llm.providers import get_worker_llm
-            extract_model = os.getenv("MEMORY_EXTRACT_MODEL", "gemini-3-flash-preview")
+            extract_model = os.getenv("MEMORY_EXTRACT_MODEL", "gpt-5.4-mini")
             llm = get_worker_llm(model_name=extract_model, temperature=0.0)
 
             from langchain_core.messages import HumanMessage

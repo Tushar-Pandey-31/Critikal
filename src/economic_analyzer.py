@@ -1,5 +1,6 @@
 import networkx as nx
 
+
 class EconomicAnalyzer:
     def __init__(self, graph: nx.DiGraph):
         self.graph = graph
@@ -11,12 +12,12 @@ class EconomicAnalyzer:
         """
         steps = chain_desc.get("steps", [])
         combined_multiplier = 1.0
-        
+
         flags = []
-        
+
         for node_id in steps:
             node_data = self.graph.nodes.get(node_id, {})
-            
+
             # Check for taint involvement in this node
             has_taint_involvement = (
                 node_data.get("has_taint_risk", False)
@@ -42,22 +43,22 @@ class EconomicAnalyzer:
             # 5. Unbounded Mint Detection (writes supply/shares without cap enforcement)
             # Some versions of graph_builder may not set cap_enforcement_flags if empty, use get with []
             missing_cap = "MISSING_CAP_ENFORCEMENT" in node_data.get("cap_enforcement_flags", [])
-            
-            # Default missing cap heuristic if flag wasn't available: 
+
+            # Default missing cap heuristic if flag wasn't available:
             # If no access control or missing checks, assume missing cap.
             is_unprotected = not node_data.get("is_protected", False)
-            
+
             if (node_data.get("writes_total_supply") or node_data.get("mints_shares_proportionally")):
                 if missing_cap or is_unprotected:
                     combined_multiplier += 0.5
                     flags.append("UNBOUNDED_MINT_RISK")
                     node_data["unbounded_inflation_risk"] = True
-                
+
         # Target requirements: explicit capping using min(1.5, combined_multiplier) -> no ranking chaos
         economic_impact_score = min(1.5, combined_multiplier)
-        
+
         # Attach results to the chain desc
         chain_desc["economic_impact_score"] = economic_impact_score
         chain_desc["economic_distortion_flags"] = list(set(flags))
-        
+
         return economic_impact_score

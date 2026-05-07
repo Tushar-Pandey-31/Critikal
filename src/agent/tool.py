@@ -9,7 +9,7 @@ foundation that the query loop, TUI, and permission system build on.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from src.agent.context import ToolContext

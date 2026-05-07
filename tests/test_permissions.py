@@ -2,12 +2,13 @@
 Tests for src/agent/permissions.py — PermissionHandler.
 """
 
-import pytest
 from unittest.mock import AsyncMock
 
-from src.agent.permissions import PermissionHandler, AUTO_APPROVE
-from src.agent.tool import Tool, ToolResult, PermissionLevel
+import pytest
+
 from src.agent.context import ToolContext
+from src.agent.permissions import PermissionHandler
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 def _make_tool(level: PermissionLevel) -> Tool:

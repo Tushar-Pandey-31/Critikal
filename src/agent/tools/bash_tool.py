@@ -14,8 +14,8 @@ import shlex
 import uuid
 from pathlib import Path
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,9 @@ BLOCKED_PATTERNS = [
 ]
 
 DEFAULT_TIMEOUT = 120  # seconds
+
+# Strong-ref set for fire-and-forget background tasks; prevents GC mid-flight.
+_BG_TASKS: set[asyncio.Task] = set()
 MAX_TIMEOUT = 600
 
 
@@ -183,7 +186,7 @@ class BashTool(Tool):
             raw_out, _ = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             try:
                 proc.kill()
             except ProcessLookupError:
@@ -257,7 +260,9 @@ class BashTool(Tool):
             except Exception as e:
                 logger.error(f"Background task {task_id} failed: {e}")
 
-        asyncio.create_task(_bg_task(), name=task_id)
+        _t = asyncio.create_task(_bg_task(), name=task_id)
+        _BG_TASKS.add(_t)
+        _t.add_done_callback(_BG_TASKS.discard)
         return ToolResult.success(
             f"Started background task: {task_id}",
             task_id=task_id,

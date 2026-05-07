@@ -6,8 +6,8 @@ Reads: ctx.findings
 Writes: updates finding chain metadata (chain_ids, chain_role, chain_severity_upgrade)
 """
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class ChainAnalysisTool(Tool):
@@ -40,7 +40,7 @@ class ChainAnalysisTool(Tool):
         if len(ctx.findings) < 2:
             return ToolResult.success("Need at least 2 findings for chain analysis.")
 
-        from src.agents.chain_analyzer import run_chain_analysis
+        from src.pipeline.chain_analyzer import run_chain_analysis
 
         try:
             chains = run_chain_analysis(ctx.findings)

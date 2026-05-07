@@ -8,9 +8,10 @@ Same agent code, different consumers.
 
 import asyncio
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncIterator
+from typing import Any
 
 
 class EventType(Enum):

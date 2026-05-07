@@ -8,8 +8,9 @@ Writes: ctx.findings
 """
 
 import os
-from src.agent.tool import Tool, ToolResult, PermissionLevel
+
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class SemanticDiscoveryTool(Tool):
@@ -81,15 +82,15 @@ class SemanticDiscoveryTool(Tool):
 
     async def execute(self, params: dict, ctx: ToolContext) -> ToolResult:
         from src.llm.providers import get_worker_llm
-        from src.agents.workers.semantic_discovery import run_semantic_discovery
-        from src.agents.base_worker import WorkerOutput
         from src.models.finding import Finding
+        from src.pipeline.base_worker import WorkerOutput
+        from src.pipeline.workers.semantic_discovery import run_semantic_discovery
 
         ctx.ensure_config()
 
         semantic_model = os.getenv(
             "SEMANTIC_MODEL_NAME",
-            os.getenv("WORKER_MODEL_NAME", "gemini-3-flash-preview"),
+            os.getenv("WORKER_MODEL_NAME", "gpt-5.4-mini"),
         )
         semantic_llm = get_worker_llm(model_name=semantic_model)
 

@@ -8,8 +8,8 @@ sorted by modification time (most recent first).
 import os
 from pathlib import Path
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 MAX_RESULTS = 500
 

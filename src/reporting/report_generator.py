@@ -1,11 +1,10 @@
-import os
 from datetime import datetime
 from pathlib import Path
 
 from src.models.finding import FindingStatus
+from src.reporting.graph_visualizer import render_graph_html
 from src.reporting.html_report import render_html_report
 from src.reporting.markdown_report import render_markdown_report
-from src.reporting.graph_visualizer import render_graph_html
 from src.utils.node_ids import normalize_node_id
 
 

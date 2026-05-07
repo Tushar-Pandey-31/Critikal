@@ -9,11 +9,10 @@ Wraps solc-select to provide:
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import subprocess
-import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +97,7 @@ class SolcManager:
         self._installed_versions = set()
         return self._installed_versions
 
-    def get_active_version(self) -> Optional[str]:
+    def get_active_version(self) -> str | None:
         """Get the currently active solc version."""
         if self._active_version is None:
             self.get_installed_versions()  # populates _active_version
@@ -160,7 +159,7 @@ class SolcManager:
     #  Pragma Resolution
     # ──────────────────────────────────────────────────────────
 
-    def resolve_version_for_pragmas(self, pragmas: set[str]) -> Optional[str]:
+    def resolve_version_for_pragmas(self, pragmas: set[str]) -> str | None:
         """
         Given a set of raw pragma constraint strings, resolve the best
         solc version to use.
@@ -237,10 +236,10 @@ class SolcManager:
     # ──────────────────────────────────────────────────────────
 
     @staticmethod
-    def detect_pragma(sol_file: str) -> Optional[str]:
+    def detect_pragma(sol_file: str) -> str | None:
         """Read a .sol file and return the raw pragma constraint string."""
         try:
-            with open(sol_file, 'r', encoding='utf-8', errors='replace') as f:
+            with open(sol_file, encoding='utf-8', errors='replace') as f:
                 content = f.read()
             m = _PRAGMA_RE.search(content)
             if m:
@@ -267,7 +266,7 @@ class SolcManager:
         return pragmas
 
     @staticmethod
-    def extract_version_from_pragma(pragma: str) -> Optional[str]:
+    def extract_version_from_pragma(pragma: str) -> str | None:
         """Extract the primary version number from a pragma string."""
         m = _VERSION_RE.search(pragma)
         return m.group(1) if m else None

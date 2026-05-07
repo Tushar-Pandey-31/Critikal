@@ -7,12 +7,12 @@ Reads: ctx.findings, ctx.repo_path
 Writes: updates finding.exploit_success, finding.test_code
 """
 
-import os
 import asyncio
 import logging
+import os
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -55,14 +55,14 @@ class TestWriterTool(Tool):
 
     async def execute(self, params: dict, ctx: ToolContext) -> ToolResult:
         from src.llm.providers import get_worker_llm
-        from src.agents.workers.test_writer_worker import TestWriterWorker
-        from src.agents.base_worker import WorkerTask
+        from src.pipeline.base_worker import WorkerTask
+        from src.pipeline.workers.test_writer_worker import TestWriterWorker
 
         ctx.ensure_config()
         if not ctx.config.testwriter_enabled:
             return ToolResult.success("TestWriter is disabled in config.")
 
-        test_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "claude-sonnet-4-6"))
+        test_model = os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "grok-code-fast-1"))
         test_llm = get_worker_llm(model_name=test_model)
 
         indices = params.get("finding_indices")
@@ -117,7 +117,7 @@ class TestWriterTool(Tool):
                         compiled += 1
                     else:
                         failed += 1
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning(f"TestWriter timeout for: {finding.title}")
                     failed += 1
                 except Exception as e:

@@ -3,9 +3,10 @@ Tests for src/agent/events.py — EventBus, Event, EventType.
 """
 
 import asyncio
+
 import pytest
 
-from src.agent.events import EventBus, Event, EventType
+from src.agent.events import Event, EventBus, EventType
 
 
 class TestEvent:

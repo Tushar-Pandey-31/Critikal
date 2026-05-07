@@ -13,14 +13,13 @@ Backend selection (env):
                         Get one at https://platform.parallel.ai → Settings.
 """
 
-import asyncio
 import json
 import logging
 import os
 from typing import Any
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -190,39 +189,38 @@ async def _search_parallel(
     }
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                PARALLEL_SEARCH_ENDPOINT,
-                json=body,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT),
-            ) as resp:
-                status = resp.status
-                raw = await resp.text()
+        async with aiohttp.ClientSession() as session, session.post(
+            PARALLEL_SEARCH_ENDPOINT,
+            json=body,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT),
+        ) as resp:
+            status = resp.status
+            raw = await resp.text()
 
-                if status in (401, 403):
-                    return ToolResult.error(
-                        f"Parallel auth failed (HTTP {status}). Check PARALLEL_API_KEY. "
-                        f"Body: {raw[:200]}"
-                    )
-                if status == 429:
-                    return ToolResult.error(
-                        f"Parallel rate limit (HTTP 429, 600/min cap). "
-                        f"Retry after a pause. Body: {raw[:200]}"
-                    )
-                if status >= 400:
-                    return ToolResult.error(
-                        f"Parallel search HTTP {status}. Body: {raw[:400]}"
-                    )
+            if status in (401, 403):
+                return ToolResult.error(
+                    f"Parallel auth failed (HTTP {status}). Check PARALLEL_API_KEY. "
+                    f"Body: {raw[:200]}"
+                )
+            if status == 429:
+                return ToolResult.error(
+                    f"Parallel rate limit (HTTP 429, 600/min cap). "
+                    f"Retry after a pause. Body: {raw[:200]}"
+                )
+            if status >= 400:
+                return ToolResult.error(
+                    f"Parallel search HTTP {status}. Body: {raw[:400]}"
+                )
 
-                try:
-                    data = json.loads(raw)
-                except json.JSONDecodeError as e:
-                    return ToolResult.error(
-                        f"Parallel returned non-JSON: {e}. Body: {raw[:400]}"
-                    )
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError as e:
+                return ToolResult.error(
+                    f"Parallel returned non-JSON: {e}. Body: {raw[:400]}"
+                )
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return ToolResult.error(f"Parallel request timed out after {DEFAULT_TIMEOUT}s.")
     except Exception as e:
         return ToolResult.error(f"Parallel request failed: {e}")

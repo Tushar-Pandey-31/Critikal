@@ -5,12 +5,12 @@ Wraps: RepoManager + AnalysisEngine + GraphBuilder
 Sets: ctx.repo_path, ctx.graph, ctx.contract_names
 """
 
-import os
-import networkx as nx
 from pathlib import Path
 
-from src.agent.tool import Tool, ToolResult, PermissionLevel
+import networkx as nx
+
 from src.agent.context import ToolContext
+from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class IngestTool(Tool):
@@ -110,7 +110,7 @@ class IngestTool(Tool):
                     )
 
                 # 3. Build knowledge graph
-                from src.graph_builder import GraphBuilder
+                from src.graph import GraphBuilder
 
                 builder = GraphBuilder()
                 builder.build_graph(slither_obj)

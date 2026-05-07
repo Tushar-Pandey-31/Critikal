@@ -13,8 +13,6 @@ Usage:
 """
 
 from __future__ import annotations
-from pydantic import SecretStr
-
 
 import asyncio
 import collections
@@ -23,6 +21,8 @@ import os
 import threading
 import time
 from typing import Any
+
+from pydantic import SecretStr
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,27 @@ _MODEL_LIMITS: dict[str, dict[str, dict[str, int]]] = {
         "paid_t1": {"rpm": 150, "tpm": 1_000_000, "rpd": 1_500},
     },
     # ── OpenAI ──────────────────────────────────────────────
+    "gpt-5.5": {
+        "free":    {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
+        "paid_t1": {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
+    },
+    "gpt-5.4-mini": {
+        "free":    {"rpm": 500, "tpm": 200_000, "rpd": 10_000},
+        "paid_t1": {"rpm": 500, "tpm": 200_000, "rpd": 10_000},
+    },
+    "gpt-5.4-nano": {
+        "free":    {"rpm": 500, "tpm": 200_000, "rpd": 10_000},
+        "paid_t1": {"rpm": 500, "tpm": 200_000, "rpd": 10_000},
+    },
+    "gpt-5.4": {
+        "free":    {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
+        "paid_t1": {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
+    },
     "gpt-5.1": {
+        "free":    {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
+        "paid_t1": {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
+    },
+    "gpt-5": {
         "free":    {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
         "paid_t1": {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
     },
@@ -80,6 +100,31 @@ _MODEL_LIMITS: dict[str, dict[str, dict[str, int]]] = {
     "gpt-4o-mini": {
         "free":    {"rpm": 500, "tpm": 200_000, "rpd": 10_000},
         "paid_t1": {"rpm": 500, "tpm": 200_000, "rpd": 10_000},
+    },
+    # ── xAI ─────────────────────────────────────────────────
+    "grok-4-3": {
+        "free":    {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
+        "paid_t1": {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
+    },
+    "grok-4-20": {
+        "free":    {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
+        "paid_t1": {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
+    },
+    "grok-4-1-fast": {
+        "free":    {"rpm": 480, "tpm": 2_000_000, "rpd": 10_000},
+        "paid_t1": {"rpm": 480, "tpm": 2_000_000, "rpd": 10_000},
+    },
+    "grok-code-fast-1": {
+        "free":    {"rpm": 480, "tpm": 2_000_000, "rpd": 10_000},
+        "paid_t1": {"rpm": 480, "tpm": 2_000_000, "rpd": 10_000},
+    },
+    "grok-4": {
+        "free":    {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
+        "paid_t1": {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
+    },
+    "grok-3": {
+        "free":    {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
+        "paid_t1": {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
     },
     # ── Anthropic ───────────────────────────────────────────
     "claude-sonnet-4": {

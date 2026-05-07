@@ -4,11 +4,10 @@ WorkerWidget — sub-agent status tracker panel.
 Monochrome: glyph-based status indicators, no bright colors.
 """
 
-from textual.widgets import Static
+from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.reactive import reactive
-from rich.text import Text
-
+from textual.widgets import Static
 
 FG       = "#e8e8e8"
 DIM      = "#8a8a8a"
