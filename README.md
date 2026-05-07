@@ -1,8 +1,15 @@
 # Critikal
 
+[![CI](https://github.com/Tushar-Pandey-31/Critikal/actions/workflows/ci.yml/badge.svg)](https://github.com/Tushar-Pandey-31/Critikal/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
+[![Code style: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+
 **Autonomous smart contract security research agent.**
 
 Critikal thinks like an attacker. Give it a repository URL and it will autonomously find real, exploitable vulnerabilities — from initial recon through proven Foundry PoC tests.
+
+![Critikal TUI demo](docs/demo.gif)
 
 ---
 
