@@ -5,8 +5,9 @@ env/
 venv/
 ENV/
 
-# Data and runtime directories
-data/
+# Data and runtime directories (repo-root only — src/intelligence/data/
+# carries shipped YAML config and must stay tracked)
+/data/
 temp_solidity/
 scratch/
 

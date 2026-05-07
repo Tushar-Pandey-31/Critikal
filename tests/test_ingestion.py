@@ -1,13 +1,15 @@
 import os
+import subprocess
 import sys
 
+import pytest
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
-import os
-import subprocess
 
 from repo_manager import RepoManager
 
 
+@pytest.mark.integration
 def test_ingestion():
     # Use a small public repo for testing
     # Using a simple foundry template

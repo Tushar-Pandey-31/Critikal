@@ -20,9 +20,16 @@ class RepoManager:
         func(path)
 
     def _normalize_repo_url(self, url: str) -> str:
-        """Convert GitHub HTTPS URLs to SSH format for auth, .git suffix if needed."""
-        if url.startswith("https://github.com/"):
-            # Convert to SSH: git@github.com:owner/repo.git
+        """
+        Optionally convert GitHub HTTPS URLs to SSH form. Off by default —
+        public repos clone fine over HTTPS (CI runners and fresh installs
+        don't have an SSH key configured). Set ``CRITIKAL_GIT_USE_SSH=1`` to
+        opt in when cloning private repos that require SSH auth.
+        """
+        if (
+            os.environ.get("CRITIKAL_GIT_USE_SSH", "").lower() in ("1", "true", "yes")
+            and url.startswith("https://github.com/")
+        ):
             path = url.removeprefix("https://github.com/")
             if path.endswith(".git"):
                 return f"git@github.com:{path}"

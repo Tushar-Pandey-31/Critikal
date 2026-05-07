@@ -1,0 +1,558 @@
+# Attack Vector Database — 160+ curated vectors
+# Format: compact YAML, machine-readable, prompt-injectable
+vectors:
+  # ═══ VAULT / ERC4626 ═══
+  - id: V001
+    title: "ERC4626 Share Inflation"
+    category: arithmetic
+    root_cause: "First depositor inflates share price via direct token transfer"
+    detection_pattern: "convertToShares/convertToAssets without virtual offset, no dead shares in constructor"
+    false_positive_guard: "NOT a bug if: uses _decimalsOffset(), constructor mints dead shares, or minimum deposit enforced"
+    applicable_protocols: [vault, lending]
+    severity_range: "HIGH-CRITICAL"
+  - id: V002
+    title: "Donation Attack (Vault)"
+    category: arithmetic
+    root_cause: "Direct token transfer to vault inflates totalAssets without minting shares"
+    detection_pattern: "totalAssets() reads balanceOf(address(this)), no internal accounting"
+    false_positive_guard: "NOT a bug if: uses internal accounting variable instead of balanceOf"
+    applicable_protocols: [vault]
+    severity_range: "HIGH"
+  - id: V003
+    title: "Vault Rounding Direction"
+    category: arithmetic
+    root_cause: "Rounding favors depositor instead of vault in share/asset conversion"
+    detection_pattern: "Division in convertToShares/convertToAssets without explicit rounding direction"
+    false_positive_guard: "NOT a bug if: uses mulDivDown for deposits, mulDivUp for withdrawals"
+    applicable_protocols: [vault, lending]
+    severity_range: "MEDIUM-HIGH"
+  - id: V004
+    title: "Harvest Sandwich"
+    category: mev
+    root_cause: "Attacker deposits before yield harvest, withdraws after to steal yield"
+    detection_pattern: "Public harvest/compound function, no deposit lockup period"
+    false_positive_guard: "NOT a bug if: harvest is permissioned, or lockup period prevents instant withdraw"
+    applicable_protocols: [vault, liquid_staking]
+    severity_range: "MEDIUM"
+
+  # ═══ ORACLE / PRICE MANIPULATION ═══
+  - id: V010
+    title: "Flash Loan Oracle Manipulation"
+    category: oracle
+    root_cause: "Spot price used as oracle can be manipulated in single tx"
+    detection_pattern: "getReserves(), balanceOf() used for pricing, no TWAP or external oracle"
+    false_positive_guard: "NOT a bug if: uses Chainlink/TWAP oracle, or price only for non-critical display"
+    applicable_protocols: [dex_amm, lending, vault]
+    severity_range: "CRITICAL"
+  - id: V011
+    title: "Oracle Staleness"
+    category: oracle
+    root_cause: "No freshness check on oracle data allows stale prices"
+    detection_pattern: "latestRoundData() without checking updatedAt timestamp"
+    false_positive_guard: "NOT a bug if: staleness threshold check present and reasonable"
+    applicable_protocols: [lending, perpetuals, stablecoin]
+    severity_range: "HIGH"
+  - id: V012
+    title: "Oracle Round Completeness"
+    category: oracle
+    root_cause: "Using answer from incomplete Chainlink round"
+    detection_pattern: "latestRoundData() without checking answeredInRound >= roundId"
+    false_positive_guard: "NOT a bug if: round completeness check present"
+    applicable_protocols: [lending, perpetuals, stablecoin]
+    severity_range: "MEDIUM"
+  - id: V013
+    title: "Oracle Negative/Zero Price"
+    category: oracle
+    root_cause: "Oracle returns zero or negative price, no validation"
+    detection_pattern: "latestRoundData() without require(price > 0)"
+    false_positive_guard: "NOT a bug if: explicit price > 0 check present"
+    applicable_protocols: [all]
+    severity_range: "HIGH"
+  - id: V014
+    title: "Read-Only Reentrancy (Oracle)"
+    category: oracle
+    root_cause: "Pool's spot price read during callback reflects mid-operation state"
+    detection_pattern: "getReserves() or balanceOf() called in external callback, view function reentrancy"
+    false_positive_guard: "NOT a bug if: reentrancy lock covers view functions, or uses TWAP"
+    applicable_protocols: [dex_amm, lending]
+    severity_range: "HIGH-CRITICAL"
+  - id: V015
+    title: "TWAP Manipulation"
+    category: oracle
+    root_cause: "TWAP window too short, can be manipulated over multiple blocks"
+    detection_pattern: "TWAP with window < 30 minutes, low liquidity pool as source"
+    false_positive_guard: "NOT a bug if: TWAP window >= 30min on high-liquidity pool"
+    applicable_protocols: [dex_amm, lending]
+    severity_range: "MEDIUM-HIGH"
+
+  # ═══ REENTRANCY ═══
+  - id: V020
+    title: "Classic Reentrancy"
+    category: reentrancy
+    root_cause: "External call before state update allows recursive calls"
+    detection_pattern: "call/transfer/send before state variable update, no nonReentrant"
+    false_positive_guard: "NOT a bug if: nonReentrant modifier present, or CEI pattern followed"
+    applicable_protocols: [all]
+    severity_range: "HIGH-CRITICAL"
+  - id: V021
+    title: "Cross-Function Reentrancy"
+    category: reentrancy
+    root_cause: "Reentrancy through different function sharing same state"
+    detection_pattern: "Multiple external functions modifying same state, shared reentrancy lock"
+    false_positive_guard: "NOT a bug if: global nonReentrant covers all related functions"
+    applicable_protocols: [all]
+    severity_range: "HIGH"
+  - id: V022
+    title: "Cross-Contract Reentrancy"
+    category: reentrancy
+    root_cause: "Reentrant call targets different contract sharing state"
+    detection_pattern: "External call to untrusted contract, callback modifies state in another contract"
+    false_positive_guard: "NOT a bug if: both contracts share reentrancy lock, or no shared mutable state"
+    applicable_protocols: [all]
+    severity_range: "HIGH-CRITICAL"
+  - id: V023
+    title: "ERC-777 Hook Reentrancy"
+    category: reentrancy
+    root_cause: "ERC-777 tokensReceived hook enables reentrancy during transfer"
+    detection_pattern: "ERC-777 token support, transfer before state update"
+    false_positive_guard: "NOT a bug if: nonReentrant modifier or only ERC-20 tokens accepted"
+    applicable_protocols: [all]
+    severity_range: "HIGH"
+
+  # ═══ ACCESS CONTROL ═══
+  - id: V030
+    title: "Missing Access Control"
+    category: access_control
+    root_cause: "Critical function lacks authorization check"
+    detection_pattern: "Public/external function that modifies critical state without onlyOwner/onlyRole"
+    false_positive_guard: "NOT a bug if: function is intentionally permissionless by design"
+    applicable_protocols: [all]
+    severity_range: "CRITICAL"
+  - id: V031
+    title: "Unprotected Initializer"
+    category: access_control
+    root_cause: "initialize() can be called by anyone, or called multiple times"
+    detection_pattern: "initialize function without initializer modifier, or missing initialized flag"
+    false_positive_guard: "NOT a bug if: initializer modifier from OZ present, or constructor-only init"
+    applicable_protocols: [all]
+    severity_range: "CRITICAL"
+  - id: V032
+    title: "Privilege Escalation via Delegatecall"
+    category: access_control
+    root_cause: "Delegatecall to user-controlled address in upgradeable proxy"
+    detection_pattern: "delegatecall with user-controlled target, no allowlist check"
+    false_positive_guard: "NOT a bug if: target is hardcoded or from trusted registry"
+    applicable_protocols: [all]
+    severity_range: "CRITICAL"
+  - id: V033
+    title: "tx.origin Authentication"
+    category: access_control
+    root_cause: "Using tx.origin instead of msg.sender for authorization"
+    detection_pattern: "require(tx.origin == owner) or similar tx.origin checks"
+    false_positive_guard: "NOT a bug if: tx.origin used only as secondary check alongside msg.sender"
+    applicable_protocols: [all]
+    severity_range: "HIGH"
+  - id: V034
+    title: "Missing Timelock on Privileged Actions"
+    category: access_control
+    root_cause: "Admin can change critical parameters instantly without delay"
+    detection_pattern: "Parameter changes (fees, rates, addresses) without timelock"
+    false_positive_guard: "NOT a bug if: parameter bounded by immutable max, or timelock wrapper present"
+    applicable_protocols: [all]
+    severity_range: "MEDIUM"
+
+  # ═══ ARITHMETIC ═══
+  - id: V040
+    title: "Division Before Multiplication"
+    category: arithmetic
+    root_cause: "Precision loss from dividing before multiplying"
+    detection_pattern: "(a / b) * c pattern, or intermediate division truncating to zero"
+    false_positive_guard: "NOT a bug if: uses mulDiv library, or values guaranteed large enough"
+    applicable_protocols: [all]
+    severity_range: "MEDIUM-HIGH"
+  - id: V041
+    title: "Unsafe Downcast"
+    category: arithmetic
+    root_cause: "Casting uint256 to smaller type truncates value silently"
+    detection_pattern: "uint128(value), int128(value) without bounds check"
+    false_positive_guard: "NOT a bug if: SafeCast library used, or value proven bounded"
+    applicable_protocols: [all]
+    severity_range: "MEDIUM-HIGH"
+  - id: V042
+    title: "Phantom Overflow in Unchecked Block"
+    category: arithmetic
+    root_cause: "Overflow/underflow in unchecked block"
+    detection_pattern: "unchecked { } blocks with user-controlled arithmetic"
+    false_positive_guard: "NOT a bug if: values proven bounded, or overflow is intentional (e.g., tick math)"
+    applicable_protocols: [all]
+    severity_range: "HIGH"
+  - id: V043
+    title: "Fee-on-Transfer Accounting Mismatch"
+    category: arithmetic
+    root_cause: "Amount parameter != actual received amount for fee-on-transfer tokens"
+    detection_pattern: "transferFrom(amount) then storing amount without checking balanceOf delta"
+    false_positive_guard: "NOT a bug if: protocol explicitly excludes fee-on-transfer tokens, or measures delta"
+    applicable_protocols: [all]
+    severity_range: "HIGH"
+  - id: V044
+    title: "Rebasing Token Accounting"
+    category: arithmetic
+    root_cause: "Balance changes without transfer events break internal accounting"
+    detection_pattern: "Caches balanceOf then uses cached value later, rebasing token support"
+    false_positive_guard: "NOT a bug if: wraps rebasing token (e.g., wstETH), or refreshes balance"
+    applicable_protocols: [vault, lending, dex_amm]
+    severity_range: "HIGH"
+
+  # ═══ FLASH LOAN ═══
+  - id: V050
+    title: "Flash Loan Governance Attack"
+    category: flash_loan
+    root_cause: "Voting power based on current balance, borrowable via flash loan"
+    detection_pattern: "balanceOf(msg.sender) used for voting, no snapshot mechanism"
+    false_positive_guard: "NOT a bug if: uses ERC20Votes with historical snapshots"
+    applicable_protocols: [governance]
+    severity_range: "CRITICAL"
+  - id: V051
+    title: "Flash Loan Collateral Manipulation"
+    category: flash_loan
+    root_cause: "Collateral value read from manipulable source during flash loan"
+    detection_pattern: "Collateral valuation uses spot price, flash loan available"
+    false_positive_guard: "NOT a bug if: TWAP oracle used, or flash loan callback restricted"
+    applicable_protocols: [lending]
+    severity_range: "CRITICAL"
+  - id: V052
+    title: "Flash Mint Dilution"
+    category: flash_loan
+    root_cause: "Flash minting tokens dilutes value for existing holders"
+    detection_pattern: "Flash mint function without supply-dependent fee"
+    false_positive_guard: "NOT a bug if: flash mint fee properly compensates dilution"
+    applicable_protocols: [stablecoin]
+    severity_range: "HIGH"
+
+  # ═══ BRIDGE ═══
+  - id: V060
+    title: "Message Replay"
+    category: bridge
+    root_cause: "Missing or reusable nonce allows replaying cross-chain messages"
+    detection_pattern: "processMessage without nonce check or processed mapping"
+    false_positive_guard: "NOT a bug if: nonce is checked and marked processed"
+    applicable_protocols: [bridge]
+    severity_range: "CRITICAL"
+  - id: V061
+    title: "Insufficient Proof Verification"
+    category: bridge
+    root_cause: "Proof verification can be bypassed with crafted input"
+    detection_pattern: "verifyProof accepts empty proof or has alternative unverified path"
+    false_positive_guard: "NOT a bug if: proof verification is exhaustive with no bypass"
+    applicable_protocols: [bridge]
+    severity_range: "CRITICAL"
+  - id: V062
+    title: "Cross-Chain Message Forgery"
+    category: bridge
+    root_cause: "Anyone can call message handler, not just authorized relayer"
+    detection_pattern: "receiveMessage/processMessage without msg.sender == bridge check"
+    false_positive_guard: "NOT a bug if: caller restricted to bridge contract"
+    applicable_protocols: [bridge]
+    severity_range: "CRITICAL"
+
+  # ═══ LIQUIDATION ═══
+  - id: V070
+    title: "Self-Liquidation Profit"
+    category: liquidation
+    root_cause: "Liquidator can liquidate own position to extract protocol bonus"
+    detection_pattern: "No check that liquidator != borrower"
+    false_positive_guard: "NOT a bug if: self-liquidation explicitly prevented or bonus < gas cost"
+    applicable_protocols: [lending, perpetuals]
+    severity_range: "MEDIUM"
+  - id: V071
+    title: "Partial Liquidation Griefing"
+    category: liquidation
+    root_cause: "Repeated tiny liquidations extract bonus without restoring health"
+    detection_pattern: "No minimum liquidation amount, or close factor too small"
+    false_positive_guard: "NOT a bug if: minimum liquidation amount enforced"
+    applicable_protocols: [lending]
+    severity_range: "MEDIUM"
+  - id: V072
+    title: "Bad Debt Accumulation"
+    category: liquidation
+    root_cause: "Position goes underwater before liquidation clears it"
+    detection_pattern: "No bad debt socialization mechanism, no insurance fund"
+    false_positive_guard: "NOT a bug if: bad debt handled by insurance fund or socialization"
+    applicable_protocols: [lending, perpetuals]
+    severity_range: "HIGH"
+
+  # ═══ DEX / AMM SPECIFIC ═══
+  - id: V080
+    title: "LP Token First Deposit Inflation"
+    category: arithmetic
+    root_cause: "First LP can inflate LP token price like ERC4626 share inflation"
+    detection_pattern: "First mint without MINIMUM_LIQUIDITY lock"
+    false_positive_guard: "NOT a bug if: MINIMUM_LIQUIDITY permanently locked"
+    applicable_protocols: [dex_amm]
+    severity_range: "HIGH"
+  - id: V081
+    title: "Sandwich Attack on Swap"
+    category: mev
+    root_cause: "No slippage protection or deadline on swap"
+    detection_pattern: "swap without minAmountOut parameter, or deadline == type(uint256).max"
+    false_positive_guard: "NOT a bug if: minAmountOut enforced by router, deadline checked"
+    applicable_protocols: [dex_amm]
+    severity_range: "MEDIUM"
+  - id: V082
+    title: "JIT Liquidity Attack"
+    category: mev
+    root_cause: "Adding/removing liquidity in same block as swap to capture fees"
+    detection_pattern: "No lockup period for LP tokens, concentrated liquidity"
+    false_positive_guard: "NOT a bug if: fee distribution has delay mechanism"
+    applicable_protocols: [dex_amm]
+    severity_range: "LOW-MEDIUM"
+
+  # ═══ UPGRADABILITY ═══
+  - id: V090
+    title: "Uninitialized Implementation"
+    category: upgradability
+    root_cause: "Implementation contract not initialized, attacker calls initialize()"
+    detection_pattern: "Upgradeable contract without _disableInitializers() in constructor"
+    false_positive_guard: "NOT a bug if: constructor calls _disableInitializers()"
+    applicable_protocols: [all]
+    severity_range: "CRITICAL"
+  - id: V091
+    title: "Storage Collision in Proxy"
+    category: upgradability
+    root_cause: "New implementation storage layout collides with proxy storage"
+    detection_pattern: "Storage slots not using EIP-1967, or incompatible upgrade"
+    false_positive_guard: "NOT a bug if: EIP-1967 slots used, storage gap present"
+    applicable_protocols: [all]
+    severity_range: "CRITICAL"
+  - id: V092
+    title: "UUPS selfdestruct"
+    category: upgradability
+    root_cause: "Implementation can be selfdestructed, bricking proxy"
+    detection_pattern: "UUPS proxy without immutable implementation reference"
+    false_positive_guard: "NOT a bug if: OZ UUPS v5+ used (selfdestruct deprecated post-Dencun)"
+    applicable_protocols: [all]
+    severity_range: "CRITICAL"
+
+  # ═══ SIGNATURE / PERMIT ═══
+  - id: V100
+    title: "Signature Replay"
+    category: signature
+    root_cause: "Missing nonce or deadline allows reusing signed messages"
+    detection_pattern: "ecrecover without nonce tracking or expiry"
+    false_positive_guard: "NOT a bug if: nonce incremented + deadline checked"
+    applicable_protocols: [all]
+    severity_range: "HIGH"
+  - id: V101
+    title: "Signature Malleability"
+    category: signature
+    root_cause: "ECDSA s-value malleability creates two valid signatures"
+    detection_pattern: "ecrecover without s-value range check"
+    false_positive_guard: "NOT a bug if: uses OZ ECDSA.recover (includes malleability check)"
+    applicable_protocols: [all]
+    severity_range: "MEDIUM"
+  - id: V102
+    title: "Missing Domain Separator"
+    category: signature
+    root_cause: "EIP-712 signature lacks chain-specific domain separator"
+    detection_pattern: "Signature verification without DOMAIN_SEPARATOR or chainId"
+    false_positive_guard: "NOT a bug if: EIP-712 domain separator includes chainId"
+    applicable_protocols: [all]
+    severity_range: "MEDIUM"
+  - id: V103
+    title: "Permit Front-Running (DOS)"
+    category: signature
+    root_cause: "Attacker front-runs permit() call causing revert"
+    detection_pattern: "permit() called before transferFrom, no try/catch"
+    false_positive_guard: "NOT a bug if: permit failure handled gracefully with try/catch"
+    applicable_protocols: [all]
+    severity_range: "LOW-MEDIUM"
+
+  # ═══ TOKEN STANDARDS ═══
+  - id: V110
+    title: "ERC-20 Return Value Ignored"
+    category: token
+    root_cause: "Some tokens don't return bool on transfer, unchecked call fails silently"
+    detection_pattern: "token.transfer() without SafeERC20, no return value check"
+    false_positive_guard: "NOT a bug if: uses SafeERC20.safeTransfer"
+    applicable_protocols: [all]
+    severity_range: "HIGH"
+  - id: V111
+    title: "Double-Spend via Approve Race"
+    category: token
+    root_cause: "approve() race condition allows spending old + new allowance"
+    detection_pattern: "Direct approve() call without setting to 0 first"
+    false_positive_guard: "NOT a bug if: uses increaseAllowance, or approve(0) before approve(x)"
+    applicable_protocols: [all]
+    severity_range: "MEDIUM"
+  - id: V112
+    title: "Blacklistable Token DOS"
+    category: token
+    root_cause: "USDC/USDT blacklist can block withdrawals permanently"
+    detection_pattern: "No alternative withdrawal path if token transfer reverts"
+    false_positive_guard: "NOT a bug if: alternative withdrawal or pull-pattern implemented"
+    applicable_protocols: [all]
+    severity_range: "MEDIUM"
+  - id: V113
+    title: "Low-Decimal Token Precision Loss"
+    category: token
+    root_cause: "Tokens with < 8 decimals cause precision loss in calculations"
+    detection_pattern: "Hardcoded 1e18 scaling, no dynamic decimal handling"
+    false_positive_guard: "NOT a bug if: decimal normalization applied per-token"
+    applicable_protocols: [all]
+    severity_range: "MEDIUM"
+
+  # ═══ STATE MANAGEMENT ═══
+  - id: V120
+    title: "Ether Locked Forever"
+    category: state
+    root_cause: "Contract receives ETH but has no withdraw function"
+    detection_pattern: "receive()/fallback() payable without corresponding withdraw"
+    false_positive_guard: "NOT a bug if: ETH is forwarded immediately, or contract has withdraw"
+    applicable_protocols: [all]
+    severity_range: "MEDIUM"
+  - id: V121
+    title: "Denial of Service via Push Pattern"
+    category: state
+    root_cause: "Sending ETH/tokens to array of recipients, one revert blocks all"
+    detection_pattern: "Loop with transfer/send to external addresses"
+    false_positive_guard: "NOT a bug if: uses pull pattern (users claim individually)"
+    applicable_protocols: [all]
+    severity_range: "MEDIUM-HIGH"
+  - id: V122
+    title: "Unbounded Array Iteration"
+    category: state
+    root_cause: "Loop over growing array exceeds block gas limit"
+    detection_pattern: "for loop over storage array without pagination or cap"
+    false_positive_guard: "NOT a bug if: array size bounded by design, or pagination used"
+    applicable_protocols: [all]
+    severity_range: "MEDIUM"
+  - id: V123
+    title: "Frontrunning Initialization"
+    category: state
+    root_cause: "Critical setup function can be front-run by attacker"
+    detection_pattern: "Setup/configure function without access control, called post-deploy"
+    false_positive_guard: "NOT a bug if: setup done in constructor, or access-controlled"
+    applicable_protocols: [all]
+    severity_range: "HIGH"
+
+  # ═══ STABLECOIN ═══
+  - id: V130
+    title: "Peg Deviation Exploit"
+    category: stablecoin
+    root_cause: "Mechanism allows minting/redeeming at peg when market price diverges"
+    detection_pattern: "Fixed 1:1 redemption without market price check"
+    false_positive_guard: "NOT a bug if: redemption fee adjusts based on deviation"
+    applicable_protocols: [stablecoin]
+    severity_range: "HIGH"
+  - id: V131
+    title: "Stability Fee Bypass"
+    category: stablecoin
+    root_cause: "Borrower avoids accrued interest by repaying in same block"
+    detection_pattern: "Interest calculated per-block, no minimum accrual period"
+    false_positive_guard: "NOT a bug if: minimum accrual enforced or flash loan protected"
+    applicable_protocols: [stablecoin, lending]
+    severity_range: "MEDIUM"
+
+  # ═══ GOVERNANCE ═══
+  - id: V140
+    title: "Flash Loan Voting"
+    category: governance
+    root_cause: "Voting power based on current balance, not historical snapshot"
+    detection_pattern: "balanceOf() for voting power instead of getPastVotes()"
+    false_positive_guard: "NOT a bug if: ERC20Votes with block.number snapshot used"
+    applicable_protocols: [governance]
+    severity_range: "CRITICAL"
+  - id: V141
+    title: "Proposal Griefing"
+    category: governance
+    root_cause: "Attacker can cancel/block proposals cheaply"
+    detection_pattern: "cancel() callable by anyone if proposer drops below threshold"
+    false_positive_guard: "NOT a bug if: cancel restricted to proposer or guardian"
+    applicable_protocols: [governance]
+    severity_range: "MEDIUM"
+
+  # ═══ PERPETUALS ═══
+  - id: V150
+    title: "Funding Rate Manipulation"
+    category: perpetuals
+    root_cause: "Funding rate based on manipulable mark-index spread"
+    detection_pattern: "Funding rate uses spot price, no dampening or cap"
+    false_positive_guard: "NOT a bug if: funding rate capped and uses TWAP"
+    applicable_protocols: [perpetuals]
+    severity_range: "HIGH"
+  - id: V151
+    title: "Liquidation Price Manipulation"
+    category: perpetuals
+    root_cause: "Mark price manipulable to trigger unfair liquidations"
+    detection_pattern: "Mark price from single source, no TWAP or multi-oracle"
+    false_positive_guard: "NOT a bug if: multi-oracle or TWAP mark price"
+    applicable_protocols: [perpetuals]
+    severity_range: "CRITICAL"
+
+  # ═══ LIQUID STAKING ═══
+  - id: V160
+    title: "Oracle Report Manipulation"
+    category: liquid_staking
+    root_cause: "Beacon oracle report not properly validated"
+    detection_pattern: "reportBeacon without bounds checking on reported balance"
+    false_positive_guard: "NOT a bug if: deviation bounds and quorum enforced"
+    applicable_protocols: [liquid_staking]
+    severity_range: "CRITICAL"
+  - id: V161
+    title: "Withdrawal Queue Fairness"
+    category: liquid_staking
+    root_cause: "Queue jumping or unfair priority in withdrawal processing"
+    detection_pattern: "Non-FIFO withdrawal queue, or privileged skip mechanism"
+    false_positive_guard: "NOT a bug if: strict FIFO enforced"
+    applicable_protocols: [liquid_staking]
+    severity_range: "MEDIUM"
+
+  # ═══ GENERAL / MISCELLANEOUS ═══
+  - id: V170
+    title: "Centralization Risk — Single Admin"
+    category: centralization
+    root_cause: "Single EOA controls all critical functions"
+    detection_pattern: "onlyOwner on pause/unpause, fee changes, upgrades, no multisig"
+    false_positive_guard: "NOT a bug if: owner is multisig or timelock contract"
+    applicable_protocols: [all]
+    severity_range: "MEDIUM"
+  - id: V171
+    title: "Emergency Pause Missing"
+    category: centralization
+    root_cause: "No way to pause protocol during active exploit"
+    detection_pattern: "No Pausable inheritance, no circuit breaker"
+    false_positive_guard: "NOT a bug if: immutable protocol by design (no admin)"
+    applicable_protocols: [all]
+    severity_range: "LOW-MEDIUM"
+  - id: V172
+    title: "Incorrect EIP-712 TypeHash"
+    category: signature
+    root_cause: "TypeHash doesn't match actual struct, causing signature bypass"
+    detection_pattern: "Hardcoded keccak256 of struct type string"
+    false_positive_guard: "NOT a bug if: TypeHash verified against actual struct fields"
+    applicable_protocols: [all]
+    severity_range: "HIGH"
+  - id: V173
+    title: "Block Timestamp Manipulation"
+    category: state
+    root_cause: "Miner can manipulate block.timestamp within ~15s window"
+    detection_pattern: "Critical logic depends on exact block.timestamp"
+    false_positive_guard: "NOT a bug if: timestamp used for approximate timing only"
+    applicable_protocols: [all]
+    severity_range: "LOW"
+  - id: V174
+    title: "Returndata Bomb"
+    category: state
+    root_cause: "External call returns huge data, OOG on copy"
+    detection_pattern: "Low-level call with unbounded returndata copy"
+    false_positive_guard: "NOT a bug if: returndata size limited or assembly used"
+    applicable_protocols: [all]
+    severity_range: "MEDIUM"
+  - id: V175
+    title: "Selector Collision in Proxy"
+    category: upgradability
+    root_cause: "Proxy function selector collides with implementation function"
+    detection_pattern: "Custom proxy with admin functions, no transparent proxy pattern"
+    false_positive_guard: "NOT a bug if: transparent proxy or no selector overlap"
+    applicable_protocols: [all]
+    severity_range: "HIGH"

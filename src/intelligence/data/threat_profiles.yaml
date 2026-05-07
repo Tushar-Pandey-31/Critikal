@@ -1,0 +1,301 @@
+# Protocol-Type Threat Profiles
+# Adversary rankings, invariants, temporal threats, composability risks,
+# and agent routing rules per protocol classification.
+
+lending:
+  adversaries:
+    - name: "Flash Loan Attacker"
+      capability: "Borrow unlimited capital for single-tx manipulation (oracle, governance, liquidation)"
+      priority: 1
+    - name: "Liquidation Bot"
+      capability: "Monitors health factors, front-runs price updates to trigger liquidations"
+      priority: 2
+    - name: "Market Manipulator"
+      capability: "Creates toxic markets, manipulates utilization rates, drains reserves"
+      priority: 3
+    - name: "Governance Attacker"
+      capability: "Proposes malicious parameter changes (LTV, interest rates, collateral factors)"
+      priority: 4
+  invariants:
+    - "totalBorrow <= totalDeposit * maxCollateralFactor (for each market)"
+    - "healthFactor >= 1.0 for every non-liquidatable position"
+    - "liquidation bonus + protocol fee < collateral value"
+    - "Interest accrual must be monotonically increasing"
+    - "Sum of all user deposits == totalSupply of deposit tokens"
+    - "No single-block oracle manipulation can trigger mass liquidations"
+  temporal_threats:
+    deployment:
+      - "Uninitialized markets with zero liquidity allow price manipulation"
+      - "Missing pause/guardian mechanism for emergency response"
+    steady_state:
+      - "Oracle staleness: stale prices enable bad liquidations"
+      - "Interest rate model edge cases at 100% utilization"
+      - "Dust amount exploits: tiny borrows that cost more gas to liquidate"
+    market_stress:
+      - "Cascading liquidations creating bad debt"
+      - "Oracle deviation during high volatility (Chainlink heartbeat gaps)"
+      - "Mass withdrawals exceeding available liquidity"
+    governance:
+      - "Collateral factor changes without grace period"
+      - "Interest rate model changes affecting existing positions"
+      - "Adding malicious tokens as collateral"
+  composability_risks:
+    - "Oracle dependency: price feed manipulation via DEX reserves"
+    - "Token behavior: fee-on-transfer tokens break accounting"
+    - "Token behavior: rebasing tokens change balances without transfers"
+    - "Flash loan origination can attack protocols that trust pool state"
+  agent_routing:
+    always: ["attack_hypothesis", "assumption"]
+    when_external_calls: ["composability"]
+    when_math_heavy: ["math_precision"]
+    when_multi_role: ["access_control"]
+
+dex_amm:
+  adversaries:
+    - name: "Sandwich Bot"
+      capability: "Front/back-runs swaps to extract MEV from slippage"
+      priority: 1
+    - name: "Flash Loan Attacker"
+      capability: "Manipulates reserves/prices within a single transaction"
+      priority: 2
+    - name: "LP Attacker"
+      capability: "Exploits impermanent loss, JIT liquidity, or LP token pricing bugs"
+      priority: 3
+  invariants:
+    - "x * y >= k (constant product invariant, or equivalent for curve type)"
+    - "LP token totalSupply correctly reflects pool reserves"
+    - "Fee collection does not break invariant"
+    - "MINIMUM_LIQUIDITY locked forever prevents share inflation on first deposit"
+    - "Tick crossing in concentrated liquidity preserves position values"
+  temporal_threats:
+    deployment:
+      - "First LP: share inflation attack if no MINIMUM_LIQUIDITY"
+      - "Pool creation with malicious token pairs (rebasing, fee-on-transfer)"
+    steady_state:
+      - "Read-only reentrancy via getReserves() during swap callback"
+      - "Oracle manipulation via spot price"
+      - "Tick manipulation in concentrated liquidity"
+    market_stress:
+      - "High slippage during volatile markets enables larger sandwich attacks"
+  composability_risks:
+    - "Protocols using this pool's spot price as an oracle (read-only reentrancy)"
+    - "LP tokens used as collateral in lending protocols"
+    - "Token hooks (ERC-777) enabling reentrancy during swap callbacks"
+  agent_routing:
+    always: ["attack_hypothesis", "assumption"]
+    when_external_calls: ["composability"]
+    when_math_heavy: ["math_precision"]
+    when_multi_role: ["access_control"]
+
+vault:
+  adversaries:
+    - name: "First Depositor"
+      capability: "Inflates share price via direct token transfer before first deposit"
+      priority: 1
+    - name: "Sandwich Bot"
+      capability: "Front/back-runs deposit/withdraw to manipulate share price"
+      priority: 2
+    - name: "Harvest Manipulator"
+      capability: "Manipulates yield harvest timing/amount to steal from other depositors"
+      priority: 3
+    - name: "Strategy Attacker"
+      capability: "Exploits vault's interaction with external strategies/protocols"
+      priority: 4
+  invariants:
+    - "totalAssets() >= Sum of all depositor claims (no phantom shares)"
+    - "convertToShares(convertToAssets(shares)) <= shares (rounding favors vault)"
+    - "convertToAssets(convertToShares(assets)) <= assets (rounding favors vault)"
+    - "deposit(x) followed by redeem(shares_received) returns <= x (no instant profit)"
+    - "totalSupply == 0 IFF totalAssets == 0 (no orphaned assets/shares)"
+  temporal_threats:
+    deployment:
+      - "Share inflation: first depositor manipulates exchange rate via donation"
+      - "Missing virtual offset or dead shares protection"
+    steady_state:
+      - "Harvest sandwiching: deposit before harvest, withdraw after"
+      - "Share price manipulation via direct token transfer (donation attack)"
+      - "Rounding errors accumulating over many small deposits/withdrawals"
+    market_stress:
+      - "Mass withdrawals: withdrawal queue fairness"
+      - "Underlying strategy losses: socialized loss distribution"
+  composability_risks:
+    - "Vault shares used as collateral: share price must not be manipulatable"
+    - "Underlying asset: fee-on-transfer or rebasing tokens break accounting"
+    - "Strategy dependency: vault trusts external protocol to return assets"
+  agent_routing:
+    always: ["attack_hypothesis", "assumption"]
+    when_external_calls: ["composability"]
+    when_math_heavy: ["math_precision"]
+    when_multi_role: ["access_control"]
+
+stablecoin:
+  adversaries:
+    - name: "Peg Attacker"
+      capability: "Manipulates collateral/oracle to break peg"
+      priority: 1
+    - name: "Flash Loan Minter"
+      capability: "Mints/burns stablecoin within single tx to exploit pricing"
+      priority: 2
+    - name: "Redemption Arbitrageur"
+      capability: "Exploits redemption mechanism to drain collateral"
+      priority: 3
+  invariants:
+    - "Total stablecoin supply <= Total collateral value * maximum LTV"
+    - "Redemption always returns collateral value >= stablecoin face value (minus fee)"
+    - "Stability fee accrual is continuous and correct"
+    - "Liquidation clears undercollateralized positions before bad debt accumulates"
+  temporal_threats:
+    deployment:
+      - "Initial peg establishment: insufficient liquidity"
+      - "Missing circuit breakers for rapid depeg events"
+    market_stress:
+      - "Bank run: mass redemptions exceeding collateral liquidity"
+      - "Collateral price crash: cascading liquidations"
+      - "Oracle failure during depeg: frozen price enables exploits"
+  composability_risks:
+    - "Stablecoin used as unit of account in other protocols"
+    - "Collateral dependency: underlying collateral token behavior changes"
+  agent_routing:
+    always: ["attack_hypothesis", "assumption"]
+    when_external_calls: ["composability"]
+    when_math_heavy: ["math_precision"]
+    when_multi_role: ["access_control"]
+
+bridge:
+  adversaries:
+    - name: "Message Forger"
+      capability: "Crafts fake cross-chain messages to mint tokens on destination"
+      priority: 1
+    - name: "Replay Attacker"
+      capability: "Replays previously processed messages to double-spend"
+      priority: 2
+    - name: "Validator Compromiser"
+      capability: "Compromises M-of-N signers to authorize malicious withdrawals"
+      priority: 3
+    - name: "Reorg Exploiter"
+      capability: "Exploits L1 reorgs to double-spend bridged assets"
+      priority: 4
+  invariants:
+    - "Every withdrawal on destination must correspond to exactly one deposit on source"
+    - "Message nonces are strictly monotonic (no replay)"
+    - "Proof verification cannot be bypassed via alternative code paths"
+    - "Total bridged assets on destination <= Total locked assets on source"
+  temporal_threats:
+    deployment:
+      - "Uninitialized bridge contracts: missing owner/guardian setup"
+      - "Incorrect initial validator/relayer set"
+    steady_state:
+      - "Nonce management: gaps or reuse enabling replay"
+      - "Proof verification edge cases: empty proofs, malformed data"
+    market_stress:
+      - "High traffic: message ordering conflicts"
+      - "Chain reorgs: messages finalized then reverted"
+  composability_risks:
+    - "Bridged token behavior: non-standard mint/burn on destination"
+    - "Multi-hop bridging: trust chain through intermediate bridges"
+    - "L1-L2 dependency: sequencer downtime, forced inclusion"
+  agent_routing:
+    always: ["attack_hypothesis", "assumption", "access_control"]
+    when_external_calls: ["composability"]
+    when_math_heavy: []
+    when_multi_role: ["access_control"]
+
+governance:
+  adversaries:
+    - name: "Flash Loan Voter"
+      capability: "Borrows governance tokens to pass malicious proposals in one tx"
+      priority: 1
+    - name: "Griefing Attacker"
+      capability: "Blocks legitimate proposals or forces emergency actions"
+      priority: 2
+    - name: "Timelock Exploiter"
+      capability: "Exploits timelock delay window to front-run executed proposals"
+      priority: 3
+  invariants:
+    - "Voting power snapshot must be from BEFORE proposal creation (no flash loan voting)"
+    - "Quorum threshold cannot be bypassed"
+    - "Timelock delay is enforced for all governance-controlled functions"
+    - "Proposal execution is atomic (all-or-nothing)"
+  temporal_threats:
+    deployment:
+      - "Initial governance token distribution: sybil attacks"
+      - "Missing timelock on critical functions"
+    governance:
+      - "Proposal to change governance parameters (quorum, delay)"
+      - "Self-referential proposals (governance changing itself)"
+  composability_risks:
+    - "Governance token used in DeFi (lending, LP): voting power dilution"
+    - "Cross-protocol governance: one protocol's governance affecting another"
+  agent_routing:
+    always: ["attack_hypothesis", "assumption", "access_control"]
+    when_external_calls: ["composability"]
+    when_math_heavy: []
+    when_multi_role: ["access_control"]
+
+perpetuals:
+  adversaries:
+    - name: "Price Manipulator"
+      capability: "Manipulates mark price or index price to liquidate positions"
+      priority: 1
+    - name: "Funding Rate Exploiter"
+      capability: "Exploits funding rate calculation to extract value"
+      priority: 2
+    - name: "Liquidation Bot"
+      capability: "Triggers liquidations via price manipulation"
+      priority: 3
+  invariants:
+    - "Sum of all PnL == 0 before fees (zero-sum market)"
+    - "Maintenance margin requirement prevents bad debt"
+    - "Funding rate calculation is manipulation-resistant"
+    - "Open interest limits prevent excessive risk concentration"
+  temporal_threats:
+    deployment:
+      - "Initial price feed setup: incorrect oracle configuration"
+    steady_state:
+      - "Funding rate payment edge cases (overflow, rounding)"
+      - "Position size limits: dust positions hard to liquidate"
+    market_stress:
+      - "ADL (auto-deleveraging) fairness during rapid price moves"
+      - "Insurance fund exhaustion leading to socialized losses"
+  composability_risks:
+    - "Oracle dependency: on-chain vs off-chain price feeds"
+    - "Collateral tokens: non-standard behavior affects margin calculations"
+  agent_routing:
+    always: ["attack_hypothesis", "assumption"]
+    when_external_calls: ["composability"]
+    when_math_heavy: ["math_precision"]
+    when_multi_role: ["access_control"]
+
+liquid_staking:
+  adversaries:
+    - name: "Oracle Manipulator"
+      capability: "Manipulates beacon chain reports to inflate/deflate staking token"
+      priority: 1
+    - name: "Sandwich Staker"
+      capability: "Front/back-runs reward distribution to steal yield"
+      priority: 2
+    - name: "Validator Attacker"
+      capability: "Compromises validators to slash staked ETH"
+      priority: 3
+  invariants:
+    - "totalPooledEther / totalShares ratio is monotonically non-decreasing"
+    - "Withdrawal queue is FIFO (first in, first out)"
+    - "Oracle reports are within acceptable deviation bounds"
+    - "Slashing penalties are correctly socialized across all holders"
+  temporal_threats:
+    deployment:
+      - "Initial validator setup: incorrect withdrawal credentials"
+    steady_state:
+      - "Rebase timing: MEV on reward distribution blocks"
+      - "Oracle report delays: stale share price exploitable"
+    market_stress:
+      - "Mass unstaking: withdrawal queue backlog"
+      - "Validator slashing: loss distribution fairness"
+  composability_risks:
+    - "Staking derivatives used as collateral: price manipulation via rebase"
+    - "Wrapping/unwrapping: wstETH/stETH conversion exploits"
+  agent_routing:
+    always: ["attack_hypothesis", "assumption"]
+    when_external_calls: ["composability"]
+    when_math_heavy: ["math_precision"]
+    when_multi_role: ["access_control"]
