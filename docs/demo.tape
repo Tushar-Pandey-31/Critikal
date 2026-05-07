@@ -10,10 +10,9 @@ Set Theme "Dracula"
 Set TypingSpeed 60ms
 Set PlaybackSpeed 1.0
 
-# Launch the TUI. Adjust the command to whatever shows the prettiest 15s of UI:
-#   - `critikal` (interactive prompt)
-#   - `critikal --repo <URL>` (jump straight into a run)
-Type "critikal"
+# vhs spawns a fresh shell — the poetry venv isn't activated, so call the
+# binary by its in-repo path. Run vhs from the repo root (cd /path/to/critikal).
+Type ".venv/bin/critikal"
 Sleep 500ms
 Enter
 
