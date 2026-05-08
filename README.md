@@ -27,12 +27,43 @@ Critikal thinks like an attacker. Give it a repository URL and it will autonomou
 
 ## Quick Start
 
+### 0. Prerequisites
+
+You need the following installed before you start. If you'd rather skip all of
+this, jump to the [Docker](#docker) section — the image bundles everything.
+
+| Dependency | Version | Why | Install |
+|---|---|---|---|
+| **Python** | `>=3.12.1, <3.13` | Runtime | [python.org/downloads](https://www.python.org/downloads/) or `pyenv install 3.12` |
+| **Poetry** | `>=1.8` (2.x supported) | Dependency / venv manager | `curl -sSL https://install.python-poetry.org \| python3 -` |
+| **Git** | any recent | Cloning audit targets | `apt install git` / `brew install git` |
+| **Foundry** (`forge`, `cast`, `anvil`) | latest | Compiles + runs the generated PoC tests | `curl -L https://foundry.paradigm.xyz \| bash && foundryup` |
+| **solc-select** | latest | Switches Solidity compiler versions per target | `pip install solc-select && solc-select install 0.8.20 && solc-select use 0.8.20` |
+| **Node.js** | `>=20` | Required by some Solidity toolchains pulled in by audit targets | [nodejs.org](https://nodejs.org/) or `nvm install 20` |
+| **Build essentials** (Linux only) | — | Needed for some native Python deps | `sudo apt install build-essential` |
+
+You'll also need at least these API keys (see step 2):
+
+- `OPENAI_API_KEY` and `XAI_API_KEY` — required for the default model routing
+- `ETHERSCAN_API_KEY` — recommended for on-chain recon
+
 ### 1. Install
 
 ```bash
-git clone https://github.com/Tushar-Pandey-31/critikal && cd critikal
+# 1. Clone
+git clone https://github.com/Tushar-Pandey-31/critikal.git
+cd critikal
+
+# 2. Resolve and pin the dependency graph (refreshes poetry.lock)
+poetry lock
+
+# 3. Install all deps + the `critikal` entry point into a project-local venv
 poetry install
 ```
+
+Poetry installs everything into `./.venv/` and registers a `critikal`
+executable at `./.venv/bin/critikal`. That binary is **not** on your `PATH`
+yet — see step 3.
 
 ### 2. Configure
 
@@ -46,6 +77,8 @@ cp .env.example .env
 # Recommended: ETHERSCAN_API_KEY for on-chain recon
 ```
 
+Edit `.env` and fill in your keys (use any editor, e.g. `nano .env`).
+
 > **Heads-up — model IDs.** The built-in defaults reference frontier models
 > (`grok-4-1-fast-reasoning`, `gpt-5.4-mini`, `gpt-5.5`, `grok-code-fast-1`)
 > that are not yet generally available on every account. If your API keys
@@ -56,16 +89,48 @@ cp .env.example .env
 
 ### 3. Run
 
+Pick **one** of the three patterns below — they're equivalent, just different
+ways to reach the `critikal` binary inside the project venv.
+
+**Option A — `poetry run` (no activation, works from anywhere in the repo):**
+
 ```bash
 # Full audit — headless mode
-critikal --repo https://github.com/theredguild/damn-vulnerable-defi
+poetry run critikal --repo https://github.com/theredguild/damn-vulnerable-defi
 
 # Custom prompt
-critikal --headless "Focus only on reentrancy and flash loan attack surfaces"
+poetry run critikal --headless "Focus only on reentrancy and flash loan attack surfaces"
 
 # Interactive TUI
+poetry run critikal
+```
+
+**Option B — activate the venv once per shell:**
+
+```bash
+# Poetry 2.x
+eval $(poetry env activate)
+
+# Or, on any Poetry version, source the venv directly
+source .venv/bin/activate
+
+# Now `critikal` is on your PATH until you `deactivate`
+critikal --repo https://github.com/theredguild/damn-vulnerable-defi
+critikal --headless "Focus only on reentrancy and flash loan attack surfaces"
 critikal
 ```
+
+**Option C — install globally with pipx (recommended for daily use):**
+
+```bash
+pipx install --editable .
+
+# `critikal` is now on PATH from any directory; edits to src/ take effect live
+critikal --repo https://github.com/theredguild/damn-vulnerable-defi
+```
+
+> If you see `critikal: command not found`, you almost certainly skipped the
+> activation step — use one of the three options above.
 
 ---
 
