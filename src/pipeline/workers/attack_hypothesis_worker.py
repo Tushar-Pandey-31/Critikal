@@ -25,10 +25,10 @@ CONFIDENCE_THRESHOLDS = {
     "privilege_escalation": 35,
     "unprotected_mutator": 30,
     "cei_violation": 35,
-    "invariant_violation": 30,   # was 55 — reversed! invariants are the highest-signal class
+    "invariant_violation": 30,  # was 55 — reversed! invariants are the highest-signal class
     "flash_loan_amplification": 35,  # was 50 — reduced to match other classes
-    "accounting_scope": 30,      # queue/set inconsistency bugs (Morpho-class)
-    "semi_trusted_role": 25,     # role-gated bugs always have a real threat actor
+    "accounting_scope": 30,  # queue/set inconsistency bugs (Morpho-class)
+    "semi_trusted_role": 25,  # role-gated bugs always have a real threat actor
     "unknown": 40,
 }
 
@@ -181,7 +181,7 @@ class AttackHypothesisWorker(WorkerAgent):
                 worker_type="attack_hypothesis",
                 task_id=task.task_id,
                 confidence=0,
-                raw_output={"error": "No hotspot provided"}
+                raw_output={"error": "No hotspot provided"},
             )
 
         recon_context = task.context.get("recon_context", {})
@@ -210,7 +210,7 @@ class AttackHypothesisWorker(WorkerAgent):
                     "impact": "Unknown — requires manual review",
                     "error": "LLM returned unparseable response",
                     "raw": raw_response[:500],
-                }
+                },
             )
 
         vulnerability_class = parsed.get("vulnerability_class", "unknown")
@@ -220,10 +220,10 @@ class AttackHypothesisWorker(WorkerAgent):
         # Boost confidence if graph signals are strong but LLM was conservative
         signals = graph_context.get("signals_summary", {})
         strong_signal = (
-            signals.get("reentrancy_risk") or
-            signals.get("is_unprotected_mutator") or
-            signals.get("can_escalate_privileges") or
-            signals.get("state_write_after_external_call")
+            signals.get("reentrancy_risk")
+            or signals.get("is_unprotected_mutator")
+            or signals.get("can_escalate_privileges")
+            or signals.get("state_write_after_external_call")
         )
         if strong_signal and confidence < 35:
             confidence = 45
@@ -234,6 +234,7 @@ class AttackHypothesisWorker(WorkerAgent):
         # cap confidence regardless of what the LLM said.
         try:
             from src.pipeline.workers.kill_signals import apply_kill_signals_to_confidence, check_kill_signals
+
             source_code = graph_context.get("function_context", {}).get("source_code", "")
             if not source_code:
                 source_code = graph_context.get("function_context", {}).get("code", "")
@@ -261,7 +262,9 @@ class AttackHypothesisWorker(WorkerAgent):
             logger.info(f"[AttackWorker] attack_path was empty → defaulting to [{attack_path[0]}]")
 
         if confidence < threshold:
-            logger.info(f"[AttackWorker] Confidence {confidence} below threshold {threshold} for {vulnerability_class} on {node_id}")
+            logger.info(
+                f"[AttackWorker] Confidence {confidence} below threshold {threshold} for {vulnerability_class} on {node_id}"
+            )
             return WorkerOutput(
                 worker_type="attack_hypothesis",
                 task_id=task.task_id,
@@ -269,7 +272,7 @@ class AttackHypothesisWorker(WorkerAgent):
                 raw_output={
                     "reason": f"Confidence {confidence} below threshold {threshold}",
                     "parsed": parsed,
-                }
+                },
             )
 
         evidence_tags = []
@@ -301,7 +304,7 @@ class AttackHypothesisWorker(WorkerAgent):
                 "affected_function": hotspot.function,
                 "severity_estimate": hotspot.priority,
                 "evidence_tags": evidence_tags,
-            }
+            },
         )
 
     def _gather_graph_context(self, node_id: str, hotspot) -> dict:
@@ -328,14 +331,22 @@ class AttackHypothesisWorker(WorkerAgent):
         # (admin-only callers reduce attack surface)
         caller_protection = []
         for caller_id in context.get("callers", []):
-            cid = caller_id if isinstance(caller_id, str) else caller_id.get("node_id", "") if isinstance(caller_id, dict) else str(caller_id)
+            cid = (
+                caller_id
+                if isinstance(caller_id, str)
+                else caller_id.get("node_id", "")
+                if isinstance(caller_id, dict)
+                else str(caller_id)
+            )
             if self.graph.has_node(cid):
                 cdata = self.graph.nodes[cid]
-                caller_protection.append({
-                    "caller": cid,
-                    "is_protected": cdata.get("is_protected", False),
-                    "access_control_type": cdata.get("access_control_type", "none"),
-                })
+                caller_protection.append(
+                    {
+                        "caller": cid,
+                        "is_protected": cdata.get("is_protected", False),
+                        "access_control_type": cdata.get("access_control_type", "none"),
+                    }
+                )
         context["caller_protection"] = caller_protection
 
         # Improvement 3b: Exploit chain context
@@ -420,7 +431,9 @@ class AttackHypothesisWorker(WorkerAgent):
 
         return context
 
-    def _build_prompt(self, hotspot, graph_context: dict, recon_context: dict, threat_context: dict = None, vector_bundle: str = "") -> list[dict]:
+    def _build_prompt(
+        self, hotspot, graph_context: dict, recon_context: dict, threat_context: dict = None, vector_bundle: str = ""
+    ) -> list[dict]:
         fn_ctx = graph_context.get("function_context", {})
         source_code = fn_ctx.get("source_code") or fn_ctx.get("code", "Source code not available")
         signals = graph_context.get("signals_summary", {})
@@ -539,7 +552,7 @@ Classify as ARITHMETIC_PRECISION. Check if the precision loss or overflow can be
         exploit_seq = graph_context.get("exploit_sequence", [])
         if exploit_seq:
             steps_text = "\n".join(
-                f"  Step {s.get('step', i+1)}: [{s.get('role', '?')}] {s.get('node', '?')}"
+                f"  Step {s.get('step', i + 1)}: [{s.get('role', '?')}] {s.get('node', '?')}"
                 for i, s in enumerate(exploit_seq)
             )
             user_content += f"""
@@ -554,13 +567,15 @@ Use this chain to guide your hypothesis — each step is a verified reachable ca
         if invariant_violations:
             inv_lines = []
             for v in invariant_violations:
-                inv_lines.append(f"  - [{v.get('severity', '?')}] {v.get('type', '?')}: {v.get('description', '')} ({v.get('invariant_id', '')})")
+                inv_lines.append(
+                    f"  - [{v.get('severity', '?')}] {v.get('type', '?')}: {v.get('description', '')} ({v.get('invariant_id', '')})"
+                )
             user_content += f"""
 ## INVARIANT VIOLATIONS DETECTED
 The static analyzer detected the following cross-function invariant violations in this function:
 {chr(10).join(inv_lines)}
 
-Invariant violation score: {graph_context.get('invariant_violation_score', 0)}
+Invariant violation score: {graph_context.get("invariant_violation_score", 0)}
 These invariants were verified across ALL functions in the contract — if flagged, the accounting is provably inconsistent.
 Classify as INVARIANT_VIOLATION if the violation is exploitable. Confidence >= 65 if score >= 40.
 """
@@ -573,8 +588,8 @@ Classify as INVARIANT_VIOLATION if the violation is exploitable. Confidence >= 6
 ## FLASH LOAN AMPLIFICATION RISK DETECTED
 This function is vulnerable to economic manipulation via flash-loaned capital.
 
-Active risk factors: {', '.join(active_factors)}
-Flash loan score: {graph_context.get('flash_loan_score', 0)}
+Active risk factors: {", ".join(active_factors)}
+Flash loan score: {graph_context.get("flash_loan_score", 0)}
 
 Standard flash loan attack pattern:
 1. Attacker borrows large capital via flash loan (Aave/dYdX/Balancer)
@@ -606,7 +621,7 @@ Classify as FLASH_LOAN_AMPLIFICATION if the function makes price-dependent decis
             user_content += f"""
 ## Matched Vulnerability Templates
 The following known vulnerability patterns were matched by structural analysis:
-{', '.join(str(t) for t in templates)}
+{", ".join(str(t) for t in templates)}
 """
 
         user_content += f"""
@@ -628,12 +643,12 @@ Known Attack Patterns: {recon_context.get("known_attack_patterns", [])}
         if design_summary or compiler_info or intentional_patterns or fn_natspec:
             user_content += f"""
 ## Design Context (from Recon — trust this for design intent)
-Design Summary: {design_summary if design_summary else 'N/A'}
-Solidity Version: {compiler_info.get('solidity_version', 'unknown')}
-Safe Math (overflow/underflow protection): {compiler_info.get('has_safe_math', 'unknown')}
-Has Unchecked Blocks: {compiler_info.get('has_unchecked_blocks', False)}
-Intentional Design Patterns Found: {intentional_patterns if intentional_patterns else 'None detected'}
-Natspec for {hotspot.function}(): {fn_natspec if fn_natspec else 'No natspec found'}
+Design Summary: {design_summary if design_summary else "N/A"}
+Solidity Version: {compiler_info.get("solidity_version", "unknown")}
+Safe Math (overflow/underflow protection): {compiler_info.get("has_safe_math", "unknown")}
+Has Unchecked Blocks: {compiler_info.get("has_unchecked_blocks", False)}
+Intentional Design Patterns Found: {intentional_patterns if intentional_patterns else "None detected"}
+Natspec for {hotspot.function}(): {fn_natspec if fn_natspec else "No natspec found"}
 """
 
         # P0: Inject threat intelligence if available
@@ -670,10 +685,7 @@ USE THE ABOVE to:
 9. CHECK THREAT INTELLIGENCE: If invariants or adversary profiles are provided, verify against the code.
 10. CHECK ATTACK VECTORS: If vector bundle is provided, classify each applicable vector as SKIP/DROP/INVESTIGATE."""
 
-        return [
-            {"role": "system", "content": ATTACK_WORKER_SYSTEM_PROMPT},
-            {"role": "user", "content": user_content}
-        ]
+        return [{"role": "system", "content": ATTACK_WORKER_SYSTEM_PROMPT}, {"role": "user", "content": user_content}]
 
     async def _call_llm(self, messages: list[dict]) -> str:
         _FALLBACK = '{"vulnerability_class":"unknown","confidence":35,"hypothesis":"LLM call failed","attack_path":[],"evidence_node_ids":[]}'
@@ -695,13 +707,13 @@ USE THE ABOVE to:
                 # ── Token tracking ──
                 try:
                     from src.utils.token_counter import get_token_counter
-                    input_text = "\n".join(
-                        m.get("content", "") if isinstance(m, dict) else str(m)
-                        for m in messages
-                    )
+
+                    input_text = "\n".join(m.get("content", "") if isinstance(m, dict) else str(m) for m in messages)
                     get_token_counter().record(
-                        "AttackHypothesisWorker", self.model_name,
-                        input_text, str(content),
+                        "AttackHypothesisWorker",
+                        self.model_name,
+                        input_text,
+                        str(content),
                         getattr(response, "response_metadata", None),
                     )
                 except Exception:
@@ -709,10 +721,9 @@ USE THE ABOVE to:
 
                 return str(content)
             except TimeoutError:
-                wait = 2 ** (attempt - 1)   # 1s, 2s, 4s, 8s
+                wait = 2 ** (attempt - 1)  # 1s, 2s, 4s, 8s
                 logger.warning(
-                    f"[AttackWorker] Attempt {attempt}/{self.MAX_ATTEMPTS} "
-                    f"asyncio timeout. Retrying in {wait}s..."
+                    f"[AttackWorker] Attempt {attempt}/{self.MAX_ATTEMPTS} asyncio timeout. Retrying in {wait}s..."
                 )
                 if attempt < self.MAX_ATTEMPTS:
                     await asyncio.sleep(wait)
@@ -720,11 +731,18 @@ USE THE ABOVE to:
 
             except Exception as e:
                 err_str = str(e)
-                is_transient = any(kw in err_str for kw in [
-                    "504", "Deadline", "DEADLINE_EXCEEDED",
-                    "Stream cancelled", "CANCELLED", "503",
-                ])
-                wait = 2 ** (attempt - 1)   # 1s, 2s, 4s, 8s
+                is_transient = any(
+                    kw in err_str
+                    for kw in [
+                        "504",
+                        "Deadline",
+                        "DEADLINE_EXCEEDED",
+                        "Stream cancelled",
+                        "CANCELLED",
+                        "503",
+                    ]
+                )
+                wait = 2 ** (attempt - 1)  # 1s, 2s, 4s, 8s
 
                 if is_transient:
                     logger.warning(
@@ -733,8 +751,7 @@ USE THE ABOVE to:
                     )
                 else:
                     logger.warning(
-                        f"[AttackWorker] Attempt {attempt}/{self.MAX_ATTEMPTS} "
-                        f"non-transient failure: {err_str[:200]}"
+                        f"[AttackWorker] Attempt {attempt}/{self.MAX_ATTEMPTS} non-transient failure: {err_str[:200]}"
                     )
 
                 if attempt < self.MAX_ATTEMPTS:
@@ -760,7 +777,9 @@ USE THE ABOVE to:
             if not isinstance(parsed.get("evidence_node_ids"), list):
                 parsed["evidence_node_ids"] = []
             parsed["attack_path"] = [normalize_node_id(p) for p in parsed["attack_path"] if isinstance(p, str)]
-            parsed["evidence_node_ids"] = [normalize_node_id(n) for n in parsed["evidence_node_ids"] if isinstance(n, str)]
+            parsed["evidence_node_ids"] = [
+                normalize_node_id(n) for n in parsed["evidence_node_ids"] if isinstance(n, str)
+            ]
 
             valid_nodes = set(self.graph.nodes())
             parsed["attack_path"] = [n for n in parsed["attack_path"] if n in valid_nodes]

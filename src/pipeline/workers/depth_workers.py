@@ -33,11 +33,13 @@ DEPTH_LLM_TIMEOUT = int(os.getenv("DEPTH_WORKER_LLM_TIMEOUT", "180"))
 
 # ── Result dataclass ──────────────────────────────────────────────
 
+
 @dataclass
 class DepthResult:
     """Structured output from a depth worker pass."""
+
     worker_type: str
-    verdict: str        # CONFIRMED / REFINED / REFUTED / CONTESTED
+    verdict: str  # CONFIRMED / REFINED / REFUTED / CONTESTED
     reasoning: str
     refined_confidence: int  # 0-100
     new_evidence_refs: list[str] = field(default_factory=list)
@@ -204,8 +206,8 @@ For SEMI-TRUSTED ROLE demotions:
 """
 
 
-
 # ── Depth Worker Base ────────────────────────────────────────────
+
 
 class _DepthWorkerBase:
     """Common logic for all depth workers."""
@@ -231,9 +233,7 @@ class _DepthWorkerBase:
         # Get graph-derived context
         func_ctx = gq.get_function_context(finding.hotspot_node_id)
         state_deps = gq.get_state_dependencies(finding.affected_contract)
-        state_transitions = gq.get_state_transitions(
-            function_id=finding.hotspot_node_id
-        )
+        state_transitions = gq.get_state_transitions(function_id=finding.hotspot_node_id)
 
         lines = []
         if is_da_pass:
@@ -264,16 +264,16 @@ class _DepthWorkerBase:
             "",
             "## Preconditions (claimed)",
         ]
-        for p in (finding.preconditions or []):
+        for p in finding.preconditions or []:
             lines.append(f"  ✅ {p}")
-        for p in (finding.preconditions_missing or []):
+        for p in finding.preconditions_missing or []:
             lines.append(f"  ❌ MISSING: {p}")
 
         lines += [
             "",
             "## Postconditions (if exploited)",
         ]
-        for p in (finding.postconditions or []):
+        for p in finding.postconditions or []:
             lines.append(f"  → {p}")
 
         # Graph signals
@@ -301,10 +301,7 @@ class _DepthWorkerBase:
         if state_deps:
             lines += ["", "## Cross-Function State Dependencies"]
             for dep in state_deps[:10]:
-                lines.append(
-                    f"  {dep['writer']} → {dep['reader']} "
-                    f"via [{', '.join(dep.get('shared_variables', []))}]"
-                )
+                lines.append(f"  {dep['writer']} → {dep['reader']} via [{', '.join(dep.get('shared_variables', []))}]")
 
         # State transitions
         if state_transitions:
@@ -351,30 +348,20 @@ class _DepthWorkerBase:
             {"role": "user", "content": user_content},
         ]
 
-
         try:
             response = await asyncio.wait_for(
                 self.llm.ainvoke(messages),
                 timeout=DEPTH_LLM_TIMEOUT,
             )
-            content = (
-                response.content
-                if hasattr(response, "content")
-                else str(response)
-            )
+            content = response.content if hasattr(response, "content") else str(response)
             if isinstance(content, list):
-                content = "".join(
-                    c.get("text", "") if isinstance(c, dict) else str(c)
-                    for c in content
-                )
+                content = "".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in content)
 
             # Track tokens
             try:
                 from src.utils.token_counter import get_token_counter
-                input_text = "\n".join(
-                    m.get("content", "") if isinstance(m, dict) else str(m)
-                    for m in messages
-                )
+
+                input_text = "\n".join(m.get("content", "") if isinstance(m, dict) else str(m) for m in messages)
                 get_token_counter().record(
                     f"Depth_{self.worker_type}",
                     self.model_name,
@@ -441,6 +428,7 @@ class _DepthWorkerBase:
 
 # ── Concrete Depth Workers ───────────────────────────────────────
 
+
 class StateTraceDepthWorker(_DepthWorkerBase):
     worker_type = "state_trace"
     system_prompt = STATE_TRACE_SYSTEM_PROMPT
@@ -457,6 +445,7 @@ class ExternalDepthWorker(_DepthWorkerBase):
 
 
 # ── Orchestrator ─────────────────────────────────────────────────
+
 
 async def run_depth_workers(
     findings: list[Finding],
@@ -477,8 +466,10 @@ async def run_depth_workers(
     """
     # Filter uncertain findings
     uncertain = [
-        f for f in findings
-        if f.verdict in (
+        f
+        for f in findings
+        if f.verdict
+        in (
             FindingVerdict.CONTESTED,
             FindingVerdict.PARTIAL,
             FindingVerdict.UNASSESSED,
@@ -505,12 +496,12 @@ async def run_depth_workers(
     processed: list[tuple[Finding, DepthResult]] = []
 
     for pass_idx in range(max_depth_passes):
-        is_da_pass = (pass_idx > 0)
+        is_da_pass = pass_idx > 0
 
         if not uncertain:
             break
 
-        pass_name = f"Pass {pass_idx+1}" + (" (Devil's Advocate)" if is_da_pass else "")
+        pass_name = f"Pass {pass_idx + 1}" + (" (Devil's Advocate)" if is_da_pass else "")
         print(f"[Depth] Starting {pass_name} on {len(uncertain)} finding(s)...")
 
         async def _analyze_one(finding: Finding, is_da: bool) -> tuple[Finding, DepthResult]:
@@ -526,10 +517,7 @@ async def run_depth_workers(
 
             print(f"  [Depth] {worker_type} → {finding.affected_contract}::{finding.affected_function}")
             result = await worker.analyze(finding, graph, source, is_da_pass=is_da)
-            print(
-                f"  [Depth] {worker_type} verdict: {result.verdict} "
-                f"(confidence: {result.refined_confidence})"
-            )
+            print(f"  [Depth] {worker_type} verdict: {result.verdict} (confidence: {result.refined_confidence})")
             return (finding, result)
 
         tasks = [_analyze_one(f, is_da_pass) for f in uncertain]
@@ -562,10 +550,7 @@ async def run_depth_workers(
     refined = sum(1 for _, r in processed if r.verdict == "REFINED")
     refuted = sum(1 for _, r in processed if r.verdict == "REFUTED")
     contested = sum(1 for _, r in processed if r.verdict == "CONTESTED")
-    print(
-        f"[Depth] Complete: {confirmed} confirmed, {refined} refined, "
-        f"{refuted} refuted, {contested} contested"
-    )
+    print(f"[Depth] Complete: {confirmed} confirmed, {refined} refined, {refuted} refuted, {contested} contested")
 
     return processed
 
@@ -573,22 +558,22 @@ async def run_depth_workers(
 def _apply_depth_result(finding: Finding, result: DepthResult) -> None:
     """Apply a depth worker's result back onto the finding."""
     finding.depth_pass_count += 1
-    finding.depth_verdicts.append({
-        "agent": result.worker_type,
-        "verdict": result.verdict,
-        "reasoning": result.reasoning,
-        "confidence": result.refined_confidence,
-        "evidence_refs": result.new_evidence_refs,
-    })
+    finding.depth_verdicts.append(
+        {
+            "agent": result.worker_type,
+            "verdict": result.verdict,
+            "reasoning": result.reasoning,
+            "confidence": result.refined_confidence,
+            "evidence_refs": result.new_evidence_refs,
+        }
+    )
 
     # Update verdict based on depth result
     if result.verdict == "CONFIRMED":
         finding.verdict = FindingVerdict.CONFIRMED
         # Boost confidence: take the higher of current vs depth
         finding.confidence = max(finding.confidence, result.refined_confidence)
-        finding.confidence_evidence = max(
-            finding.confidence_evidence, result.refined_confidence
-        )
+        finding.confidence_evidence = max(finding.confidence_evidence, result.refined_confidence)
     elif result.verdict == "REFINED":
         finding.verdict = FindingVerdict.PARTIAL
         # Use depth worker's refined confidence

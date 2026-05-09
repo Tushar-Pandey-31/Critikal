@@ -10,7 +10,8 @@ def test_sandbox_creates_temp_dir():
     manager.cleanup()
     assert not manager.tmp_dir.exists()
 
-@patch.object(SandboxManager, 'run')
+
+@patch.object(SandboxManager, "run")
 def test_setup_foundry_project_success(mock_run):
     manager = SandboxManager()
     mock_run.return_value = Result(success=True, stdout="success", stderr="")
@@ -21,7 +22,8 @@ def test_setup_foundry_project_success(mock_run):
 
     manager.cleanup()
 
-@patch.object(SandboxManager, 'run')
+
+@patch.object(SandboxManager, "run")
 def test_setup_foundry_project_failure(mock_run):
     manager = SandboxManager()
     mock_run.return_value = Result(success=False, stdout="", stderr="error")
@@ -31,6 +33,7 @@ def test_setup_foundry_project_failure(mock_run):
     mock_run.assert_called_once()
 
     manager.cleanup()
+
 
 def test_write_test_file():
     manager = SandboxManager()
@@ -42,14 +45,15 @@ def test_write_test_file():
 
     file_path = manager.tmp_dir / filename
     assert file_path.exists()
-    written = file_path.read_text(encoding='utf-8')
+    written = file_path.read_text(encoding="utf-8")
     # SPDX header is auto-prepended if missing
     assert "SPDX-License-Identifier" in written
     assert "contract MyTest {}" in written
 
     manager.cleanup()
 
-@patch('subprocess.run')
+
+@patch("subprocess.run")
 def test_run_command_success(mock_run):
     manager = SandboxManager()
     mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
@@ -60,9 +64,11 @@ def test_run_command_success(mock_run):
 
     manager.cleanup()
 
-@patch('subprocess.run')
+
+@patch("subprocess.run")
 def test_run_command_timeout(mock_run):
     import subprocess
+
     manager = SandboxManager()
 
     mock_run.side_effect = subprocess.TimeoutExpired(cmd="sleep", timeout=60, output=b"stuck", stderr=b"")
@@ -73,6 +79,7 @@ def test_run_command_timeout(mock_run):
     assert res.stdout == ""
 
     manager.cleanup()
+
 
 def test_cleanup_even_on_crash():
     manager = SandboxManager()
@@ -87,12 +94,13 @@ def test_cleanup_even_on_crash():
 
     assert not dir_path.exists()
 
+
 # Test the real run functionality locally if possible
 # (Using something simple like python or echo)
 def test_real_subprocess_run():
     manager = SandboxManager()
     # Cross platform way to echo something via python
-    res = manager.run('python3 -c "print(\'hello from sandbox\')"')
+    res = manager.run("python3 -c \"print('hello from sandbox')\"")
 
     assert res.success is True
     assert "hello from sandbox" in res.stdout

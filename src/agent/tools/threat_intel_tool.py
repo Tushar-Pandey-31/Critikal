@@ -9,7 +9,6 @@ from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class ThreatIntelTool(Tool):
-
     def name(self) -> str:
         return "threat_intel"
 
@@ -58,7 +57,7 @@ class ThreatIntelTool(Tool):
         if ctx.config.attack_vector_db_enabled:
             try:
                 vector_db = AttackVectorDB()
-                proto_list = [p.get("type", "unknown") for p in protocol_types] if 'protocol_types' in locals() else []
+                proto_list = [p.get("type", "unknown") for p in protocol_types] if "protocol_types" in locals() else []
                 matched = vector_db.match_vectors(ctx.graph, proto_list)
                 results.append(f"Matched {len(matched)} attack vectors.")
             except Exception as e:

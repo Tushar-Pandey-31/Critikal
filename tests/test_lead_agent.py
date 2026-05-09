@@ -32,6 +32,7 @@ def test_get_llm(mock_chat):
     # Verify bind_tools was called on the instance returned by ChatGoogleGenerativeAI
     mock_chat.return_value.bind_tools.assert_called_with([mock_tool])
 
+
 @patch("src.pipeline.lead_agent.get_llm")
 @pytest.mark.asyncio
 async def test_coordinator_node_json_output(mock_get_llm):
@@ -62,19 +63,12 @@ async def test_coordinator_node_json_output(mock_get_llm):
     mock_graph = MagicMock()
     mock_graph.number_of_nodes.return_value = 5
     mock_graph.number_of_edges.return_value = 3
-    state = {
-        "messages": [],
-        "vulnerability_leads": [],
-        "target_nodes": [],
-        "worker_outputs": [],
-        "graph": mock_graph
-    }
+    state = {"messages": [], "vulnerability_leads": [], "target_nodes": [], "worker_outputs": [], "graph": mock_graph}
 
     result = await coordinator_node(state)
     assert len(result["vulnerability_leads"]) == 1
     assert result["strategy"] == "Analyze reentrancy"
     assert "Vault.withdraw" in result["target_nodes"]
-
 
 
 @pytest.mark.asyncio
@@ -109,27 +103,63 @@ def test_finding_priority_sorts_by_confidence_then_severity():
     from src.models.finding import Finding, FindingStatus
 
     low = Finding(
-        id="1", hotspot_node_id="A::a", vulnerability_class="x", title="", hypothesis="",
-        evidence_nodes=[], attack_path=[], status=FindingStatus.UNCONFIRMED, confidence=70,
-        impact="", affected_contract="A", affected_function="a",
+        id="1",
+        hotspot_node_id="A::a",
+        vulnerability_class="x",
+        title="",
+        hypothesis="",
+        evidence_nodes=[],
+        attack_path=[],
+        status=FindingStatus.UNCONFIRMED,
+        confidence=70,
+        impact="",
+        affected_contract="A",
+        affected_function="a",
         severity_estimate="MEDIUM",
     )
     high = Finding(
-        id="2", hotspot_node_id="B::b", vulnerability_class="x", title="", hypothesis="",
-        evidence_nodes=[], attack_path=[], status=FindingStatus.UNCONFIRMED, confidence=90,
-        impact="", affected_contract="B", affected_function="b",
+        id="2",
+        hotspot_node_id="B::b",
+        vulnerability_class="x",
+        title="",
+        hypothesis="",
+        evidence_nodes=[],
+        attack_path=[],
+        status=FindingStatus.UNCONFIRMED,
+        confidence=90,
+        impact="",
+        affected_contract="B",
+        affected_function="b",
         severity_estimate="HIGH",
     )
     mid = Finding(
-        id="3", hotspot_node_id="C::c", vulnerability_class="x", title="", hypothesis="",
-        evidence_nodes=[], attack_path=[], status=FindingStatus.UNCONFIRMED, confidence=80,
-        impact="", affected_contract="C", affected_function="c",
+        id="3",
+        hotspot_node_id="C::c",
+        vulnerability_class="x",
+        title="",
+        hypothesis="",
+        evidence_nodes=[],
+        attack_path=[],
+        status=FindingStatus.UNCONFIRMED,
+        confidence=80,
+        impact="",
+        affected_contract="C",
+        affected_function="c",
         severity_estimate="CRITICAL",
     )
     same_conf_high = Finding(
-        id="4", hotspot_node_id="D::d", vulnerability_class="x", title="", hypothesis="",
-        evidence_nodes=[], attack_path=[], status=FindingStatus.UNCONFIRMED, confidence=80,
-        impact="", affected_contract="D", affected_function="d",
+        id="4",
+        hotspot_node_id="D::d",
+        vulnerability_class="x",
+        title="",
+        hypothesis="",
+        evidence_nodes=[],
+        attack_path=[],
+        status=FindingStatus.UNCONFIRMED,
+        confidence=80,
+        impact="",
+        affected_contract="D",
+        affected_function="d",
         severity_estimate="HIGH",
     )
     findings = [low, high, mid, same_conf_high]

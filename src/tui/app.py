@@ -179,9 +179,7 @@ class CritikalApp(App):
         )
 
         # Start event consumer
-        self._event_consumer_task = asyncio.create_task(
-            self._consume_events()
-        )
+        self._event_consumer_task = asyncio.create_task(self._consume_events())
 
         # Update cost bar
         cost_bar = self.query_one("#cost-bar", CostBar)
@@ -418,10 +416,12 @@ class CritikalApp(App):
                 cost_bar.update_model(self.model)
                 # Update prompt hint
                 hint = self.query_one("#prompt-hint", Static)
-                hint.update(Text(
-                    f"  {self.model} · {self.engagement_id}",
-                    style="italic #5a5a5a",
-                ))
+                hint.update(
+                    Text(
+                        f"  {self.model} · {self.engagement_id}",
+                        style="italic #5a5a5a",
+                    )
+                )
             else:
                 self._open_model_picker()
 
@@ -450,6 +450,7 @@ class CritikalApp(App):
             if self._ctx and self._ctx.findings:
                 export_path = Path(f"critikal_findings_{self.engagement_id}.json")
                 import json
+
                 with open(export_path, "w") as f:
                     findings_data = []
                     for finding in self._ctx.findings:
@@ -541,14 +542,14 @@ class CritikalApp(App):
             cost_bar = self.query_one("#cost-bar", CostBar)
             cost_bar.update_model(new_model)
             hint = self.query_one("#prompt-hint", Static)
-            hint.update(Text(
-                f"  {new_model} · {self.engagement_id}",
-                style="italic #5a5a5a",
-            ))
+            hint.update(
+                Text(
+                    f"  {new_model} · {self.engagement_id}",
+                    style="italic #5a5a5a",
+                )
+            )
 
-        conv.add_system_message(
-            f"Applied {len(changes)} model change{'s' if len(changes) != 1 else ''}."
-        )
+        conv.add_system_message(f"Applied {len(changes)} model change{'s' if len(changes) != 1 else ''}.")
 
     async def on_unmount(self):
         """Cleanup on exit."""

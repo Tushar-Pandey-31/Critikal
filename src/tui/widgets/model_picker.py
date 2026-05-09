@@ -15,19 +15,17 @@ Usage from CritikalApp:
 
 from __future__ import annotations
 
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Label, OptionList, Static
 from textual.widgets.option_list import Option
-from rich.text import Text
 
 from src.llm.model_registry import (
-    AGENT_ROLES,
     PROVIDER_DISPLAY,
-    PROVIDER_MODELS,
     apply_model_config,
     find_model_info,
     get_available_providers,
@@ -36,18 +34,18 @@ from src.llm.model_registry import (
 )
 
 # ── Palette (synced with styles.tcss) ────────────────────────────────
-BG       = "#0a0a0a"
-SURFACE  = "#111111"
-BORDER   = "#1f1f1f"
-FG       = "#e8e8e8"
-FG_B     = "#ffffff"
-DIM      = "#8a8a8a"
-DIMMER   = "#5a5a5a"
-FAINT    = "#3a3a3a"
-ACCENT   = "#7dd3c0"
-DANGER   = "#e08a8a"
-WARN     = "#d9c47d"
-GREEN    = "#7dd3a0"
+BG = "#0a0a0a"
+SURFACE = "#111111"
+BORDER = "#1f1f1f"
+FG = "#e8e8e8"
+FG_B = "#ffffff"
+DIM = "#8a8a8a"
+DIMMER = "#5a5a5a"
+FAINT = "#3a3a3a"
+ACCENT = "#7dd3c0"
+DANGER = "#e08a8a"
+WARN = "#d9c47d"
+GREEN = "#7dd3a0"
 
 
 class ModelPickerScreen(ModalScreen[dict[str, str] | None]):
@@ -381,10 +379,12 @@ class ModelPickerScreen(ModalScreen[dict[str, str] | None]):
 
         header = self.query_one("#model-select-header", Static)
         provider_name = PROVIDER_DISPLAY.get(provider, provider)
-        header.update(Text(
-            f"  {provider_name} → {self._selected_role}",
-            style=ACCENT,
-        ))
+        header.update(
+            Text(
+                f"  {provider_name} → {self._selected_role}",
+                style=ACCENT,
+            )
+        )
 
         self.query_one("#provider-select", OptionList).display = False
         self.query_one("#model-select", OptionList).display = True

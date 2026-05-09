@@ -30,7 +30,6 @@ DEFAULT_TIMEOUT = 120
 
 
 class DeployContractTool(Tool):
-
     def name(self) -> str:
         return "deploy_contract"
 
@@ -117,24 +116,22 @@ class DeployContractTool(Tool):
         disable_sandbox = params.get("dangerouslyDisableSandbox", False)
 
         if not rpc_url:
-            return ToolResult.error(
-                "No RPC URL provided. Pass rpc_url or set ETH_RPC_URL env var."
-            )
+            return ToolResult.error("No RPC URL provided. Pass rpc_url or set ETH_RPC_URL env var.")
 
         private_key = os.getenv(pk_env)
         if not private_key:
-            return ToolResult.error(
-                f"No private key found in env var '{pk_env}'. "
-                "Set the env var before deploying."
-            )
+            return ToolResult.error(f"No private key found in env var '{pk_env}'. Set the env var before deploying.")
 
         repo_path = ctx.repo_path or Path(".")
 
         cmd_parts = [
-            "forge", "create",
+            "forge",
+            "create",
             f"{contract_path}:{contract_name}",
-            "--rpc-url", rpc_url,
-            "--private-key", private_key,
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            private_key,
             "--broadcast",
         ]
 
@@ -173,7 +170,7 @@ class DeployContractTool(Tool):
                     capture_output=True,
                     text=True,
                     timeout=timeout,
-                )
+                ),
             )
         except subprocess.TimeoutExpired:
             return ToolResult.error(f"forge create timed out after {timeout}s")
@@ -186,8 +183,7 @@ class DeployContractTool(Tool):
 
         if not passed:
             return ToolResult.error(
-                f"forge create failed (exit {result.returncode}):\n"
-                f"{stdout[-2000:]}\n{stderr[-2000:]}"
+                f"forge create failed (exit {result.returncode}):\n{stdout[-2000:]}\n{stderr[-2000:]}"
             )
 
         # Parse deployed address from forge create output
@@ -300,9 +296,7 @@ class CastTool(Tool):
         if subcommand == "send":
             private_key = os.getenv(pk_env)
             if not private_key:
-                return ToolResult.error(
-                    f"cast send requires a private key. Set env var '{pk_env}'."
-                )
+                return ToolResult.error(f"cast send requires a private key. Set env var '{pk_env}'.")
             if "--private-key" not in args:
                 cmd_parts += ["--private-key", private_key]
 
@@ -329,7 +323,7 @@ class CastTool(Tool):
                     text=True,
                     timeout=timeout,
                     cwd=cwd_str,
-                )
+                ),
             )
         except subprocess.TimeoutExpired:
             return ToolResult.error(f"cast {subcommand} timed out after {timeout}s")
@@ -341,10 +335,7 @@ class CastTool(Tool):
         passed = result.returncode == 0
 
         if not passed:
-            return ToolResult.error(
-                f"cast {subcommand} failed (exit {result.returncode}):\n"
-                f"{stdout}\n{stderr}"
-            )
+            return ToolResult.error(f"cast {subcommand} failed (exit {result.returncode}):\n{stdout}\n{stderr}")
 
         return ToolResult.success(
             stdout or "(no output)",

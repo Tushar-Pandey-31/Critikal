@@ -10,7 +10,6 @@ from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class RAGSearchTool(Tool):
-
     def name(self) -> str:
         return "search_exploits"
 
@@ -48,6 +47,7 @@ class RAGSearchTool(Tool):
         # Direct query
         if query and not sweep:
             from src.pipeline.tools import search_security_knowledge
+
             try:
                 result = search_security_knowledge.invoke(query)
                 return ToolResult.success(result)
@@ -61,15 +61,14 @@ class RAGSearchTool(Tool):
                 return ToolResult.success("RAG is disabled in config.")
 
             from src.pipeline.tools import search_security_knowledge
+
             matched = 0
             for finding in ctx.findings:
                 search_query = f"{finding.title} {finding.hypothesis}"
                 try:
                     result = search_security_knowledge.invoke(search_query)
                     if result and "No results" not in result and "Error" not in result:
-                        finding.confidence_rag_match = min(
-                            100, getattr(finding, "confidence_rag_match", 0) + 15
-                        )
+                        finding.confidence_rag_match = min(100, getattr(finding, "confidence_rag_match", 0) + 15)
                         finding.contribute_score("rag_match", 10, "RAG precedent found")
                         matched += 1
                 except Exception:

@@ -1,6 +1,5 @@
 """Reentrancy detection: external call classification, CEI violations, privilege escalation."""
 
-
 from slither.slither import Slither
 
 
@@ -162,19 +161,15 @@ class ReentrancyMixin:
 
         ext_call_counter = 0
 
-        func_nodes = [
-            (nid, ndata) for nid, ndata in self.graph.nodes(data=True)
-            if ndata.get("type") == "function"
-        ]
+        func_nodes = [(nid, ndata) for nid, ndata in self.graph.nodes(data=True) if ndata.get("type") == "function"]
 
         for node_id, node_data in func_nodes:
-
             slither_func = slither_func_lookup.get(node_id)
 
             # Coordinates: (phase, local_idx)
             # Phase 0: Modifiers PRE  |  Phase 1: Function Body  |  Phase 2: Modifiers POST
-            external_call_events = []   # list of dicts
-            state_write_events = []     # list of (phase, idx)
+            external_call_events = []  # list of dicts
+            state_write_events = []  # list of (phase, idx)
 
             applied_modifiers = node_data.get("modifiers", [])
             contract_name = node_data.get("contract", "")
@@ -188,16 +183,18 @@ class ReentrancyMixin:
                 pre_seg = mod_data.get("pre_segment", {})
                 for call in pre_seg.get("external_calls", []):
                     ct = call["type"]
-                    external_call_events.append({
-                        "phase": 0,
-                        "local_idx": m_idx * 1000 + call["idx"],
-                        "call_type": ct,
-                        "call_desc": call["desc"],
-                        "forwards_gas": call.get("forwards_gas", self._gas_for_call_type(ct)),
-                        "target_expression": call.get("target_expression", call["desc"]),
-                        "return_value_checked": call.get("return_value_checked", True),
-                        "resolved_target": call.get("resolved_target"),
-                    })
+                    external_call_events.append(
+                        {
+                            "phase": 0,
+                            "local_idx": m_idx * 1000 + call["idx"],
+                            "call_type": ct,
+                            "call_desc": call["desc"],
+                            "forwards_gas": call.get("forwards_gas", self._gas_for_call_type(ct)),
+                            "target_expression": call.get("target_expression", call["desc"]),
+                            "return_value_checked": call.get("return_value_checked", True),
+                            "resolved_target": call.get("resolved_target"),
+                        }
+                    )
                 for w_idx in pre_seg.get("direct_writes", []):
                     state_write_events.append((0, m_idx * 1000 + w_idx))
                 for icall in pre_seg.get("internal_calls", []):
@@ -213,16 +210,20 @@ class ReentrancyMixin:
 
                         props = self._resolve_external_call_properties(ir, ir_type, slither_func)
                         if props:
-                            external_call_events.append({
-                                "phase": 1,
-                                "local_idx": idx,
-                                **props,
-                            })
+                            external_call_events.append(
+                                {
+                                    "phase": 1,
+                                    "local_idx": idx,
+                                    **props,
+                                }
+                            )
 
                         if ir_type == "InternalCall":
                             target_func = getattr(ir, "function", None)
                             if target_func:
-                                tc = getattr(target_func, "contract_declarer", None) or getattr(target_func, "contract", None)
+                                tc = getattr(target_func, "contract_declarer", None) or getattr(
+                                    target_func, "contract", None
+                                )
                                 if tc:
                                     tid = f"{tc.name}::{target_func.name}"
                                     td = self.graph.nodes.get(tid, {})
@@ -241,16 +242,18 @@ class ReentrancyMixin:
                 post_seg = mod_data.get("post_segment", {})
                 for call in post_seg.get("external_calls", []):
                     ct = call["type"]
-                    external_call_events.append({
-                        "phase": 2,
-                        "local_idx": m_idx * 1000 + call["idx"],
-                        "call_type": ct,
-                        "call_desc": call["desc"],
-                        "forwards_gas": call.get("forwards_gas", self._gas_for_call_type(ct)),
-                        "target_expression": call.get("target_expression", call["desc"]),
-                        "return_value_checked": call.get("return_value_checked", True),
-                        "resolved_target": call.get("resolved_target"),
-                    })
+                    external_call_events.append(
+                        {
+                            "phase": 2,
+                            "local_idx": m_idx * 1000 + call["idx"],
+                            "call_type": ct,
+                            "call_desc": call["desc"],
+                            "forwards_gas": call.get("forwards_gas", self._gas_for_call_type(ct)),
+                            "target_expression": call.get("target_expression", call["desc"]),
+                            "return_value_checked": call.get("return_value_checked", True),
+                            "resolved_target": call.get("resolved_target"),
+                        }
+                    )
                 for w_idx in post_seg.get("direct_writes", []):
                     state_write_events.append((2, m_idx * 1000 + w_idx))
                 for icall in post_seg.get("internal_calls", []):
@@ -265,13 +268,16 @@ class ReentrancyMixin:
                     target_node_id = resolved
                 else:
                     target_node_id = f"__ext::{node_id}::{ext_call_counter}"
-                    self.graph.add_node(target_node_id,
+                    self.graph.add_node(
+                        target_node_id,
                         type="external_target",
                         target_expression=ev["target_expression"],
                     )
                     ext_call_counter += 1
 
-                self.graph.add_edge(node_id, target_node_id,
+                self.graph.add_edge(
+                    node_id,
+                    target_node_id,
                     relationship="EXTERNAL_CALL",
                     call_type=ev["call_type"],
                     forwards_gas=ev["forwards_gas"],
@@ -292,7 +298,8 @@ class ReentrancyMixin:
                         break
 
             reentrant_events = [
-                ev for ev in external_call_events
+                ev
+                for ev in external_call_events
                 if ev["call_type"] in ("call", "delegatecall") and ev["forwards_gas"] != "2300"
             ]
             if reentrant_events and state_write_events:
@@ -348,12 +355,7 @@ class ReentrancyMixin:
                     has_reentrant_call = True
                     break
 
-            is_risk = (
-                is_reachable
-                and has_reentrant_call
-                and has_state_vars
-                and has_reentrant_violation
-            )
+            is_risk = is_reachable and has_reentrant_call and has_state_vars and has_reentrant_violation
 
             score = 0
             if is_risk:
@@ -361,12 +363,7 @@ class ReentrancyMixin:
                 score += 2 * len(node_data.get("propagated_state_variables", []))
 
             has_any_cei = node_data.get("state_write_after_external_call", False)
-            is_cei_only = (
-                has_any_cei
-                and has_state_vars
-                and node_data.get("makes_external_call", False)
-                and not is_risk
-            )
+            is_cei_only = has_any_cei and has_state_vars and node_data.get("makes_external_call", False) and not is_risk
 
             node_data["reentrancy_risk"] = is_risk
             node_data["reentrancy_risk_score"] = score
@@ -391,9 +388,12 @@ class ReentrancyMixin:
         Attaches:
           - read_only_reentrancy_risk: bool
         """
-        _ACCOUNTING_SENSITIVE_TAGS = frozenset([
-            "ACCOUNTING_CRITICAL", "CAP_CRITICAL",
-        ])
+        _ACCOUNTING_SENSITIVE_TAGS = frozenset(
+            [
+                "ACCOUNTING_CRITICAL",
+                "CAP_CRITICAL",
+            ]
+        )
 
         for node_id, node_data in self.graph.nodes(data=True):
             if node_data.get("type") != "function":
@@ -413,11 +413,20 @@ class ReentrancyMixin:
                     target_expr = str(edge_data.get("target_expression", ""))
                     call_desc = str(edge_data.get("call_desc", ""))
                     # Heuristic: if call name contains view-like patterns
-                    for view_kw in ("getPrice", "getReserve", "totalSupply",
-                                    "balanceOf", "getRate", "exchangeRate",
-                                    "convertToAssets", "convertToShares",
-                                    "previewDeposit", "previewMint",
-                                    "previewWithdraw", "previewRedeem"):
+                    for view_kw in (
+                        "getPrice",
+                        "getReserve",
+                        "totalSupply",
+                        "balanceOf",
+                        "getRate",
+                        "exchangeRate",
+                        "convertToAssets",
+                        "convertToShares",
+                        "previewDeposit",
+                        "previewMint",
+                        "previewWithdraw",
+                        "previewRedeem",
+                    ):
                         if view_kw.lower() in call_desc.lower() or view_kw.lower() in target_expr.lower():
                             has_staticcall = True
                             break
@@ -432,10 +441,12 @@ class ReentrancyMixin:
             writes_sensitive = False
 
             # Check direct flags from _detect_arithmetic_patterns
-            if (node_data.get("writes_total_supply")
-                    or node_data.get("writes_total_assets")
-                    or node_data.get("mints_shares_proportionally")
-                    or node_data.get("updates_reward_index")):
+            if (
+                node_data.get("writes_total_supply")
+                or node_data.get("writes_total_assets")
+                or node_data.get("mints_shares_proportionally")
+                or node_data.get("updates_reward_index")
+            ):
                 writes_sensitive = True
 
             # Check tainted state writes with sensitive tags
@@ -478,11 +489,13 @@ class ReentrancyMixin:
                 if contract_data.get("type") == "contract":
                     for role in contract_data.get("privileged_roles", []):
                         if role.get("underlying_variable") == var_id:
-                            roles_using.append({
-                                "contract": contract_id,
-                                "role": role.get("role_name"),
-                                "modifier": role.get("modifier_name")
-                            })
+                            roles_using.append(
+                                {
+                                    "contract": contract_id,
+                                    "role": role.get("role_name"),
+                                    "modifier": role.get("modifier_name"),
+                                }
+                            )
 
             # Functions modifying this variable (propagated)
             modifying_functions = []
@@ -514,7 +527,7 @@ class ReentrancyMixin:
             is_at_risk = False
             risky_mutators_for_this_var = []
 
-            if roles_using: # Only care if the variable controls a role
+            if roles_using:  # Only care if the variable controls a role
                 for func_id in modifiers:
                     func_data = self.graph.nodes.get(func_id, {})
                     if func_data.get("is_unprotected_mutator", False):

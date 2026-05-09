@@ -9,7 +9,6 @@ from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class FunctionContextTool(Tool):
-
     def name(self) -> str:
         return "get_function_context"
 
@@ -58,7 +57,6 @@ class FunctionContextTool(Tool):
 
 
 class StateMutatorsTool(Tool):
-
     def name(self) -> str:
         return "find_state_mutators"
 
@@ -101,23 +99,18 @@ class StateMutatorsTool(Tool):
             if not mutators:
                 return ToolResult.success(f"No functions write to '{var_name}'.")
             return ToolResult.success(
-                f"Functions that modify '{var_name}':\n"
-                + "\n".join(f"  - {m}" for m in mutators)
+                f"Functions that modify '{var_name}':\n" + "\n".join(f"  - {m}" for m in mutators)
             )
         except Exception as e:
             return ToolResult.error(f"Failed: {e}")
 
 
 class ModifiersTool(Tool):
-
     def name(self) -> str:
         return "get_modifiers"
 
     def description(self) -> str:
-        return (
-            "List all security modifiers applied to a function "
-            "(e.g., onlyOwner, nonReentrant, whenNotPaused)."
-        )
+        return "List all security modifiers applied to a function (e.g., onlyOwner, nonReentrant, whenNotPaused)."
 
     def permission_level(self) -> PermissionLevel:
         return PermissionLevel.NONE
@@ -151,9 +144,6 @@ class ModifiersTool(Tool):
             modifiers = queries.get_modifiers(func_id)
             if not modifiers:
                 return ToolResult.success(f"No modifiers on '{func_id}'.")
-            return ToolResult.success(
-                f"Modifiers on '{func_id}':\n"
-                + "\n".join(f"  - {m}" for m in modifiers)
-            )
+            return ToolResult.success(f"Modifiers on '{func_id}':\n" + "\n".join(f"  - {m}" for m in modifiers))
         except Exception as e:
             return ToolResult.error(f"Failed: {e}")

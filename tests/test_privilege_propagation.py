@@ -4,7 +4,7 @@ import sys
 import pytest
 
 # Add src to sys.path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from analysis_engine import AnalysisEngine
 from src.graph import GraphBuilder
@@ -14,7 +14,7 @@ from utils.graph_queries import GraphQueries
 @pytest.fixture(scope="module")
 def graph_and_queries():
     """Builds the graph once and shares it across all tests in this module."""
-    repo_path = os.path.join(os.getcwd(), 'tests', 'contracts')
+    repo_path = os.path.join(os.getcwd(), "tests", "contracts")
     engine = AnalysisEngine()
     slither_obj = engine.run_analysis(repo_path)
     assert slither_obj is not None, "Analysis failed"
@@ -23,6 +23,7 @@ def graph_and_queries():
     builder.build_graph(slither_obj)
     queries = GraphQueries(builder.graph)
     return builder.graph, queries
+
 
 def test_owner_overwrite_detection(graph_and_queries):
     graph, _ = graph_and_queries
@@ -39,6 +40,7 @@ def test_owner_overwrite_detection(graph_and_queries):
     func_data = graph.nodes[func_id]
     assert func_data.get("can_escalate_privileges") == True
 
+
 def test_admin_poisoning_detection(graph_and_queries):
     graph, _ = graph_and_queries
 
@@ -53,6 +55,7 @@ def test_admin_poisoning_detection(graph_and_queries):
     func_data = graph.nodes[func_id]
     assert func_data.get("can_escalate_privileges") == True
 
+
 def test_boolean_guard_flip_detection(graph_and_queries):
     graph, _ = graph_and_queries
 
@@ -65,6 +68,7 @@ def test_boolean_guard_flip_detection(graph_and_queries):
     func_id = "PrivilegeEscalationTest::resetInitialization"
     func_data = graph.nodes[func_id]
     assert func_data.get("can_escalate_privileges") == True
+
 
 def test_safe_functions_not_flagged(graph_and_queries):
     graph, _ = graph_and_queries
@@ -79,6 +83,7 @@ def test_safe_functions_not_flagged(graph_and_queries):
     func_data = graph.nodes[func_id]
     assert func_data.get("can_escalate_privileges", False) == False
 
+
 def test_query_privilege_escalation(graph_and_queries):
     _, queries = graph_and_queries
     risks = queries.get_privilege_escalation_risks(contract_name="PrivilegeEscalationTest")
@@ -91,6 +96,7 @@ def test_query_privilege_escalation(graph_and_queries):
 
     risky_vars = [v["variable_id"] for v in risks["risky_variables"]]
     assert "PrivilegeEscalationTest::owner" in risky_vars
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

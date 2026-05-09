@@ -16,11 +16,22 @@ from src.ingestion.models import FrameworkInstance
 logger = logging.getLogger(__name__)
 
 # Directories to skip during recursive scanning
-_SKIP_DIRS = frozenset({
-    "node_modules", ".git", ".github", "__pycache__",
-    "coverage", "dist", "build", "out", "cache",
-    "artifacts", ".venv", "venv",
-})
+_SKIP_DIRS = frozenset(
+    {
+        "node_modules",
+        ".git",
+        ".github",
+        "__pycache__",
+        "coverage",
+        "dist",
+        "build",
+        "out",
+        "cache",
+        "artifacts",
+        ".venv",
+        "venv",
+    }
+)
 
 
 class FrameworkDetector:
@@ -70,11 +81,13 @@ class FrameworkDetector:
             fw = FrameworkDetector.detect_at(current_dir)
             if fw:
                 config_file = FrameworkDetector._config_file_for(current_dir, fw)
-                instances.append(FrameworkInstance(
-                    framework=fw,
-                    path=current_dir,
-                    config_file=config_file,
-                ))
+                instances.append(
+                    FrameworkInstance(
+                        framework=fw,
+                        path=current_dir,
+                        config_file=config_file,
+                    )
+                )
                 # Don't recurse into subdirs of a detected framework root —
                 # they belong to this framework's compilation unit.
                 # Exception: we continue if this is the repo root to find nested ones.
@@ -99,9 +112,8 @@ class FrameworkDetector:
         if os.path.exists(toml_path):
             return True
 
-        lib_forge = (
-            os.path.isdir(os.path.join(directory, "lib", "forge-std"))
-            or os.path.isdir(os.path.join(directory, "lib", "solmate"))
+        lib_forge = os.path.isdir(os.path.join(directory, "lib", "forge-std")) or os.path.isdir(
+            os.path.join(directory, "lib", "solmate")
         )
         if not lib_forge:
             return False
@@ -109,7 +121,9 @@ class FrameworkDetector:
         try:
             result = subprocess.run(
                 ["forge", "config", "--basic"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
                 cwd=directory,
             )
             if result.returncode == 0 and result.stdout.strip():
@@ -132,7 +146,9 @@ class FrameworkDetector:
             print(f"  Running forge build in {directory}...")
             result = subprocess.run(
                 ["forge", "build"],
-                capture_output=True, text=True, timeout=300,
+                capture_output=True,
+                text=True,
+                timeout=300,
                 cwd=directory,
             )
             if result.returncode == 0:
@@ -165,7 +181,9 @@ class FrameworkDetector:
                 try:
                     result = subprocess.run(
                         ["npm", "install"],
-                        capture_output=True, text=True, timeout=300,
+                        capture_output=True,
+                        text=True,
+                        timeout=300,
                         cwd=directory,
                     )
                     if result.returncode == 0:
@@ -220,16 +238,16 @@ class FrameworkDetector:
     def _is_foundry(directory: str) -> bool:
         if os.path.exists(os.path.join(directory, "foundry.toml")):
             return True
-        if (os.path.isdir(os.path.join(directory, "lib", "forge-std"))
-                or os.path.isdir(os.path.join(directory, "lib", "solmate"))):
+        if os.path.isdir(os.path.join(directory, "lib", "forge-std")) or os.path.isdir(
+            os.path.join(directory, "lib", "solmate")
+        ):
             return True
         return False
 
     @staticmethod
     def _is_hardhat(directory: str) -> bool:
-        return (
-            os.path.exists(os.path.join(directory, "hardhat.config.js"))
-            or os.path.exists(os.path.join(directory, "hardhat.config.ts"))
+        return os.path.exists(os.path.join(directory, "hardhat.config.js")) or os.path.exists(
+            os.path.join(directory, "hardhat.config.ts")
         )
 
     @staticmethod
@@ -241,7 +259,9 @@ class FrameworkDetector:
         try:
             subprocess.run(
                 ["npm", "--version"],
-                capture_output=True, timeout=5, check=True,
+                capture_output=True,
+                timeout=5,
+                check=True,
             )
             return True
         except Exception:

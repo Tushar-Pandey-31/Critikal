@@ -22,16 +22,18 @@ MAX_CONTENT_BYTES = 500_000  # 500KB
 DEFAULT_TIMEOUT = 30
 
 # Hostnames we never resolve — fast-path block for common internal names.
-_BLOCKED_HOSTNAMES = frozenset({
-    "localhost",
-    "ip6-localhost",
-    "ip6-loopback",
-    "metadata",  # typical cloud metadata shortname
-    "metadata.google.internal",
-    "metadata.goog",
-    "instance-data",
-    "instance-data.ec2.internal",
-})
+_BLOCKED_HOSTNAMES = frozenset(
+    {
+        "localhost",
+        "ip6-localhost",
+        "ip6-loopback",
+        "metadata",  # typical cloud metadata shortname
+        "metadata.google.internal",
+        "metadata.goog",
+        "instance-data",
+        "instance-data.ec2.internal",
+    }
+)
 
 
 def _is_private_ip(addr: str) -> bool:
@@ -42,14 +44,7 @@ def _is_private_ip(addr: str) -> bool:
         return False
     # Catches loopback, link-local, private RFC1918/ULA, multicast,
     # unspecified, reserved ranges.
-    if (
-        ip.is_loopback
-        or ip.is_link_local
-        or ip.is_private
-        or ip.is_multicast
-        or ip.is_unspecified
-        or ip.is_reserved
-    ):
+    if ip.is_loopback or ip.is_link_local or ip.is_private or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
         return True
     # Explicit block: AWS/GCP/Azure IMDS.
     if str(ip) in {"169.254.169.254", "fd00:ec2::254"}:
@@ -94,7 +89,6 @@ def _validate_url_host(host: str) -> str | None:
 
 
 class WebFetchTool(Tool):
-
     def name(self) -> str:
         return "web_fetch"
 
@@ -195,6 +189,7 @@ class WebFetchTool(Tool):
                                     f"HTTP {status} redirect without Location header.",
                                 )
                             from urllib.parse import urljoin
+
                             next_url = urljoin(str(resp.url), location)
                             next_parsed = urlparse(next_url)
                             if next_parsed.scheme not in ("http", "https"):
@@ -203,7 +198,8 @@ class WebFetchTool(Tool):
                                 )
                             if not allow_private:
                                 err = await asyncio.to_thread(
-                                    _validate_url_host, next_parsed.hostname or "",
+                                    _validate_url_host,
+                                    next_parsed.hostname or "",
                                 )
                                 if err:
                                     return ToolResult.error(f"SSRF guard on redirect: {err}")
@@ -257,16 +253,19 @@ class WebFetchTool(Tool):
         # redirects entirely to avoid SSRF via Location headers.
         try:
             proc = await asyncio.create_subprocess_exec(
-                "curl", "-s", "--max-time", str(timeout),
-                "--max-redirs", "0",
-                "-H", "User-Agent: Critikal-Agent/1.0",
+                "curl",
+                "-s",
+                "--max-time",
+                str(timeout),
+                "--max-redirs",
+                "0",
+                "-H",
+                "User-Agent: Critikal-Agent/1.0",
                 url,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout + 5
-            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout + 5)
         except TimeoutError:
             return ToolResult.error(f"curl timed out after {timeout}s.")
         except FileNotFoundError:
@@ -325,6 +324,7 @@ class WebFetchTool(Tool):
         except Exception:
             # Fallback: strip tags with regex
             import re
+
             text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
             text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
             text = re.sub(r"<[^>]+>", " ", text)

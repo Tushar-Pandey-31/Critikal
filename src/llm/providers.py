@@ -78,6 +78,7 @@ def check_provider_credentials(model_name: str) -> tuple[bool, str]:
 
     try:
         from src.utils.key_pool import get_key_pool
+
         key_pool = get_key_pool()
         try:
             if key_pool.get_key(provider):
@@ -138,9 +139,7 @@ def get_worker_llm(
         if not ChatOpenAI:
             raise ImportError("langchain-openai is not installed.")
         clean_model = (
-            model_name.removeprefix("openrouter/")
-            if model_name.lower().startswith("openrouter/")
-            else model_name
+            model_name.removeprefix("openrouter/") if model_name.lower().startswith("openrouter/") else model_name
         )
         llm = ChatOpenAI(
             model=clean_model,

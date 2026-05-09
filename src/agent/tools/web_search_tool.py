@@ -101,8 +101,7 @@ class WebSearchTool(Tool):
             queries = [queries]
         if not objective and not queries:
             return ToolResult.error(
-                "Missing input. Provide 'objective' (natural language) "
-                "or 'queries' (keyword list)."
+                "Missing input. Provide 'objective' (natural language) or 'queries' (keyword list)."
             )
 
         max_results = params.get("max_results", DEFAULT_MAX_RESULTS)
@@ -129,9 +128,7 @@ class WebSearchTool(Tool):
                 "web_search is not configured. Set PARALLEL_API_KEY in .env "
                 "(or set WEB_SEARCH_PROVIDER to a supported backend)."
             )
-        return ToolResult.error(
-            f"Unknown WEB_SEARCH_PROVIDER '{provider}'. Supported: parallel."
-        )
+        return ToolResult.error(f"Unknown WEB_SEARCH_PROVIDER '{provider}'. Supported: parallel.")
 
 
 def _select_provider() -> str:
@@ -156,16 +153,13 @@ async def _search_parallel(
     api_key = os.getenv("PARALLEL_API_KEY")
     if not api_key:
         return ToolResult.error(
-            "PARALLEL_API_KEY is not set. Add it to .env (from "
-            "https://platform.parallel.ai Settings → API Keys)."
+            "PARALLEL_API_KEY is not set. Add it to .env (from https://platform.parallel.ai Settings → API Keys)."
         )
 
     try:
         import aiohttp
     except ImportError:
-        return ToolResult.error(
-            "aiohttp is required for web_search. Run: pip install aiohttp"
-        )
+        return ToolResult.error("aiohttp is required for web_search. Run: pip install aiohttp")
 
     body: dict[str, Any] = {"max_results": max_results}
     if objective:
@@ -189,36 +183,33 @@ async def _search_parallel(
     }
 
     try:
-        async with aiohttp.ClientSession() as session, session.post(
-            PARALLEL_SEARCH_ENDPOINT,
-            json=body,
-            headers=headers,
-            timeout=aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT),
-        ) as resp:
+        async with (
+            aiohttp.ClientSession() as session,
+            session.post(
+                PARALLEL_SEARCH_ENDPOINT,
+                json=body,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT),
+            ) as resp,
+        ):
             status = resp.status
             raw = await resp.text()
 
             if status in (401, 403):
                 return ToolResult.error(
-                    f"Parallel auth failed (HTTP {status}). Check PARALLEL_API_KEY. "
-                    f"Body: {raw[:200]}"
+                    f"Parallel auth failed (HTTP {status}). Check PARALLEL_API_KEY. Body: {raw[:200]}"
                 )
             if status == 429:
                 return ToolResult.error(
-                    f"Parallel rate limit (HTTP 429, 600/min cap). "
-                    f"Retry after a pause. Body: {raw[:200]}"
+                    f"Parallel rate limit (HTTP 429, 600/min cap). Retry after a pause. Body: {raw[:200]}"
                 )
             if status >= 400:
-                return ToolResult.error(
-                    f"Parallel search HTTP {status}. Body: {raw[:400]}"
-                )
+                return ToolResult.error(f"Parallel search HTTP {status}. Body: {raw[:400]}")
 
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError as e:
-                return ToolResult.error(
-                    f"Parallel returned non-JSON: {e}. Body: {raw[:400]}"
-                )
+                return ToolResult.error(f"Parallel returned non-JSON: {e}. Body: {raw[:400]}")
 
     except TimeoutError:
         return ToolResult.error(f"Parallel request timed out after {DEFAULT_TIMEOUT}s.")
@@ -234,11 +225,17 @@ async def _search_parallel(
         if warnings:
             msg += " Warnings: " + "; ".join(str(w) for w in warnings)
         return ToolResult.success(
-            msg, provider="parallel", search_id=search_id, result_count=0,
+            msg,
+            provider="parallel",
+            search_id=search_id,
+            result_count=0,
         )
 
     formatted = _format_parallel_results(
-        results, objective=objective, queries=queries, warnings=warnings,
+        results,
+        objective=objective,
+        queries=queries,
+        warnings=warnings,
     )
     return ToolResult.success(
         formatted,

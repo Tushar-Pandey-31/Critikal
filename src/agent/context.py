@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 @dataclass
 class FileReadState:
     """Tracks a file that was read, for read-before-write enforcement."""
+
     path: str
     mtime: float
     content_hash: str  # SHA256 of content at read time
@@ -89,6 +90,7 @@ class ToolContext:
         """Lazy-load PipelineConfig if not set."""
         if self.config is None:
             from src.pipeline_config import get_config
+
             self.config = get_config()
 
     def has_graph(self) -> bool:
@@ -100,10 +102,13 @@ class ToolContext:
         self.findings.append(finding)
         if self.event_bus:
             from src.agent.events import Event, EventType
-            self.event_bus.emit_sync(Event(
-                type=EventType.FINDING_ADDED,
-                data={"finding_index": len(self.findings) - 1},
-            ))
+
+            self.event_bus.emit_sync(
+                Event(
+                    type=EventType.FINDING_ADDED,
+                    data={"finding_index": len(self.findings) - 1},
+                )
+            )
 
     def record_file_access(self, path: str, action: str = "read"):
         """Track file reads/writes for session history."""
@@ -116,6 +121,7 @@ class ToolContext:
         Register a file read — required before FileEdit/FileWrite can modify it.
         """
         import hashlib
+
         resolved = str(Path(path).resolve())
         if mtime is None:
             try:

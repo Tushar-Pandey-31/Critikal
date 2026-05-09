@@ -80,7 +80,9 @@ class FallbackCompiler:
             framework = FrameworkDetector.detect_at(cluster.root_path)
 
         solc_args, solc_remaps = self._get_compilation_args(
-            cluster.root_path, framework, repo_path,
+            cluster.root_path,
+            framework,
+            repo_path,
         )
 
         # Prepare framework if needed
@@ -114,7 +116,10 @@ class FallbackCompiler:
         # ── Level 1: Subdirectory compilation ─────────────────
         print(f"  [L1] Trying subdirectory compilation for {cluster.cluster_id}...")
         subdir_result = self._compile_subdirs(
-            cluster, framework, solc_args, solc_remaps,
+            cluster,
+            framework,
+            solc_args,
+            solc_remaps,
         )
         if subdir_result and subdir_result.success:
             print(f"  [L1] Success: {subdir_result.contracts_parsed} contracts.")
@@ -123,7 +128,10 @@ class FallbackCompiler:
         # ── Level 2: Import component compilation ─────────────
         print(f"  [L2] Trying import-component compilation for {cluster.cluster_id}...")
         scc_result = self._compile_import_components(
-            cluster, solc_args, solc_remaps, repo_path,
+            cluster,
+            solc_args,
+            solc_remaps,
+            repo_path,
         )
         if scc_result and scc_result.success:
             print(f"  [L2] Success: {scc_result.contracts_parsed} contracts.")
@@ -131,21 +139,17 @@ class FallbackCompiler:
 
         # ── Level 3: Per-file fallback ────────────────────────
         if len(cluster.sol_files) <= _PER_FILE_MAX:
-            print(
-                f"  [L3] Trying per-file fallback for {cluster.cluster_id} "
-                f"({len(cluster.sol_files)} files)..."
-            )
+            print(f"  [L3] Trying per-file fallback for {cluster.cluster_id} ({len(cluster.sol_files)} files)...")
             per_file_result = self._compile_per_file(
-                cluster, solc_args, solc_remaps,
+                cluster,
+                solc_args,
+                solc_remaps,
             )
             if per_file_result and per_file_result.success:
                 print(f"  [L3] Success: {per_file_result.contracts_parsed} contracts.")
                 return per_file_result
         else:
-            print(
-                f"  [L3] Skipping per-file fallback: "
-                f"{len(cluster.sol_files)} files exceeds limit ({_PER_FILE_MAX})."
-            )
+            print(f"  [L3] Skipping per-file fallback: {len(cluster.sol_files)} files exceeds limit ({_PER_FILE_MAX}).")
 
         # All levels failed
         return ClusterResult(
@@ -219,14 +223,11 @@ class FallbackCompiler:
             for entry in os.scandir(root):
                 if not entry.is_dir():
                     continue
-                if entry.name.lower() in ("lib", "node_modules", "test", "tests",
-                                           ".git", "build", "out", "cache"):
+                if entry.name.lower() in ("lib", "node_modules", "test", "tests", ".git", "build", "out", "cache"):
                     continue
                 # Check if this subdir has .sol files
                 has_sol = any(
-                    f.endswith(".sol")
-                    for f in os.listdir(entry.path)
-                    if os.path.isfile(os.path.join(entry.path, f))
+                    f.endswith(".sol") for f in os.listdir(entry.path) if os.path.isfile(os.path.join(entry.path, f))
                 )
                 if has_sol:
                     subdirs_with_sol.append(entry.path)
@@ -280,7 +281,8 @@ class FallbackCompiler:
         remappings = ImportResolver.collect_remappings(cluster.root_path)
         resolver = ImportResolver(remappings=remappings)
         import_graph = resolver.build_import_graph(
-            cluster.sol_files, base_dir=cluster.root_path,
+            cluster.sol_files,
+            base_dir=cluster.root_path,
         )
         components = resolver.find_connected_components(import_graph)
 
@@ -357,9 +359,7 @@ class FallbackCompiler:
                 success_count += 1
 
         if combined:
-            print(
-                f"  Per-file compilation: {success_count}/{total} files succeeded."
-            )
+            print(f"  Per-file compilation: {success_count}/{total} files succeeded.")
             return ClusterResult(
                 cluster_id=cluster.cluster_id,
                 success=True,

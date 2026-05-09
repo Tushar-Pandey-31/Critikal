@@ -14,7 +14,6 @@ from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class SemanticDiscoveryTool(Tool):
-
     def name(self) -> str:
         return "run_semantic_analysis"
 
@@ -214,8 +213,7 @@ class SemanticDiscoveryTool(Tool):
                     continue
                 # Filename fallback — match `<Name>.sol`, skipping
                 # test/mock/lib noise.
-                exclude = {"test", "tests", "mock", "mocks", "lib",
-                           "node_modules", "script", "scripts"}
+                exclude = {"test", "tests", "mock", "mocks", "lib", "node_modules", "script", "scripts"}
                 matches: list[str] = []
                 for root, dirs, files_in_dir in os.walk(repo_path):
                     dirs[:] = [d for d in dirs if d.lower() not in exclude]

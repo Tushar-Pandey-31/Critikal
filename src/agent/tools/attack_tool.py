@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 
 class AttackAnalysisTool(Tool):
-
     def name(self) -> str:
         return "run_attack_analysis"
 
@@ -96,7 +95,10 @@ class AttackAnalysisTool(Tool):
         include_assumption = params.get("include_assumption", True) and config.assumption_worker_enabled
         if include_assumption:
             from src.pipeline.workers.assumption_worker import AssumptionWorker
-            assumption_model = os.getenv("ASSUMPTION_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "grok-4-1-fast-reasoning"))
+
+            assumption_model = os.getenv(
+                "ASSUMPTION_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "grok-4-1-fast-reasoning")
+            )
             assumption_llm = get_worker_llm(model_name=assumption_model)
             assumption_worker = AssumptionWorker(graph=ctx.graph, llm_client=assumption_llm)
 
@@ -106,6 +108,7 @@ class AttackAnalysisTool(Tool):
         if include_exec and exec_enabled:
             try:
                 from src.pipeline.workers.execution_trace_worker import ExecutionTraceWorker
+
                 exec_model = os.getenv("EXECUTION_TRACE_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gpt-5.4-mini"))
                 exec_llm = get_worker_llm(model_name=exec_model)
                 execution_trace_worker = ExecutionTraceWorker(graph=ctx.graph, llm_client=exec_llm)
@@ -127,27 +130,35 @@ class AttackAnalysisTool(Tool):
             for h in hotspots
         ]
 
-        assumption_tasks = [
-            WorkerTask(
-                task_id=f"assumption_{h.node_id}",
-                task_type="assumption_analysis",
-                hotspot=h,
-                context={},
-                budget_tokens=_budget(h.priority),
-            )
-            for h in hotspots
-        ] if assumption_worker else []
+        assumption_tasks = (
+            [
+                WorkerTask(
+                    task_id=f"assumption_{h.node_id}",
+                    task_type="assumption_analysis",
+                    hotspot=h,
+                    context={},
+                    budget_tokens=_budget(h.priority),
+                )
+                for h in hotspots
+            ]
+            if assumption_worker
+            else []
+        )
 
-        exec_tasks = [
-            WorkerTask(
-                task_id=f"exec_trace_{h.node_id}",
-                task_type="execution_trace",
-                hotspot=h,
-                context={},
-                budget_tokens=_budget(h.priority),
-            )
-            for h in hotspots
-        ] if execution_trace_worker else []
+        exec_tasks = (
+            [
+                WorkerTask(
+                    task_id=f"exec_trace_{h.node_id}",
+                    task_type="execution_trace",
+                    hotspot=h,
+                    context={},
+                    budget_tokens=_budget(h.priority),
+                )
+                for h in hotspots
+            ]
+            if execution_trace_worker
+            else []
+        )
 
         # Run all in parallel with semaphore
         concurrency = int(os.getenv("ATTACK_WORKER_CONCURRENCY", "15"))
@@ -176,8 +187,8 @@ class AttackAnalysisTool(Tool):
         n_attack = len(attack_tasks)
         n_assumption = len(assumption_tasks)
         attack_outputs = all_outputs[:n_attack]
-        assumption_outputs = all_outputs[n_attack:n_attack + n_assumption]
-        exec_outputs = all_outputs[n_attack + n_assumption:]
+        assumption_outputs = all_outputs[n_attack : n_attack + n_assumption]
+        exec_outputs = all_outputs[n_attack + n_assumption :]
 
         # Convert to Findings
         attack_conf_floor = int(os.getenv("ATTACK_CONFIDENCE_FLOOR", "50"))
@@ -196,7 +207,8 @@ class AttackAnalysisTool(Tool):
                 if conf >= floor:
                     finding = Finding.from_worker_output(output, hotspot)
                     finding.contribute_score(
-                        f"{worker_type}_worker", conf // 3,
+                        f"{worker_type}_worker",
+                        conf // 3,
                         f"{worker_type} confidence {conf}",
                     )
                     ctx.add_finding(finding)
@@ -205,7 +217,8 @@ class AttackAnalysisTool(Tool):
                     finding = Finding.from_worker_output(output, hotspot)
                     finding.is_speculative = True
                     finding.contribute_score(
-                        f"{worker_type}_worker", conf // 5,
+                        f"{worker_type}_worker",
+                        conf // 5,
                         f"speculative {worker_type} confidence {conf}",
                     )
                     ctx.add_finding(finding)

@@ -22,15 +22,27 @@ pragma solidity ^0.8.0;
 
 _SKIP_NAMES = frozenset({"constructor", "fallback", "receive", "slitherConstructorVariables"})
 
-_UINT_RE = re.compile(r'\buint\b(?!\d)')
-_INT_RE = re.compile(r'\bint\b(?!\d)')
+_UINT_RE = re.compile(r"\buint\b(?!\d)")
+_INT_RE = re.compile(r"\bint\b(?!\d)")
 
-_SOLIDITY_PRIMITIVES = frozenset({
-    "address", "bool", "string", "bytes",
-    "bytes1", "bytes2", "bytes3", "bytes4", "bytes8", "bytes16", "bytes20", "bytes32",
-    *(f"uint{n}" for n in range(8, 257, 8)),
-    *(f"int{n}" for n in range(8, 257, 8)),
-})
+_SOLIDITY_PRIMITIVES = frozenset(
+    {
+        "address",
+        "bool",
+        "string",
+        "bytes",
+        "bytes1",
+        "bytes2",
+        "bytes3",
+        "bytes4",
+        "bytes8",
+        "bytes16",
+        "bytes20",
+        "bytes32",
+        *(f"uint{n}" for n in range(8, 257, 8)),
+        *(f"int{n}" for n in range(8, 257, 8)),
+    }
+)
 
 
 _REFERENCE_TYPES = frozenset({"string", "bytes"})
@@ -72,7 +84,7 @@ def _parse_signature(sig: str) -> tuple[str, list[str]] | None:
     Parse 'funcName(type1,type2)' into ('funcName', ['type1', 'type2']).
     Returns None if unparseable.
     """
-    m = re.match(r'^(\w+)\(([^)]*)\)$', sig.strip())
+    m = re.match(r"^(\w+)\(([^)]*)\)$", sig.strip())
     if not m:
         return None
     name = m.group(1)
@@ -163,9 +175,7 @@ def _build_interface(
             if "is_payable" not in node_data:
                 is_payable = True
 
-        params_str = ", ".join(
-            f"{_sanitize_type(t)} arg{i}" for i, t in enumerate(param_types)
-        )
+        params_str = ", ".join(f"{_sanitize_type(t)} arg{i}" for i, t in enumerate(param_types))
 
         # Build the function line with payable if needed
         payable_kw = " payable" if (is_payable and not mutability) else ""
@@ -180,30 +190,27 @@ def _build_interface(
     return header + "\n" + "\n".join(fn_lines) + "\n" + footer
 
 
-def resolve_deploy_code_path(contract_name: str, repo_manifest: list[str], real_sources: dict[str, str] | None = None) -> str:
+def resolve_deploy_code_path(
+    contract_name: str, repo_manifest: list[str], real_sources: dict[str, str] | None = None
+) -> str:
     """
     Resolve the correct artifact path for Foundry's deployCode() cheatcode.
 
     deployCode() takes "path/to/File.sol:ContractName" style paths.
     Search repo_manifest for .sol files likely containing the contract.
     """
-    exact_matches = [
-        f for f in repo_manifest
-        if f.endswith(f"/{contract_name}.sol") or f == f"{contract_name}.sol"
-    ]
+    exact_matches = [f for f in repo_manifest if f.endswith(f"/{contract_name}.sol") or f == f"{contract_name}.sol"]
     if exact_matches:
         return f"{sorted(exact_matches, key=len)[0]}:{contract_name}"
 
-    fuzzy_matches = [
-        f for f in repo_manifest
-        if f.endswith(".sol") and contract_name.lower() in f.lower()
-    ]
+    fuzzy_matches = [f for f in repo_manifest if f.endswith(".sol") and contract_name.lower() in f.lower()]
     if fuzzy_matches:
         return f"{sorted(fuzzy_matches, key=len)[0]}:{contract_name}"
 
     if real_sources:
         import re
-        pattern = re.compile(rf'\b(?:contract|library|interface)\s+{contract_name}\b')
+
+        pattern = re.compile(rf"\b(?:contract|library|interface)\s+{contract_name}\b")
         for path, code in real_sources.items():
             if pattern.search(code):
                 return f"{path}:{contract_name}"

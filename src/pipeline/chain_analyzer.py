@@ -20,44 +20,89 @@ logger = logging.getLogger(__name__)
 
 # ── Chain Hypothesis dataclass ───────────────────────────────────
 
+
 @dataclass
 class ChainHypothesis:
     """A multi-step exploit chain linking two findings."""
-    chain_id: str                   # CH-01, CH-02, ...
-    enabler_finding: Finding        # Finding B: creates the precondition
-    blocked_finding: Finding        # Finding A: needs the precondition
-    match_type: str                 # STATE / ACCESS / TIMING / BALANCE
-    match_strength: str             # STRONG / MODERATE / WEAK
-    matched_postcondition: str      # What B creates
-    matched_precondition: str       # What A needs
+
+    chain_id: str  # CH-01, CH-02, ...
+    enabler_finding: Finding  # Finding B: creates the precondition
+    blocked_finding: Finding  # Finding A: needs the precondition
+    match_type: str  # STATE / ACCESS / TIMING / BALANCE
+    match_strength: str  # STRONG / MODERATE / WEAK
+    matched_postcondition: str  # What B creates
+    matched_precondition: str  # What A needs
     combined_attack_steps: list[str] = field(default_factory=list)
-    chain_severity: str = ""        # Upgraded severity
-    enabler_actor: str = ""         # Admin / Keeper / Victim / Protocol / Attacker
+    chain_severity: str = ""  # Upgraded severity
+    enabler_actor: str = ""  # Admin / Keeper / Victim / Protocol / Attacker
 
 
 # ── Matching keywords by type ────────────────────────────────────
 
 _STATE_KEYWORDS = [
-    "balance", "supply", "totalSupply", "shares", "debt",
-    "allowance", "approved", "owner", "admin", "paused",
-    "initialized", "locked", "nonce", "rate", "price",
-    "reserve", "collateral", "liquidit", "stake", "reward",
+    "balance",
+    "supply",
+    "totalSupply",
+    "shares",
+    "debt",
+    "allowance",
+    "approved",
+    "owner",
+    "admin",
+    "paused",
+    "initialized",
+    "locked",
+    "nonce",
+    "rate",
+    "price",
+    "reserve",
+    "collateral",
+    "liquidit",
+    "stake",
+    "reward",
 ]
 
 _ACCESS_KEYWORDS = [
-    "owner", "admin", "role", "permission", "auth",
-    "access", "privilege", "operator", "minter", "governance",
-    "controller", "manager", "guardian",
+    "owner",
+    "admin",
+    "role",
+    "permission",
+    "auth",
+    "access",
+    "privilege",
+    "operator",
+    "minter",
+    "governance",
+    "controller",
+    "manager",
+    "guardian",
 ]
 
 _TIMING_KEYWORDS = [
-    "block", "timestamp", "time", "delay", "cooldown",
-    "timelock", "deadline", "expir", "epoch", "period",
+    "block",
+    "timestamp",
+    "time",
+    "delay",
+    "cooldown",
+    "timelock",
+    "deadline",
+    "expir",
+    "epoch",
+    "period",
 ]
 
 _BALANCE_KEYWORDS = [
-    "balance", "fund", "token", "ether", "eth", "amount",
-    "value", "deposit", "withdraw", "transfer", "flash",
+    "balance",
+    "fund",
+    "token",
+    "ether",
+    "eth",
+    "amount",
+    "value",
+    "deposit",
+    "withdraw",
+    "transfer",
+    "flash",
 ]
 
 # ── Actor Classification Keywords ────────────────────────────────
@@ -84,6 +129,7 @@ def _classify_actor(enabler: Finding) -> str:
         return best_match
     return "Attacker"
 
+
 def _classify_match_type(postcondition: str, precondition: str) -> str:
     """Classify the type of match based on keyword analysis."""
     combined = (postcondition + " " + precondition).lower()
@@ -98,10 +144,26 @@ def _classify_match_type(postcondition: str, precondition: str) -> str:
 
 
 _CHAIN_STOPWORDS = {
-    "balance", "amount", "transfer", "update", "storage",
-    "contract", "function", "state", "value", "token",
-    "address", "caller", "uint256", "require", "internal",
-    "external", "memory", "returns", "public", "private",
+    "balance",
+    "amount",
+    "transfer",
+    "update",
+    "storage",
+    "contract",
+    "function",
+    "state",
+    "value",
+    "token",
+    "address",
+    "caller",
+    "uint256",
+    "require",
+    "internal",
+    "external",
+    "memory",
+    "returns",
+    "public",
+    "private",
 }
 
 
@@ -118,8 +180,7 @@ def _compute_match_strength(
     # STRONG: same contract or shared variable names
     if enabler.affected_contract == blocked.affected_contract:
         # Same contract — state changes are directly visible
-        if any(word in post_lower for word in pre_lower.split()
-               if len(word) > 3 and word not in _CHAIN_STOPWORDS):
+        if any(word in post_lower for word in pre_lower.split() if len(word) > 3 and word not in _CHAIN_STOPWORDS):
             return "STRONG"
 
     # Check for overlapping key terms (3+ character words, excluding stopwords)
@@ -182,6 +243,7 @@ def _chain_severity(
 
 # ── Main Analysis Engine ─────────────────────────────────────────
 
+
 def run_chain_analysis(findings: list[Finding]) -> list[ChainHypothesis]:
     """
     Run deterministic chain analysis on all findings.
@@ -194,17 +256,10 @@ def run_chain_analysis(findings: list[Finding]) -> list[ChainHypothesis]:
         return []
 
     # Collect findings with postconditions (potential enablers)
-    enablers = [
-        f for f in findings
-        if f.postconditions
-        and f.verdict not in (FindingVerdict.REFUTED, "REFUTED")
-    ]
+    enablers = [f for f in findings if f.postconditions and f.verdict not in (FindingVerdict.REFUTED, "REFUTED")]
 
     # Collect findings with missing preconditions (potentially blocked)
-    blocked = [
-        f for f in findings
-        if f.preconditions_missing
-    ]
+    blocked = [f for f in findings if f.preconditions_missing]
 
     if not enablers or not blocked:
         print("[Chain] No enabler/blocked pairs found — skipping chain analysis.")
@@ -223,9 +278,7 @@ def run_chain_analysis(findings: list[Finding]) -> list[ChainHypothesis]:
                     continue
 
                 for postcond in enabler_finding.postconditions:
-                    strength = _compute_match_strength(
-                        postcond, missing_pre, enabler_finding, blocked_finding
-                    )
+                    strength = _compute_match_strength(postcond, missing_pre, enabler_finding, blocked_finding)
 
                     # Only create chains for non-WEAK matches
                     if strength == "WEAK":
@@ -251,9 +304,7 @@ def run_chain_analysis(findings: list[Finding]) -> list[ChainHypothesis]:
                     ]
                     for step in blocked_path:
                         combined_steps.append(f"[EXPLOIT] {step}")
-                    combined_steps.append(
-                        f"[IMPACT] {blocked_finding.impact or 'Combined exploit impact'}"
-                    )
+                    combined_steps.append(f"[IMPACT] {blocked_finding.impact or 'Combined exploit impact'}")
 
                     severity = _chain_severity(
                         enabler_finding.severity_estimate,
@@ -341,9 +392,12 @@ def apply_chain_severity_upgrades(findings: list[Finding]) -> None:
 
         # Only upgrade severity for confirmed/partial findings
         if finding.verdict not in (
-            FindingVerdict.CONFIRMED, "CONFIRMED",
-            FindingVerdict.PARTIAL, "PARTIAL",
-            FindingVerdict.CONTESTED, "CONTESTED",
+            FindingVerdict.CONFIRMED,
+            "CONFIRMED",
+            FindingVerdict.PARTIAL,
+            "PARTIAL",
+            FindingVerdict.CONTESTED,
+            "CONTESTED",
         ):
             logger.info(
                 f"[Chain] Skipping severity upgrade for {finding.affected_contract}::"
@@ -352,8 +406,17 @@ def apply_chain_severity_upgrades(findings: list[Finding]) -> None:
             continue
 
         # Skip upgrade if finding has unmet privilege preconditions
-        _privilege_keywords = ["admin", "router", "owner", "compromise", "malicious",
-                               "privileged", "operator", "governance", "multisig"]
+        _privilege_keywords = [
+            "admin",
+            "router",
+            "owner",
+            "compromise",
+            "malicious",
+            "privileged",
+            "operator",
+            "governance",
+            "multisig",
+        ]
         if finding.preconditions_missing:
             _pre_text = " ".join(finding.preconditions_missing).lower()
             if any(kw in _pre_text for kw in _privilege_keywords):
@@ -371,4 +434,3 @@ def apply_chain_severity_upgrades(findings: list[Finding]) -> None:
             f"[Chain] Post-jury severity upgrade: {finding.affected_contract}::"
             f"{finding.affected_function}: {original} → {new_severity}"
         )
-

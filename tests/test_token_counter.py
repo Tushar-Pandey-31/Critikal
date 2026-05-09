@@ -26,8 +26,10 @@ class TestTokenCounterBasic:
     def test_record_and_get_summary(self):
         tc = get_token_counter()
         tc.record(
-            "TestAgent", "gemini-3-flash-preview",
-            "Hello world prompt", "Response text",
+            "TestAgent",
+            "gemini-3-flash-preview",
+            "Hello world prompt",
+            "Response text",
         )
         summary = tc.get_summary()
 
@@ -101,8 +103,8 @@ class TestTokenCounterMetadata:
         tc.record("AgentA", "gemini-3-flash-preview", "x" * 400, "y" * 200, None)
 
         agent = tc.get_summary()["agents"][0]
-        assert agent["input_tokens"] == 100   # 400 / 4
-        assert agent["output_tokens"] == 50   # 200 / 4
+        assert agent["input_tokens"] == 100  # 400 / 4
+        assert agent["output_tokens"] == 50  # 200 / 4
 
     def test_cost_estimation(self):
         tc = get_token_counter()

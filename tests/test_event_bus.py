@@ -10,7 +10,6 @@ from src.agent.events import Event, EventBus, EventType
 
 
 class TestEvent:
-
     def test_event_construction(self):
         event = Event(type=EventType.TOOL_START, data={"tool": "bash"})
         assert event.type == EventType.TOOL_START
@@ -32,7 +31,6 @@ class TestEvent:
 
 
 class TestEventBus:
-
     @pytest.mark.asyncio
     async def test_emit_and_receive(self):
         bus = EventBus()

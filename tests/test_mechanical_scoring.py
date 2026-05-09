@@ -21,6 +21,7 @@ def _make_finding(tags: list[str], rag_conf=0, cons_conf=0, llm_conf=70) -> Find
         confidence_rag_match=rag_conf,
     )
 
+
 class TestMechanicalScoring:
     def test_poc_pass_gives_high_evidence_score(self):
         f = _make_finding(tags=["[POC-PASS]"], llm_conf=0)
@@ -41,12 +42,7 @@ class TestMechanicalScoring:
         assert f.compute_mechanical_confidence() == 62
 
     def test_composite_formula_correct(self):
-        f = _make_finding(
-            tags=["[PROD-ONCHAIN]", "[RAG-MATCH]"],
-            rag_conf=100,
-            cons_conf=100,
-            llm_conf=100
-        )
+        f = _make_finding(tags=["[PROD-ONCHAIN]", "[RAG-MATCH]"], rag_conf=100, cons_conf=100, llm_conf=100)
         # PROD-ONCHAIN weight is 1.0 (RAG no longer in formula)
         # score = 1.0*0.40 + 1.0*0.30 + 1.0*0.30 = 1.0 -> 100
         assert f.compute_mechanical_confidence() == 100

@@ -59,7 +59,7 @@ def search_security_knowledge(query: str) -> str:
         results = vector_db.similarity_search(query, k=3)
         response = "Security Knowledge Results:\n"
         for doc in results:
-            source = doc.metadata.get('source', 'Unknown')
+            source = doc.metadata.get("source", "Unknown")
             response += f"---\nSource: {source}\nContent: {doc.page_content[:500]}...\n"
         return response
     except Exception as e:
@@ -69,6 +69,7 @@ def search_security_knowledge(query: str) -> str:
 # ────────────────────────────────────────────────────────────
 #  Coordinator Tools (summary-level, used by Lead Agent)
 # ────────────────────────────────────────────────────────────
+
 
 def create_coordinator_tools(graph: nx.DiGraph) -> list[StructuredTool]:
     """
@@ -121,7 +122,7 @@ def create_coordinator_tools(graph: nx.DiGraph) -> list[StructuredTool]:
                 "escalation_risky_variables": len(escalation.get("risky_variables", [])),
                 "external_call_count": len(external_calls),
                 "hotspot_count": len(hotspots),
-            }
+            },
         }
 
     return [get_high_risk_hotspots, search_security_knowledge]
@@ -130,6 +131,7 @@ def create_coordinator_tools(graph: nx.DiGraph) -> list[StructuredTool]:
 # ────────────────────────────────────────────────────────────
 #  Worker Tools (detailed graph queries, used by specialists)
 # ────────────────────────────────────────────────────────────
+
 
 def create_graph_tools(graph: nx.DiGraph) -> list[StructuredTool]:
     """

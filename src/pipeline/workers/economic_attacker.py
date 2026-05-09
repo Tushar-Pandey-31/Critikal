@@ -147,7 +147,10 @@ class EconomicAttackerWorker(WorkerAgent):
 
         messages = [
             {"role": "system", "content": ECONOMIC_ATTACKER_SYSTEM_PROMPT},
-            {"role": "user", "content": f"## Protocol Context\nProtocol type: {protocol_type}\n\n## Source Code\n```solidity\n{source_text}\n```\n\nAnalyze the above contracts for economic attack vectors. Return JSON."},
+            {
+                "role": "user",
+                "content": f"## Protocol Context\nProtocol type: {protocol_type}\n\n## Source Code\n```solidity\n{source_text}\n```\n\nAnalyze the above contracts for economic attack vectors. Return JSON.",
+            },
         ]
 
         try:
@@ -157,9 +160,7 @@ class EconomicAttackerWorker(WorkerAgent):
             )
             content = response.content if hasattr(response, "content") else str(response)
             if isinstance(content, list):
-                content = "".join(
-                    c.get("text", "") if isinstance(c, dict) else str(c) for c in content
-                )
+                content = "".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in content)
             return self._parse_response(content, task.task_id)
         except TimeoutError:
             logger.warning("[EconomicAttacker] LLM timed out")
@@ -199,14 +200,17 @@ class EconomicAttackerWorker(WorkerAgent):
 
             if not findings_list:
                 return WorkerOutput(
-                    worker_type=self.get_worker_type(), task_id=task_id,
-                    hypothesis="No economic attack vectors found.", confidence=0,
+                    worker_type=self.get_worker_type(),
+                    task_id=task_id,
+                    hypothesis="No economic attack vectors found.",
+                    confidence=0,
                     raw_output=parsed,
                 )
 
             best = max(findings_list, key=lambda f: f.get("confidence", 0))
             return WorkerOutput(
-                worker_type=self.get_worker_type(), task_id=task_id,
+                worker_type=self.get_worker_type(),
+                task_id=task_id,
                 hypothesis=best.get("hypothesis", ""),
                 confidence=min(100, max(0, int(best.get("confidence", 50)))),
                 attack_path=best.get("attack_path", []),
@@ -224,5 +228,7 @@ class EconomicAttackerWorker(WorkerAgent):
         except Exception as e:
             logger.warning(f"[EconomicAttacker] Parse error: {e}")
             return WorkerOutput(
-                worker_type=self.get_worker_type(), task_id=task_id, confidence=0,
+                worker_type=self.get_worker_type(),
+                task_id=task_id,
+                confidence=0,
             )

@@ -27,11 +27,11 @@ logger = logging.getLogger(__name__)
 # Matches: import {Foo} from "path/to/File.sol";
 # Matches: import "path/to/File.sol" as Alias;
 _IMPORT_RE = re.compile(
-    r'''import\s+(?:'''
-    r'''\{[^}]*\}\s+from\s+)?'''       # optional {Foo, Bar} from
-    r'''["']([^"']+)["']'''             # "path/to/File.sol"
-    r'''(?:\s+as\s+\w+)?'''             # optional as Alias
-    r'''\s*;''',
+    r"""import\s+(?:"""
+    r"""\{[^}]*\}\s+from\s+)?"""  # optional {Foo, Bar} from
+    r"""["']([^"']+)["']"""  # "path/to/File.sol"
+    r"""(?:\s+as\s+\w+)?"""  # optional as Alias
+    r"""\s*;""",
     re.MULTILINE,
 )
 
@@ -64,7 +64,7 @@ class ImportResolver:
         (before remapping resolution).
         """
         try:
-            with open(sol_file, encoding='utf-8', errors='replace') as f:
+            with open(sol_file, encoding="utf-8", errors="replace") as f:
                 content = f.read()
         except Exception as e:
             logger.warning(f"Could not read {sol_file}: {e}")
@@ -94,7 +94,7 @@ class ImportResolver:
         resolved = import_path
         for prefix, target in self.remappings.items():
             if resolved.startswith(prefix):
-                resolved = target + resolved[len(prefix):]
+                resolved = target + resolved[len(prefix) :]
                 break
 
         # Step 2: Try relative to importing file's directory
@@ -179,16 +179,10 @@ class ImportResolver:
         circular = self._find_cycles(import_graph)
 
         # Unresolvable remappings
-        unresolvable = [
-            f"{os.path.basename(f)}: {imp}"
-            for f, imp in getattr(self, '_unresolvable', [])
-        ]
+        unresolvable = [f"{os.path.basename(f)}: {imp}" for f, imp in getattr(self, "_unresolvable", [])]
 
         if unresolvable:
-            warnings.append(
-                f"{len(unresolvable)} import(s) could not be resolved "
-                f"(may be library dependencies)."
-            )
+            warnings.append(f"{len(unresolvable)} import(s) could not be resolved (may be library dependencies).")
 
         valid = len(missing) == 0  # Circular imports are warnings, not blockers
 
@@ -314,7 +308,7 @@ class ImportResolver:
                 if stripped.startswith("remappings"):
                     in_remappings = True
                     # Handle inline: remappings = ["@oz/=lib/oz/"]
-                    bracket_content = re.search(r'\[([^\]]+)\]', stripped)
+                    bracket_content = re.search(r"\[([^\]]+)\]", stripped)
                     if bracket_content:
                         for entry in bracket_content.group(1).split(","):
                             entry = entry.strip().strip('"').strip("'")

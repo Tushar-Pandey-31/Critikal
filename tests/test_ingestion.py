@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from repo_manager import RepoManager
 
@@ -38,9 +38,9 @@ def test_ingestion():
         # Some templates might not have it in lib immediately or use git submodules differently
         # Let's check config or just existence of lib
         if os.path.exists(os.path.join(repo_path, "lib")):
-             print("PASS: Lib directory exists")
+            print("PASS: Lib directory exists")
         else:
-             print("FAIL: Foundry dependencies not found")
+            print("FAIL: Foundry dependencies not found")
 
     print("Testing Slither analysis...")
     try:
@@ -52,6 +52,7 @@ def test_ingestion():
         # Check if failure is due to missing solc version (which solc-select might handle if configured)
         # But we installed solc-select and 0.8.20. The template might use a different version.
         pass
+
 
 if __name__ == "__main__":
     test_ingestion()

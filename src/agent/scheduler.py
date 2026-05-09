@@ -21,10 +21,12 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEDULES_PATH = Path(os.getenv(
-    "CRITIKAL_SCHEDULES_FILE",
-    os.path.expanduser("~/.critikal/schedules.json"),
-))
+SCHEDULES_PATH = Path(
+    os.getenv(
+        "CRITIKAL_SCHEDULES_FILE",
+        os.path.expanduser("~/.critikal/schedules.json"),
+    )
+)
 
 
 @dataclass
@@ -139,10 +141,7 @@ class CronScheduler:
             from apscheduler.schedulers.asyncio import AsyncIOScheduler
             from apscheduler.triggers.cron import CronTrigger
         except ImportError:
-            logger.error(
-                "[scheduler] APScheduler not installed. "
-                "Install with: poetry add apscheduler"
-            )
+            logger.error("[scheduler] APScheduler not installed. Install with: poetry add apscheduler")
             return
 
         self._scheduler = AsyncIOScheduler()

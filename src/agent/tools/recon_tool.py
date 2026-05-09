@@ -12,7 +12,6 @@ from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class ReconTool(Tool):
-
     def name(self) -> str:
         return "run_recon"
 
@@ -52,6 +51,7 @@ class ReconTool(Tool):
         etherscan = None
         if ctx.config.etherscan_enabled:
             from src.tools.etherscan_client import EtherscanClient
+
             etherscan = EtherscanClient()
 
         recon_worker = ReconWorker(
@@ -81,9 +81,7 @@ class ReconTool(Tool):
 
         # Build summary
         protocol_type = output.raw_output.get("protocol_classification", {}).get("type", "unknown")
-        prior_exploits = output.raw_output.get("onchain_risk_signals", {}).get(
-            "previous_exploits_detected", False
-        )
+        prior_exploits = output.raw_output.get("onchain_risk_signals", {}).get("previous_exploits_detected", False)
         intel_sources = [k for k, v in output.raw_output.items() if v]
 
         summary = (

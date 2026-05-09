@@ -11,7 +11,6 @@ from src.agent.tools import get_agent_tools, get_all_tools, get_generic_tools, g
 
 
 class TestToolRegistry:
-
     def test_get_all_tools_returns_list(self):
         tools = get_all_tools()
         assert isinstance(tools, list)
@@ -44,16 +43,14 @@ class TestToolRegistry:
         valid_levels = set(PermissionLevel)
         for tool in get_all_tools():
             level = tool.permission_level()
-            assert level in valid_levels, \
-                f"{tool.name()}: invalid permission level {level}"
+            assert level in valid_levels, f"{tool.name()}: invalid permission level {level}"
 
     def test_all_tools_have_valid_json_schema(self):
         for tool in get_all_tools():
             schema = tool.input_schema()
             assert isinstance(schema, dict), f"{tool.name()}: schema must be dict"
             assert "type" in schema, f"{tool.name()}: schema missing 'type'"
-            assert schema["type"] == "object", \
-                f"{tool.name()}: schema type must be 'object', got '{schema['type']}'"
+            assert schema["type"] == "object", f"{tool.name()}: schema type must be 'object', got '{schema['type']}'"
 
     def test_to_llm_schema_format(self):
         for tool in get_all_tools():
@@ -88,7 +85,6 @@ class TestToolRegistry:
 
 
 class TestToolAvailability:
-
     def test_tools_available_by_default_in_empty_context(self):
         """Most tools should be available even before any analysis."""
         from src.agent.context import ToolContext
@@ -101,8 +97,7 @@ class TestToolAvailability:
         available_names = {t.name() for t in all_tools if t.is_available(ctx)}
 
         for name in always_available:
-            assert name in available_names, \
-                f"'{name}' should be available in empty context"
+            assert name in available_names, f"'{name}' should be available in empty context"
 
     def test_graph_tools_unavailable_without_graph(self):
         """Graph query tools require a loaded graph."""
@@ -113,8 +108,7 @@ class TestToolAvailability:
 
         for tool in get_all_tools():
             if tool.name() in graph_tools:
-                assert not tool.is_available(ctx), \
-                    f"'{tool.name()}' should NOT be available without a graph"
+                assert not tool.is_available(ctx), f"'{tool.name()}' should NOT be available without a graph"
 
     def test_graph_tools_available_with_graph(self):
         """Graph query tools become available once graph is loaded."""
@@ -129,5 +123,4 @@ class TestToolAvailability:
 
         for tool in get_all_tools():
             if tool.name() in graph_tools:
-                assert tool.is_available(ctx), \
-                    f"'{tool.name()}' should be available with a loaded graph"
+                assert tool.is_available(ctx), f"'{tool.name()}' should be available with a loaded graph"

@@ -30,10 +30,8 @@ def build_jury_context_package(
         "node_id": hotspot.node_id,
         "contract": hotspot.contract,
         "function": hotspot.function,
-
         # Raw source — just the vulnerable contract file, not whole repo
         "source_code": raw_source_code,
-
         # Graph scores
         "scores": {
             "structural": node_data.get("structural_score", 0),
@@ -41,7 +39,6 @@ def build_jury_context_package(
             "impact": node_data.get("impact_score", 0),
             "final": node_data.get("final_score", 0),
         },
-
         # Deterministic graph signals — these are facts, not opinions
         "signals": {
             "reentrancy_risk": node_data.get("reentrancy_risk", False),
@@ -62,10 +59,8 @@ def build_jury_context_package(
             "external_protocols": node_data.get("external_protocols", []),
             "cross_protocol_risks": node_data.get("cross_protocol_risks", []),
         },
-
         # Titan pattern hits — deterministic regex evidence
         "pattern_hits": node_data.get("pattern_hit_details", []),
-
         # The hypothesis to validate — this IS LLM output, jurors should treat skeptically
         "hypothesis": {
             "vulnerability_class": getattr(finding, "vulnerability_class", "unknown"),

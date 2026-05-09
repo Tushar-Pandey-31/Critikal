@@ -26,10 +26,10 @@ logger = logging.getLogger(__name__)
 # ── Environment variable names per provider ─────────────────────────
 _POOL_ENV_VARS: dict[str, tuple[str, str]] = {
     # provider -> (pool_env_var, fallback_single_key_env_var)
-    "gemini":      ("GOOGLE_API_KEYS",      "GOOGLE_API_KEY"),
-    "openai":      ("OPENAI_API_KEYS",      "OPENAI_API_KEY"),
-    "anthropic":   ("ANTHROPIC_API_KEYS",   "ANTHROPIC_API_KEY"),
-    "openrouter":  ("OPENROUTER_API_KEYS",  "OPENROUTER_API_KEY"),
+    "gemini": ("GOOGLE_API_KEYS", "GOOGLE_API_KEY"),
+    "openai": ("OPENAI_API_KEYS", "OPENAI_API_KEY"),
+    "anthropic": ("ANTHROPIC_API_KEYS", "ANTHROPIC_API_KEY"),
+    "openrouter": ("OPENROUTER_API_KEYS", "OPENROUTER_API_KEY"),
 }
 
 # Default cooldown when a key is rate-limited (seconds)
@@ -39,6 +39,7 @@ _DEFAULT_COOLDOWN = float(os.getenv("KEY_COOLDOWN_SECONDS", "60"))
 @dataclass
 class _KeyState:
     """Internal bookkeeping for a single API key."""
+
     key: str
     call_count: int = 0
     cooldown_until: float = 0.0  # epoch timestamp
@@ -111,8 +112,7 @@ class APIKeyPool:
         # Sleep outside the lock
         if wait > 0:
             logger.warning(
-                f"[KeyPool] All {provider} keys on cooldown. "
-                f"Sleeping {wait:.1f}s until next key is available..."
+                f"[KeyPool] All {provider} keys on cooldown. Sleeping {wait:.1f}s until next key is available..."
             )
             time.sleep(wait + 0.1)
 
@@ -126,9 +126,7 @@ class APIKeyPool:
         async with self._async_lock:
             pool = self._pools[provider]
             if not pool:
-                raise ValueError(
-                    f"No API keys configured for provider '{provider}'."
-                )
+                raise ValueError(f"No API keys configured for provider '{provider}'.")
 
             start_idx = self._indices[provider]
             n = len(pool)
@@ -145,10 +143,7 @@ class APIKeyPool:
             wait = max(0.0, earliest - time.time())
 
         if wait > 0:
-            logger.warning(
-                f"[KeyPool] All {provider} keys on cooldown. "
-                f"Sleeping {wait:.1f}s..."
-            )
+            logger.warning(f"[KeyPool] All {provider} keys on cooldown. Sleeping {wait:.1f}s...")
             await asyncio.sleep(wait + 0.1)
 
         return await self.get_key_async(provider)
@@ -169,10 +164,7 @@ class APIKeyPool:
             for ks in pool:
                 if ks.key == key:
                     ks.cooldown_until = time.time() + duration
-                    logger.warning(
-                        f"[KeyPool] Benched {provider} key ...{key[-4:]} "
-                        f"for {duration:.0f}s"
-                    )
+                    logger.warning(f"[KeyPool] Benched {provider} key ...{key[-4:]} for {duration:.0f}s")
                     return
         logger.warning(f"[KeyPool] Attempted to cooldown unknown key for {provider}")
 
@@ -190,9 +182,7 @@ class APIKeyPool:
                         "suffix": f"...{ks.key[-4:]}",
                         "calls": ks.call_count,
                         "available": ks.is_available,
-                        "cooldown_remaining": max(
-                            0.0, ks.cooldown_until - time.time()
-                        ),
+                        "cooldown_remaining": max(0.0, ks.cooldown_until - time.time()),
                     }
                     for ks in pool
                 ],
@@ -234,14 +224,9 @@ class APIKeyPool:
             self._indices[provider] = 0
             self._initialized_providers.add(provider)
 
-            logger.info(
-                f"[KeyPool] Loaded {len(keys)} key(s) for provider '{provider}'"
-            )
+            logger.info(f"[KeyPool] Loaded {len(keys)} key(s) for provider '{provider}'")
             if not keys:
-                logger.warning(
-                    f"[KeyPool] No keys found for '{provider}'. "
-                    f"Set {pool_var} or {fallback_var}."
-                )
+                logger.warning(f"[KeyPool] No keys found for '{provider}'. Set {pool_var} or {fallback_var}.")
 
 
 def get_key_pool() -> APIKeyPool:

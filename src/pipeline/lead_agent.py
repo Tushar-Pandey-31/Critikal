@@ -41,14 +41,18 @@ from src.utils.node_ids import normalize_node_id
 try:
     from src.intelligence.attack_vector_db import AttackVectorDB
     from src.intelligence.threat_profiler import ThreatProfiler
+
     _THREAT_INTEL_AVAILABLE = True
 except ImportError:
     _THREAT_INTEL_AVAILABLE = False
     logger.warning("Threat intelligence module not available")
 
+
 # Jury system — config is authoritative, env var kept for backward compat
 def _jury_enabled() -> bool:
     return get_config().jury_enabled
+
+
 JURY_CONCURRENCY = int(os.getenv("JURY_CONCURRENCY", "5"))
 JURY_SKEPTIC_MODEL = os.getenv("JURY_SKEPTIC_MODEL", "gpt-5.5")
 JURY_ATTACKER_MODEL = os.getenv("JURY_ATTACKER_MODEL", "grok-4-1-fast-reasoning")
@@ -81,6 +85,7 @@ def _finding_priority(f: Finding) -> tuple:
     sev_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
     return (-f.confidence, sev_order.get(f.severity_estimate, 4))
 
+
 # BUG-009 fix: deduplicated — shared with test_writer_sandbox.py
 from src.utils.foundry_root import resolve_foundry_root as _get_foundry_project_root
 
@@ -88,10 +93,10 @@ from src.utils.foundry_root import resolve_foundry_root as _get_foundry_project_
 def _exploit_target_eligible(finding: Finding, graph) -> bool:
     """Check if the finding's target is eligible for an exploit test."""
     if not graph:
-        return True # fail open
+        return True  # fail open
     target = finding.hotspot_node_id
     if not target or not graph.has_node(target):
-         return True # fail open
+        return True  # fail open
 
     data = graph.nodes[target]
     # FIX-4: View/pure functions CAN be exploited via read-only reentrancy,
@@ -99,18 +104,29 @@ def _exploit_target_eligible(finding: Finding, graph) -> bool:
     # clearly incompatible with a view/pure target.
     if data.get("is_view") or data.get("is_pure"):
         vuln = (finding.vulnerability_class or "").lower()
-        is_read_only_vuln = any(kw in vuln for kw in (
-            "oracle", "stale", "read-only", "price", "manipulation",
-            "inflation", "accounting", "fee", "readonly",
-        ))
+        is_read_only_vuln = any(
+            kw in vuln
+            for kw in (
+                "oracle",
+                "stale",
+                "read-only",
+                "price",
+                "manipulation",
+                "inflation",
+                "accounting",
+                "fee",
+                "readonly",
+            )
+        )
         if not is_read_only_vuln:
             return False
     if data.get("node_type") == "interface_function":
-         return False
+        return False
     vis = data.get("visibility", "")
     if vis in ("internal", "private"):
-         return False
+        return False
     return True
+
 
 # ════════════════════════════════════════════════════════════
 #  COORDINATOR SYSTEM PROMPT
@@ -224,7 +240,7 @@ def _repo_name_from_url(repo_url: str) -> str:
         return ""
     repo_name = repo_url.rstrip("/").split("/")[-1]
     if repo_name.endswith(".git"):
-        repo_name = repo_name[:-4] # Pyre doesn't like str slicing here for some reason, ignore
+        repo_name = repo_name[:-4]  # Pyre doesn't like str slicing here for some reason, ignore
     return repo_name
 
 
@@ -241,7 +257,9 @@ def get_llm(
     """Returns a configured coordinator LLM (tool-bound by default)."""
     provider = _detect_provider(model_name)
     if provider == "openrouter":
-        clean_model = model_name.removeprefix("openrouter/") if model_name.lower().startswith("openrouter/") else model_name
+        clean_model = (
+            model_name.removeprefix("openrouter/") if model_name.lower().startswith("openrouter/") else model_name
+        )
         llm = ChatOpenAI(
             model=clean_model,
             temperature=temperature,
@@ -264,6 +282,7 @@ def get_llm(
 # ════════════════════════════════════════════════════════════
 #  SYNTHESIS & ESCALATION
 # ════════════════════════════════════════════════════════════
+
 
 def deduplicate_leads(worker_outputs: list[Any]) -> list[dict]:
     """Deduplicate worker outputs by contract::function, keeping highest confidence per target."""
@@ -295,9 +314,9 @@ def deduplicate_leads(worker_outputs: list[Any]) -> list[dict]:
         # same function are NOT collapsed. An invariant_violation and a reentrancy
         # on the same function are two separate bugs.
         if vuln_class == "first_principles":
-            key = f"fp_{func_key}_{i}"   # always unique — never collapse FP findings
+            key = f"fp_{func_key}_{i}"  # always unique — never collapse FP findings
         elif func_key != "::":
-            key = f"{func_key}::{vuln_class}"   # contract::function::vuln_class
+            key = f"{func_key}::{vuln_class}"  # contract::function::vuln_class
         else:
             key = wo_dict.get("task_id", f"__worker_{i}")
 
@@ -345,8 +364,7 @@ def should_escalate_to_human(
         return False, None
 
     confidences = [
-        wo.get("confidence", 0) if isinstance(wo, dict) else getattr(wo, "confidence", 0)
-        for wo in worker_outputs
+        wo.get("confidence", 0) if isinstance(wo, dict) else getattr(wo, "confidence", 0) for wo in worker_outputs
     ]
 
     ambiguous = [c for c in confidences if low_threshold <= c <= high_threshold]
@@ -359,10 +377,7 @@ def should_escalate_to_human(
     if len(confidences) >= 2:
         conf_range = max(confidences) - min(confidences)
         if conf_range > 50:
-            return True, (
-                f"Workers show high disagreement (confidence range: {conf_range}). "
-                f"Human review recommended."
-            )
+            return True, (f"Workers show high disagreement (confidence range: {conf_range}). Human review recommended.")
 
     return False, None
 
@@ -370,6 +385,7 @@ def should_escalate_to_human(
 # ════════════════════════════════════════════════════════════
 #  HELPERS
 # ════════════════════════════════════════════════════════════
+
 
 def _build_caller_context(graph, hotspot_node_id: str) -> list[dict]:
     """Extract all callers of a hotspot and their access control status."""
@@ -380,11 +396,13 @@ def _build_caller_context(graph, hotspot_node_id: str) -> list[dict]:
         result = []
         for caller_id in callers:
             node_data = graph.nodes.get(caller_id, {})
-            result.append({
-                "caller": caller_id,
-                "is_protected": node_data.get("is_protected", False),
-                "access_control_type": node_data.get("access_control_type", "none"),
-            })
+            result.append(
+                {
+                    "caller": caller_id,
+                    "is_protected": node_data.get("is_protected", False),
+                    "access_control_type": node_data.get("access_control_type", "none"),
+                }
+            )
         return result
     except Exception:
         return []
@@ -393,6 +411,7 @@ def _build_caller_context(graph, hotspot_node_id: str) -> list[dict]:
 # ════════════════════════════════════════════════════════════
 #  COORDINATOR NODE
 # ════════════════════════════════════════════════════════════
+
 
 async def coordinator_node(state: AgentState):
     config = get_config()
@@ -435,7 +454,7 @@ async def coordinator_node(state: AgentState):
             "contract_addresses": state.get("contract_addresses", {}),
             "repo_url": state.get("repo_url"),
             "repo_path": repo_path,
-        }
+        },
     )
     recon_output = await recon_worker.run(recon_task)
     if repo_path:
@@ -454,6 +473,7 @@ async def coordinator_node(state: AgentState):
         print("[Step 1.5] Semantic discovery enabled — launching LLM-native agents...")
         try:
             from src.pipeline.workers.semantic_discovery import run_semantic_discovery
+
             semantic_model = os.getenv("SEMANTIC_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gpt-5.4-mini"))
             semantic_llm = get_worker_llm(model_name=semantic_model)
             semantic_outputs = await run_semantic_discovery(
@@ -466,7 +486,7 @@ async def coordinator_node(state: AgentState):
             # Convert semantic outputs to Finding objects (no Hotspot required)
             for so in semantic_outputs:
                 primary = Finding.from_semantic_output(so)
-                primary._seed_semantic_score()   # P2-K: seed plausibility from confidence
+                primary._seed_semantic_score()  # P2-K: seed plausibility from confidence
                 _semantic_findings.append(primary)
                 # Also include multi-finding output from agents that return all_findings
                 all_raw = so.raw_output.get("all_findings", [])
@@ -493,7 +513,7 @@ async def coordinator_node(state: AgentState):
                                 },
                             )
                             ef = Finding.from_semantic_output(extra_output)
-                            ef._seed_semantic_score()   # P2-K: seed plausibility
+                            ef._seed_semantic_score()  # P2-K: seed plausibility
                             _semantic_findings.append(ef)
             print(f"[Step 1.5] Total semantic findings: {len(_semantic_findings)}")
         except Exception as e:
@@ -515,16 +535,22 @@ async def coordinator_node(state: AgentState):
         # v2 E2E TESTING: fallback to relaxed gate if no hotspots found (single-contract repos)
         if not hotspots:
             from src.utils.graph_queries import get_graph_queries as _gq
+
             hotspots = _gq(state["graph"]).get_high_risk_hotspots(require_exploit_target=False)
         # BUG-1 FIX: Adaptive threshold for small graphs — single-file SCONE
         # contracts produce low signal density. Auto-retry at lower threshold.
         if not hotspots and state["graph"].number_of_nodes() < 50:
             _current_min = int(os.getenv("HOTSPOT_MIN_SCORE", "40"))
             _lowered = max(25, _current_min - 15)
-            print(f"[Step 2] Small graph ({state['graph'].number_of_nodes()} nodes), retrying hotspots at min_score={_lowered}")
+            print(
+                f"[Step 2] Small graph ({state['graph'].number_of_nodes()} nodes), retrying hotspots at min_score={_lowered}"
+            )
             from src.utils.graph_queries import get_graph_queries as _gq2
+
             hotspots = _gq2(state["graph"]).get_high_risk_hotspots(
-                min_score=_lowered, min_structural=10, min_exploitability=5,
+                min_score=_lowered,
+                min_structural=10,
+                min_exploitability=5,
                 require_exploit_target=False,
             )
         print(f"[Step 2] Found {len(hotspots)} high-risk hotspot(s)")
@@ -546,7 +572,7 @@ async def coordinator_node(state: AgentState):
             _primary_confidence = _protocol_types[0].get("confidence", 0) if _protocol_types else 0
             print(f"[Step 2.5] Protocol classified: {_primary_type} (confidence: {_primary_confidence})")
             if len(_protocol_types) > 1:
-                _secondary = [p['type'] for p in _protocol_types[1:3]]
+                _secondary = [p["type"] for p in _protocol_types[1:3]]
                 print(f"[Step 2.5] Secondary types: {_secondary}")
 
             # Load threat profile for primary type
@@ -559,7 +585,9 @@ async def coordinator_node(state: AgentState):
                 "composability_risks": _threat_profile.composability_risks,
                 "threat_prompt": _threat_profile.format_for_prompt(),
             }
-            print(f"[Step 2.5] Loaded threat profile: {len(_threat_profile.adversaries)} adversaries, {len(_threat_profile.invariants)} invariants")
+            print(
+                f"[Step 2.5] Loaded threat profile: {len(_threat_profile.adversaries)} adversaries, {len(_threat_profile.invariants)} invariants"
+            )
         except Exception as e:
             print(f"[Step 2.5] Threat profiler failed (non-fatal): {e}")
     elif not config.threat_profiler_enabled:
@@ -593,7 +621,10 @@ async def coordinator_node(state: AgentState):
         assumption_worker = None
         if config.assumption_worker_enabled:
             from src.pipeline.workers.assumption_worker import AssumptionWorker
-            assumption_model = os.getenv("ASSUMPTION_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "grok-4-1-fast-reasoning"))
+
+            assumption_model = os.getenv(
+                "ASSUMPTION_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "grok-4-1-fast-reasoning")
+            )
             assumption_llm = get_worker_llm(model_name=assumption_model)
             assumption_worker = AssumptionWorker(
                 graph=state["graph"],
@@ -608,7 +639,10 @@ async def coordinator_node(state: AgentState):
         if _execution_trace_enabled:
             try:
                 from src.pipeline.workers.execution_trace_worker import ExecutionTraceWorker
-                exec_trace_model = os.getenv("EXECUTION_TRACE_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gpt-5.4-mini"))
+
+                exec_trace_model = os.getenv(
+                    "EXECUTION_TRACE_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "gpt-5.4-mini")
+                )
                 exec_trace_llm = get_worker_llm(model_name=exec_trace_model)
                 execution_trace_worker = ExecutionTraceWorker(
                     graph=state["graph"],
@@ -648,29 +682,39 @@ async def coordinator_node(state: AgentState):
             )
             for hotspot in hotspots
         ]
-        assumption_tasks = [
-            WorkerTask(
-                task_id=f"assumption_{hotspot.node_id}",
-                task_type="assumption_analysis",
-                hotspot=hotspot,
-                context={},   # deliberately empty — no hints
-                budget_tokens=_budget_for_priority(hotspot.priority),
-            )
-            for hotspot in hotspots
-        ] if assumption_worker else []
-        execution_trace_tasks = [
-            WorkerTask(
-                task_id=f"exec_trace_{hotspot.node_id}",
-                task_type="execution_trace",
-                hotspot=hotspot,
-                context={},   # uses graph internally for sibling lookup
-                budget_tokens=_budget_for_priority(hotspot.priority),
-            )
-            for hotspot in hotspots
-        ] if execution_trace_worker else []
+        assumption_tasks = (
+            [
+                WorkerTask(
+                    task_id=f"assumption_{hotspot.node_id}",
+                    task_type="assumption_analysis",
+                    hotspot=hotspot,
+                    context={},  # deliberately empty — no hints
+                    budget_tokens=_budget_for_priority(hotspot.priority),
+                )
+                for hotspot in hotspots
+            ]
+            if assumption_worker
+            else []
+        )
+        execution_trace_tasks = (
+            [
+                WorkerTask(
+                    task_id=f"exec_trace_{hotspot.node_id}",
+                    task_type="execution_trace",
+                    hotspot=hotspot,
+                    context={},  # uses graph internally for sibling lookup
+                    budget_tokens=_budget_for_priority(hotspot.priority),
+                )
+                for hotspot in hotspots
+            ]
+            if execution_trace_worker
+            else []
+        )
 
         total_tasks = len(attack_tasks) + len(assumption_tasks) + len(execution_trace_tasks)
-        print(f"[Step 3] Launching {len(attack_tasks)} attack + {len(assumption_tasks)} assumption + {len(execution_trace_tasks)} exec_trace worker(s) in parallel ({total_tasks} total)...")
+        print(
+            f"[Step 3] Launching {len(attack_tasks)} attack + {len(assumption_tasks)} assumption + {len(execution_trace_tasks)} exec_trace worker(s) in parallel ({total_tasks} total)..."
+        )
         for t in attack_tasks:
             print(f"  [attack]      - {t.task_id}")
         for t in assumption_tasks:
@@ -761,21 +805,19 @@ async def coordinator_node(state: AgentState):
             # >= 50: normal Finding  (was 65 — lowered to allow more candidates)
             # 30-49: SPECULATIVE Finding (goes through depth but flagged in report)
             # < 30:  true noise floor — drop
-            attack_conf_floor   = int(os.getenv("ATTACK_CONFIDENCE_FLOOR",   "50"))
-            speculative_floor   = int(os.getenv("ATTACK_SPECULATIVE_FLOOR",  "30"))
+            attack_conf_floor = int(os.getenv("ATTACK_CONFIDENCE_FLOOR", "50"))
+            speculative_floor = int(os.getenv("ATTACK_SPECULATIVE_FLOOR", "30"))
             if out_conf >= attack_conf_floor:
                 finding = Finding.from_worker_output(output, hotspot)
                 # BUG-4 FIX: Old seed (conf//5 = 10-16) was too low to ever
                 # reach PROMOTE_THRESHOLD=50 with gate PASS (+20). Now conf//3
                 # gives 16-33, so gate PASS pushes to 36-53 — reachable.
-                finding.contribute_score("attack_worker", out_conf // 3,
-                    f"attack confidence {out_conf}")
+                finding.contribute_score("attack_worker", out_conf // 3, f"attack confidence {out_conf}")
                 findings.append(finding)
             elif out_conf >= speculative_floor:
                 finding = Finding.from_worker_output(output, hotspot)
                 finding.is_speculative = True
-                finding.contribute_score("attack_worker", out_conf // 5,
-                    f"speculative attack confidence {out_conf}")
+                finding.contribute_score("attack_worker", out_conf // 5, f"speculative attack confidence {out_conf}")
                 findings.append(finding)
 
             if not isinstance(output, Exception):
@@ -796,8 +838,7 @@ async def coordinator_node(state: AgentState):
             if out_conf >= assumption_conf_threshold:
                 finding = Finding.from_worker_output(output, hotspot)
                 # BUG-4 FIX: Assumption findings also need a plausibility seed
-                finding.contribute_score("assumption_worker", out_conf // 4,
-                    f"assumption confidence {out_conf}")
+                finding.contribute_score("assumption_worker", out_conf // 4, f"assumption confidence {out_conf}")
                 findings.append(finding)
                 assumption_finding_count += 1
 
@@ -815,8 +856,7 @@ async def coordinator_node(state: AgentState):
             out_conf = getattr(output, "confidence", 0)
             if out_conf >= exec_trace_conf_threshold:
                 finding = Finding.from_worker_output(output, hotspot)
-                finding.contribute_score("execution_trace", out_conf // 4,
-                    f"exec_trace confidence {out_conf}")
+                finding.contribute_score("execution_trace", out_conf // 4, f"exec_trace confidence {out_conf}")
                 findings.append(finding)
                 exec_trace_finding_count += 1
 
@@ -825,7 +865,9 @@ async def coordinator_node(state: AgentState):
                 wo_dict = model_dump_func() if callable(model_dump_func) else output
                 worker_outputs.append(wo_dict)
 
-        print(f"[Step 4] Findings that passed filter: {len(findings)} ({assumption_finding_count} from assumption, {exec_trace_finding_count} from exec_trace)")
+        print(
+            f"[Step 4] Findings that passed filter: {len(findings)} ({assumption_finding_count} from assumption, {exec_trace_finding_count} from exec_trace)"
+        )
 
     # ── Step 4.25: Synthetic Fallback for Semantic Leads (P2-K) ──────────
     # If attack + assumption workers produced ZERO promoted findings but semantic
@@ -835,22 +877,31 @@ async def coordinator_node(state: AgentState):
     # Rationale: semantic agents reason about source code at a protocol level and
     # can surface Morpho-class bugs that attack workers miss because they require
     # semi-trusted role conditions. We should not silently drop these.
-    SEMANTIC_FALLBACK_N         = int(os.getenv("SEMANTIC_FALLBACK_N",         "3"))
+    SEMANTIC_FALLBACK_N = int(os.getenv("SEMANTIC_FALLBACK_N", "3"))
     SEMANTIC_FALLBACK_THRESHOLD = int(os.getenv("SEMANTIC_FALLBACK_THRESHOLD", "55"))
 
     _attack_derived = [
-        f for f in findings
-        if not (f.hotspot_node_id and "::" in f.hotspot_node_id
-                and f.vulnerability_class in ("semantic_discovery", "invariant_violation",
-                                               "accounting_scope_mismatch", "keeper_drain",
-                                               "cross_contract_reentrancy", "flash_loan_manipulation",
-                                               "oracle_manipulation", "role_delegation_abuse",
-                                               "privilege_escalation", "first_principles"))
+        f
+        for f in findings
+        if not (
+            f.hotspot_node_id
+            and "::" in f.hotspot_node_id
+            and f.vulnerability_class
+            in (
+                "semantic_discovery",
+                "invariant_violation",
+                "accounting_scope_mismatch",
+                "keeper_drain",
+                "cross_contract_reentrancy",
+                "flash_loan_manipulation",
+                "oracle_manipulation",
+                "role_delegation_abuse",
+                "privilege_escalation",
+                "first_principles",
+            )
+        )
     ]
-    _semantic_only = [
-        f for f in findings
-        if f not in _attack_derived
-    ]
+    _semantic_only = [f for f in findings if f not in _attack_derived]
 
     if not _attack_derived and _semantic_only and _semantic_findings:
         # No attack-worker findings survived — try semantic fallback
@@ -862,14 +913,19 @@ async def coordinator_node(state: AgentState):
         if high_conf_semantic:
             promoted = high_conf_semantic[:SEMANTIC_FALLBACK_N]
             for f in promoted:
-                f._jury_confirmed = True    # bypass PROMOTE_THRESHOLD at TestWriter
-                f.contribute_score("semantic_fallback", +40,
-                    f"synthetic promotion: no attack-worker findings, conf={f.confidence}")
-                print(f"  [P2-K] Synthetic fallback: promoted {f.hotspot_node_id} "
-                      f"(conf={f.confidence}, score→{f.plausibility_score})")
+                f._jury_confirmed = True  # bypass PROMOTE_THRESHOLD at TestWriter
+                f.contribute_score(
+                    "semantic_fallback", +40, f"synthetic promotion: no attack-worker findings, conf={f.confidence}"
+                )
+                print(
+                    f"  [P2-K] Synthetic fallback: promoted {f.hotspot_node_id} "
+                    f"(conf={f.confidence}, score→{f.plausibility_score})"
+                )
             print(f"[Step 4.25] Synthetic fallback: {len(promoted)} semantic finding(s) force-promoted to TestWriter")
         else:
-            print(f"[Step 4.25] Synthetic fallback: no semantic findings >= {SEMANTIC_FALLBACK_THRESHOLD} confidence — nothing to promote")
+            print(
+                f"[Step 4.25] Synthetic fallback: no semantic findings >= {SEMANTIC_FALLBACK_THRESHOLD} confidence — nothing to promote"
+            )
     else:
         if _attack_derived:
             print(f"[Step 4.25] Attack-derived findings exist ({len(_attack_derived)}) — skipping semantic fallback")
@@ -877,7 +933,7 @@ async def coordinator_node(state: AgentState):
     # ── Step 4.45: 4-Gate Pre-Filter (gated by config.gate_enabled) ──────
     # ── Step 4.5: Jury Validation (gated by config.jury_enabled) ─────────
     jury_briefs: dict[str, dict] = {}
-    confirmed_findings: list = []   # BUG FIX: defined before gate block to prevent NameError
+    confirmed_findings: list = []  # BUG FIX: defined before gate block to prevent NameError
 
     if (config.gate_enabled or config.jury_enabled) and findings:
         print(f"[Step 4.5] Gate/Jury enabled — evaluating {len(findings)} finding(s)...")
@@ -912,6 +968,7 @@ async def coordinator_node(state: AgentState):
                     except Exception as e:
                         logger.warning(f"[Gate] Failed for {finding.hotspot_node_id}: {e}")
                         from src.pipeline.workers.jury_worker import GateResult
+
                         return finding, GateResult(verdict="PASS", gate=0, quote="error")
 
             gate_results = await asyncio.gather(*[_run_gate(f) for f in findings])
@@ -928,17 +985,17 @@ async def coordinator_node(state: AgentState):
                     finding.jury_rejection_reason = f"Failed Gate {gate_res.gate}: {gate_res.quote}"
                     finding.status = FindingStatus.REJECTED
                     # Plausibility: hard code refutation is strong negative evidence but not permanent
-                    finding.contribute_score("gate", -40,
-                        f"GATE_REFUTED gate={gate_res.gate}: {gate_res.quote[:50]}")
+                    finding.contribute_score("gate", -40, f"GATE_REFUTED gate={gate_res.gate}: {gate_res.quote[:50]}")
                     state["jury_rejected_findings"].append(finding)
-                    pre_filtered_findings.append(finding)   # keep in pool for depth resurrection
+                    pre_filtered_findings.append(finding)  # keep in pool for depth resurrection
                     print(f"  [Gate] ✗ REFUTED Gate {gate_res.gate}: {finding.hotspot_node_id} ({gate_res.quote[:60]})")
                 elif gate_res.verdict == "GATE_DEMOTED":
                     finding.verdict = FindingVerdict.PARTIAL
                     finding.jury_decision = "GATE_DEMOTED"
                     finding.jury_reasoning = f"Demoted at Gate {gate_res.gate}: {gate_res.quote}"
-                    finding.contribute_score("gate", +5,
-                        f"GATE_DEMOTED gate={gate_res.gate}: real but restricted/partial")
+                    finding.contribute_score(
+                        "gate", +5, f"GATE_DEMOTED gate={gate_res.gate}: real but restricted/partial"
+                    )
                     pre_filtered_findings.append(finding)
                     print(f"  [Gate] ↓ DEMOTED Gate {gate_res.gate}: {finding.hotspot_node_id} (sent to depth)")
                 else:  # PASS
@@ -1025,6 +1082,7 @@ async def coordinator_node(state: AgentState):
             # without a hotspot match — build a synthetic hotspot from the finding.
             if not hotspot:
                 from src.hotspot_engine import Hotspot
+
                 hotspot = Hotspot(
                     node_id=finding.hotspot_node_id,
                     contract=finding.affected_contract,
@@ -1061,7 +1119,7 @@ async def coordinator_node(state: AgentState):
                 finding.confidence_consensus = 100
                 # Jury CONFIRMED: strong evidence — and pinned to TestWriter bypass
                 finding.contribute_score("jury", +30, "CONFIRMED: 2+/3 jurors agreed")
-                finding._jury_confirmed = True   # bypass plausibility threshold
+                finding._jury_confirmed = True  # bypass plausibility threshold
                 print(f"  [Jury] ✓ CONFIRMED: {finding.hotspot_node_id}")
 
             elif decision == "CONFIRMED_UNPROVABLE":
@@ -1073,20 +1131,35 @@ async def coordinator_node(state: AgentState):
                 finding.jury_reasoning = judge_output.reasoning
                 finding.confidence_consensus = 75
                 finding.contribute_score("jury", +20, "CONFIRMED_UNPROVABLE: real but can't prove in isolation")
-                finding._jury_confirmed = True   # still confirmed — always to TestWriter
-                print(f"  [Jury] ~ CONFIRMED_UNPROVABLE: {finding.hotspot_node_id} — {judge_output.unprovable_reason[:80]}")
+                finding._jury_confirmed = True  # still confirmed — always to TestWriter
+                print(
+                    f"  [Jury] ~ CONFIRMED_UNPROVABLE: {finding.hotspot_node_id} — {judge_output.unprovable_reason[:80]}"
+                )
 
                 # Downgrade severity if preconditions require privileged role compromise
-                _privilege_keywords = ["admin", "router", "owner", "compromise", "malicious",
-                                       "privileged", "operator", "governance", "multisig"]
+                _privilege_keywords = [
+                    "admin",
+                    "router",
+                    "owner",
+                    "compromise",
+                    "malicious",
+                    "privileged",
+                    "operator",
+                    "governance",
+                    "multisig",
+                ]
                 if finding.preconditions_missing:
                     _pre_text = " ".join(finding.preconditions_missing).lower()
                     if any(kw in _pre_text for kw in _privilege_keywords):
                         _sev_map = {"CRITICAL": "HIGH", "HIGH": "MEDIUM", "MEDIUM": "MEDIUM", "LOW": "LOW"}
                         _orig_sev = finding.severity_estimate
                         finding.severity_estimate = _sev_map.get(_orig_sev, _orig_sev)
-                        logger.info(f"[Jury] Severity downgraded {_orig_sev} → {finding.severity_estimate} (unmet privilege precondition)")
-                        print(f"  [Jury] ↓ Severity {_orig_sev} → {finding.severity_estimate} (requires privileged role)")
+                        logger.info(
+                            f"[Jury] Severity downgraded {_orig_sev} → {finding.severity_estimate} (unmet privilege precondition)"
+                        )
+                        print(
+                            f"  [Jury] ↓ Severity {_orig_sev} → {finding.severity_estimate} (requires privileged role)"
+                        )
 
             elif decision == "ESCALATE":
                 confirmed_findings.append(finding)
@@ -1108,8 +1181,7 @@ async def coordinator_node(state: AgentState):
                 finding.jury_rejection_reason = judge_output.rejection_reason
                 finding.confidence_consensus = 10
                 # Penalize but DON'T drop — depth workers can still resurrect this
-                finding.contribute_score("jury", -25,
-                    f"REJECTED: {judge_output.rejection_reason[:60]}")
+                finding.contribute_score("jury", -25, f"REJECTED: {judge_output.rejection_reason[:60]}")
                 state.setdefault("jury_rejected_findings", [])
                 state["jury_rejected_findings"].append(finding)
                 # Keep in pool so depth workers can evaluate and potentially resurrect
@@ -1117,11 +1189,14 @@ async def coordinator_node(state: AgentState):
                 print(f"  [Jury] ✗ REJECTED: {finding.hotspot_node_id} — kept in pool (depth may resurrect)")
 
         rejected_count = sum(1 for f in confirmed_findings if f.jury_decision == "REJECTED")
-        print(f"[Step 4.5] Jury complete: {len(confirmed_findings) - rejected_count} confirmed/escalated, {rejected_count} jury-rejected (in pool)")
+        print(
+            f"[Step 4.5] Jury complete: {len(confirmed_findings) - rejected_count} confirmed/escalated, {rejected_count} jury-rejected (in pool)"
+        )
         findings = confirmed_findings
 
         # Apply chain severity upgrades AFTER jury — only confirmed findings get upgraded
         from src.pipeline.chain_analyzer import apply_chain_severity_upgrades
+
         apply_chain_severity_upgrades(findings)
         print("[Step 4.55] Applied post-jury chain severity upgrades")
 
@@ -1132,6 +1207,7 @@ async def coordinator_node(state: AgentState):
     # ── Step 4.6: RAG Batch Validation & Scoring ──────────
     if config.rag_enabled and findings:
         from src.knowledge.rag_system import rag_mandatory_sweep
+
         findings = await rag_mandatory_sweep(findings)
 
         # Apply Mechanical Confidence Scoring
@@ -1145,16 +1221,20 @@ async def coordinator_node(state: AgentState):
     # DEPTH_ON_REJECTED: also run depth on jury-rejected findings (costs more, optional).
     DEPTH_ON_REJECTED = os.getenv("DEPTH_ON_REJECTED", "false").lower() == "true"
     depth_eligible = [
-        f for f in findings
+        f
+        for f in findings
         if f.verdict in ("CONTESTED", "PARTIAL", "UNASSESSED")
         or (DEPTH_ON_REJECTED and f.jury_decision == "REJECTED")
-        or f.gate_verdict == "GATE_DEMOTED"   # always depth gate-demoted findings
+        or f.gate_verdict == "GATE_DEMOTED"  # always depth gate-demoted findings
     ]
     uncertain_count = len(depth_eligible)
     if config.depth_workers_enabled and uncertain_count > 0:
-        print(f"[Step 4.7] Running depth workers on {uncertain_count} finding(s) (DEPTH_ON_REJECTED={DEPTH_ON_REJECTED})...")
+        print(
+            f"[Step 4.7] Running depth workers on {uncertain_count} finding(s) (DEPTH_ON_REJECTED={DEPTH_ON_REJECTED})..."
+        )
         try:
             from src.pipeline.workers.depth_workers import run_depth_workers
+
             depth_model = os.getenv("DEPTH_MODEL_NAME", os.getenv("MODEL_NAME", "gpt-5.4-mini"))
             depth_llm = get_worker_llm(model_name=depth_model)
             depth_results = await run_depth_workers(
@@ -1169,19 +1249,18 @@ async def coordinator_node(state: AgentState):
             # Wire depth results into plausibility scores
             DEPTH_SCORE_MAP = {
                 "CONFIRMED": +20,
-                "REFINED":   +10,
+                "REFINED": +10,
                 "CONTESTED": +5,
-                "REFUTED":   -15,
+                "REFUTED": -15,
             }
-            for dr in (depth_results or []):
+            for dr in depth_results or []:
                 finding = getattr(dr, "finding", None) or getattr(dr, "_finding", None)
                 if finding is None:
                     continue
                 verdict = getattr(dr, "verdict", "") or ""
                 delta = DEPTH_SCORE_MAP.get(verdict.upper(), 0)
                 if delta != 0:
-                    finding.contribute_score("depth", delta,
-                        f"depth verdict={verdict}")
+                    finding.contribute_score("depth", delta, f"depth verdict={verdict}")
 
             print(f"[Step 4.7] Depth pass complete: {len(depth_results or [])} finding(s) re-analyzed")
         except Exception as e:
@@ -1198,6 +1277,7 @@ async def coordinator_node(state: AgentState):
         print("[Step 4.8] Running chain analysis...")
         try:
             from src.pipeline.chain_analyzer import run_chain_analysis
+
             chain_hypotheses = run_chain_analysis(findings)
             # Store chains on state for report consumption
             state["chain_hypotheses"] = chain_hypotheses
@@ -1276,16 +1356,17 @@ async def coordinator_node(state: AgentState):
         # ── Token tracking for Coordinator synthesis ──
         try:
             from src.utils.token_counter import get_token_counter
+
             _model = os.getenv("MODEL_NAME", "gpt-5.4-mini")
-            _input_text = "\n".join(
-                m.content if hasattr(m, "content") else str(m) for m in prompt
-            )
+            _input_text = "\n".join(m.content if hasattr(m, "content") else str(m) for m in prompt)
             _resp_content = response.content if hasattr(response, "content") else str(response)
             if isinstance(_resp_content, list):
                 _resp_content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in _resp_content])
             get_token_counter().record(
-                "CoordinatorSynthesis", _model,
-                _input_text, str(_resp_content),
+                "CoordinatorSynthesis",
+                _model,
+                _input_text,
+                str(_resp_content),
                 getattr(response, "response_metadata", None),
             )
         except Exception:
@@ -1302,9 +1383,7 @@ async def coordinator_node(state: AgentState):
     # If it does, strip them to prevent LangGraph routing to ToolNode
     # which would re-run the entire pipeline (BUG-012).
     if response and getattr(response, "tool_calls", None):
-        logger.warning(
-            "Coordinator LLM returned tool_calls despite bind_tools=False — stripping"
-        )
+        logger.warning("Coordinator LLM returned tool_calls despite bind_tools=False — stripping")
         response.tool_calls = []
         if hasattr(response, "additional_kwargs"):
             getattr(response, "additional_kwargs", {}).pop("tool_calls", None)
@@ -1320,10 +1399,15 @@ async def coordinator_node(state: AgentState):
         strategy = "LLM synthesis skipped (timeout or error)"
         # Build a dummy response for the return dict
         from langchain_core.messages import AIMessage
-        response = AIMessage(content=json.dumps({
-            "analysis_summary": {"strategy": strategy},
-            "vulnerability_leads": leads,
-        }))
+
+        response = AIMessage(
+            content=json.dumps(
+                {
+                    "analysis_summary": {"strategy": strategy},
+                    "vulnerability_leads": leads,
+                }
+            )
+        )
     else:
         try:
             content = response.content
@@ -1352,8 +1436,10 @@ async def coordinator_node(state: AgentState):
     # every finding is grounded in a graph hotspot — the LLM cannot
     # invent vulnerabilities without structural evidence.
     if not findings and leads:
-        print(f"[Step 5b] {len(leads)} LLM lead(s) present but synthetic fallback is disabled. "
-              f"Only Attack Worker findings are accepted.")
+        print(
+            f"[Step 5b] {len(leads)} LLM lead(s) present but synthetic fallback is disabled. "
+            f"Only Attack Worker findings are accepted."
+        )
 
     # ── Step 6: TestWriter ─────────────────────────────────
     test_tasks = []
@@ -1381,7 +1467,9 @@ async def coordinator_node(state: AgentState):
                 foundry_root = _get_foundry_project_root(Path(repo_copy_root))
                 linux_repo_path = str(foundry_root)
                 if str(foundry_root) != repo_copy_root:
-                    print(f"[Step 6] Global Foundry project root resolved: {linux_repo_path} (will be overriden per finding if multi-repo)")
+                    print(
+                        f"[Step 6] Global Foundry project root resolved: {linux_repo_path} (will be overriden per finding if multi-repo)"
+                    )
             except Exception as e:
                 print(f"[Step 6] Failed to copy repo to Linux fs: {e}, falling back to original path")
                 linux_repo_path = repo_path
@@ -1404,10 +1492,13 @@ async def coordinator_node(state: AgentState):
         # findings have _jury_confirmed=True and should still get a TW attempt.
         # The TW might find a way to prove them in isolation.
         sorted_findings = sorted(
-            [f for f in findings
-             if _eligible_for_testwriter(f)
-             and f.severity_estimate in ("CRITICAL", "HIGH", "MEDIUM")
-             and _exploit_target_eligible(f, state.get("graph"))],
+            [
+                f
+                for f in findings
+                if _eligible_for_testwriter(f)
+                and f.severity_estimate in ("CRITICAL", "HIGH", "MEDIUM")
+                and _exploit_target_eligible(f, state.get("graph"))
+            ],
             key=_finding_priority,
         )
 
@@ -1464,7 +1555,11 @@ async def coordinator_node(state: AgentState):
             contract_signatures = get_contract_signatures(state["graph"], finding.affected_contract)
 
             # Improvement 4: Pass exploit sequence to TestWriter
-            _node_data = state["graph"].nodes.get(finding.hotspot_node_id, {}) if finding.hotspot_node_id and state.get("graph") else {}
+            _node_data = (
+                state["graph"].nodes.get(finding.hotspot_node_id, {})
+                if finding.hotspot_node_id and state.get("graph")
+                else {}
+            )
             exploit_seq = _node_data.get("exploit_sequence", [])
 
             # Multi-repo fix: resolve the specific foundry.toml root for THIS finding's file
@@ -1474,9 +1569,11 @@ async def coordinator_node(state: AgentState):
                 if workspace_name in Path(_src_file).parts:
                     try:
                         idx = Path(_src_file).parts.index(workspace_name)
-                        sub_parts = Path(_src_file).parts[idx+1:]
+                        sub_parts = Path(_src_file).parts[idx + 1 :]
                         current_check = Path(repo_copy_root)
-                        best_root = current_check if (current_check / "foundry.toml").exists() else Path(linux_repo_path)
+                        best_root = (
+                            current_check if (current_check / "foundry.toml").exists() else Path(linux_repo_path)
+                        )
                         for part in sub_parts:
                             current_check = current_check / part
                             if (current_check / "foundry.toml").exists():
@@ -1498,7 +1595,7 @@ async def coordinator_node(state: AgentState):
                     "jury_brief": jury_briefs.get(finding.hotspot_node_id, {}),
                     "jury_unprovable": getattr(finding, "jury_unprovable", False),
                     "caller_context": _build_caller_context(state.get("graph"), finding.hotspot_node_id),
-                }
+                },
             )
             test_tasks.append(task)
             target_findings.append(finding)
@@ -1517,7 +1614,9 @@ async def coordinator_node(state: AgentState):
 
             async def _run_test_writer(idx, task, finding):
                 async with _tw_sem:
-                    print(f"[Step 6] TestWriter {idx+1}/{len(test_tasks)}: {finding.hotspot_node_id} (confidence={finding.confidence})")
+                    print(
+                        f"[Step 6] TestWriter {idx + 1}/{len(test_tasks)}: {finding.hotspot_node_id} (confidence={finding.confidence})"
+                    )
                     try:
                         return await test_writer.run(task)
                     except Exception as e:
@@ -1541,7 +1640,9 @@ async def coordinator_node(state: AgentState):
                 raw_result = getattr(output, "raw_output", {}) or {}
                 if not raw_result.get("exploit_success", False):
                     compiled = raw_result.get("compiled", False)
-                    print(f"  [x] {finding.hotspot_node_id} — PoC {'compiled but failed' if compiled else 'did not compile'}")
+                    print(
+                        f"  [x] {finding.hotspot_node_id} — PoC {'compiled but failed' if compiled else 'did not compile'}"
+                    )
                     # Don't override Jury-confirmed findings to REJECTED —
                     # a failed PoC doesn't mean the vulnerability is a false positive
                     if finding.verdict != "CONFIRMED":
@@ -1571,13 +1672,15 @@ async def coordinator_node(state: AgentState):
                         print(f"  [v] {finding.hotspot_node_id} — proven via VARIANT exploration")
 
                     if output and hasattr(output, "model_dump"):
-                        proven.append({
-                            "finding_id": finding.id,
-                            "hotspot": finding.hotspot_node_id,
-                            "confidence": finding.confidence,
-                            "test_code": getattr(output, "test_code", None),
-                            "test_output": getattr(output, "compiler_output", None)
-                        })
+                        proven.append(
+                            {
+                                "finding_id": finding.id,
+                                "hotspot": finding.hotspot_node_id,
+                                "confidence": finding.confidence,
+                                "test_code": getattr(output, "test_code", None),
+                                "test_output": getattr(output, "compiler_output", None),
+                            }
+                        )
 
                 # Update leads with TestWriter results
                 for lead in leads:
@@ -1586,15 +1689,17 @@ async def coordinator_node(state: AgentState):
 
                     if lead_id == finding_id:
                         raw = getattr(output, "raw_output", {}) or {}
-                        lead.update({
-                            "confidence": finding.confidence,
-                            "test_code": raw.get("test_code"),
-                            "exploit_success": raw.get("exploit_success", False),
-                            "compiled": raw.get("compiled"),
-                            "attempts": raw.get("attempts"),
-                            "evidence_tag": raw.get("evidence_tag", ""),
-                            "variant_success": raw.get("variant_success", False),
-                        })
+                        lead.update(
+                            {
+                                "confidence": finding.confidence,
+                                "test_code": raw.get("test_code"),
+                                "exploit_success": raw.get("exploit_success", False),
+                                "compiled": raw.get("compiled"),
+                                "attempts": raw.get("attempts"),
+                                "evidence_tag": raw.get("evidence_tag", ""),
+                                "variant_success": raw.get("variant_success", False),
+                            }
+                        )
                         if raw.get("exploit_success", False) and not lead.get("title", "").startswith("[PROVEN]"):
                             lead["title"] = f"[PROVEN] {lead.get('title', '')}"
                         break
@@ -1606,7 +1711,11 @@ async def coordinator_node(state: AgentState):
             fuzz_targets = []
             fuzz_tasks = []
             for finding, output in zip(sorted_findings, test_outputs):
-                if finding.status == FindingStatus.PROVEN and finding.severity_estimate == "CRITICAL" and not isinstance(output, Exception):
+                if (
+                    finding.status == FindingStatus.PROVEN
+                    and finding.severity_estimate == "CRITICAL"
+                    and not isinstance(output, Exception)
+                ):
                     fuzz_targets.append(finding)
                     fuzz_tasks.append(
                         WorkerTask(
@@ -1616,21 +1725,22 @@ async def coordinator_node(state: AgentState):
                                 "finding": finding,
                                 "poc_code": getattr(output, "test_code", ""),
                                 "repo_path": linux_repo_path,
-                            }
+                            },
                         )
                     )
 
             if fuzz_tasks:
                 print(f"[Step 6.5] Spawning FuzzGenerator for {len(fuzz_tasks)} CRITICAL finding(s)...")
                 from src.pipeline.workers.fuzz_generator import FuzzGeneratorWorker
-                fuzzer_model = os.getenv("FUZZ_MODEL_NAME", os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "grok-code-fast-1")))
+
+                fuzzer_model = os.getenv(
+                    "FUZZ_MODEL_NAME",
+                    os.getenv("TEST_WRITER_MODEL_NAME", os.getenv("WORKER_MODEL_NAME", "grok-code-fast-1")),
+                )
                 fuzzer_llm = get_worker_llm(model_name=fuzzer_model)
                 fuzzer = FuzzGeneratorWorker(llm_client=fuzzer_llm, graph=state["graph"])
 
-                fuzz_outputs = await asyncio.gather(
-                    *[fuzzer.run(task) for task in fuzz_tasks],
-                    return_exceptions=True
-                )
+                fuzz_outputs = await asyncio.gather(*[fuzzer.run(task) for task in fuzz_tasks], return_exceptions=True)
 
                 for finding, output in zip(fuzz_targets, fuzz_outputs):
                     if isinstance(output, Exception):
@@ -1658,7 +1768,6 @@ async def coordinator_node(state: AgentState):
             except Exception:
                 pass
 
-
     proven_count = sum(1 for f in findings if f.status == FindingStatus.PROVEN)
     print(f"[Pipeline] All steps complete: {len(findings)} finding(s), {proven_count} proven, {len(leads)} lead(s)")
 
@@ -1672,16 +1781,20 @@ async def coordinator_node(state: AgentState):
     token_usage = None
     try:
         from src.utils.token_counter import get_token_counter
+
         token_usage = get_token_counter().get_summary()
         total = token_usage.get("total", {})
-        print(f"[TokenCounter] Total: {total.get('call_count', 0)} calls, "
-              f"{total.get('total_tokens', 0)} tokens, "
-              f"${total.get('estimated_cost_usd', 0):.4f} est. cost")
+        print(
+            f"[TokenCounter] Total: {total.get('call_count', 0)} calls, "
+            f"{total.get('total_tokens', 0)} tokens, "
+            f"${total.get('estimated_cost_usd', 0):.4f} est. cost"
+        )
     except Exception:
         pass
 
     try:
         from src.reporting.report_generator import ReportGenerator
+
         reporter = ReportGenerator(
             repo_url=state.get("repo_url", ""),
             repo_name=repo_name or "unknown",
@@ -1692,11 +1805,11 @@ async def coordinator_node(state: AgentState):
             jury_rejected=state.get("jury_rejected_findings", []),
         )
         report_paths = reporter.generate()
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"  Report:     {report_paths['report_html']}")
         print(f"  Graph:      {report_paths['graph_html']}")
         print(f"  Exploits:   {report_paths['exploits_dir']}")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
     except Exception as e:
         print(f"[Reporter] Warning: report generation failed: {e}")
 
@@ -1718,9 +1831,5 @@ import warnings
 
 async def lead_researcher_node(state: AgentState):
     """DEPRECATED ALIAS — use coordinator_node() directly."""
-    warnings.warn(
-        "lead_researcher_node is a deprecated alias for coordinator_node.",
-        DeprecationWarning,
-        stacklevel=2
-    )
+    warnings.warn("lead_researcher_node is a deprecated alias for coordinator_node.", DeprecationWarning, stacklevel=2)
     return await coordinator_node(state)

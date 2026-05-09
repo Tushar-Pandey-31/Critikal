@@ -56,13 +56,15 @@ def search_security_knowledge(query: str, k: int = 5) -> list[dict[str, Any]]:
             # Filter out noise — MiniLM scores on exploit data range ~0.15-0.5
             if score < 0.15:
                 continue
-            matches.append({
-                "content": doc.page_content,
-                "source": doc.metadata.get("source", "Unknown"),
-                "protocol": doc.metadata.get("protocol", ""),
-                "vulnerability_class": doc.metadata.get("vulnerability_class", ""),
-                "relevance_score": round(score, 3),
-            })
+            matches.append(
+                {
+                    "content": doc.page_content,
+                    "source": doc.metadata.get("source", "Unknown"),
+                    "protocol": doc.metadata.get("protocol", ""),
+                    "vulnerability_class": doc.metadata.get("vulnerability_class", ""),
+                    "relevance_score": round(score, 3),
+                }
+            )
         return matches
     except Exception as e:
         print(f"[RAG] Search error: {e}")
@@ -132,13 +134,13 @@ def _compute_rag_confidence(matches: list, finding) -> int:
     if high_quality >= 2:
         return 100  # Strong precedent — this vuln class is well-known
     elif high_quality == 1:
-        return 80   # Single strong match
+        return 80  # Single strong match
     elif moderate >= 3:
-        return 60   # Several moderate matches
+        return 60  # Several moderate matches
     elif moderate >= 1:
-        return 40   # Weak precedent
+        return 40  # Weak precedent
     else:
-        return 0    # No relevant matches
+        return 0  # No relevant matches
 
 
 async def rag_mandatory_sweep(findings: list) -> list:
@@ -161,8 +163,12 @@ async def rag_mandatory_sweep(findings: list) -> list:
 
         # Store matches on finding
         finding.rag_matches = [
-            {"source": m["source"], "snippet": m["content"][:200],
-             "protocol": m.get("protocol", ""), "relevance": m.get("relevance_score", 0)}
+            {
+                "source": m["source"],
+                "snippet": m["content"][:200],
+                "protocol": m.get("protocol", ""),
+                "relevance": m.get("relevance_score", 0),
+            }
             for m in matches
         ]
 
@@ -202,7 +208,9 @@ async def rag_mandatory_sweep(findings: list) -> list:
     moderate = sum(1 for r in results if r == "moderate")
     none_count = sum(1 for r in results if r == "none")
 
-    print(f"[Step 4.6] RAG sweep: {len(findings)} findings — "
-          f"{strong} strong precedent, {moderate} moderate, {none_count} no match (-10 penalty)")
+    print(
+        f"[Step 4.6] RAG sweep: {len(findings)} findings — "
+        f"{strong} strong precedent, {moderate} moderate, {none_count} no match (-10 penalty)"
+    )
 
     return findings

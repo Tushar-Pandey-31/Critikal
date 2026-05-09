@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 
 
 class FuzzGeneratorTool(Tool):
-
     def name(self) -> str:
         return "generate_fuzz_tests"
 
@@ -59,9 +58,9 @@ class FuzzGeneratorTool(Tool):
             eligible = [ctx.findings[i] for i in indices if i < len(ctx.findings)]
         else:
             eligible = [
-                f for f in ctx.findings
-                if getattr(f, "exploit_success", False)
-                and getattr(f, "severity_estimate", "").upper() == "CRITICAL"
+                f
+                for f in ctx.findings
+                if getattr(f, "exploit_success", False) and getattr(f, "severity_estimate", "").upper() == "CRITICAL"
             ]
 
         if not eligible:

@@ -27,42 +27,42 @@ logger = logging.getLogger(__name__)
 # (OpenRouter/provider prefixes are stripped before lookup).
 _PRICING = {
     # ── OpenAI (current — primary defaults) ─────────────────
-    "gpt-5.5":                      {"input": 5.00,  "output": 30.00},
-    "gpt-5.5-pro":                  {"input": 30.00, "output": 180.00},
-    "gpt-5.4":                      {"input": 2.50,  "output": 20.00},
-    "gpt-5.4-mini":                 {"input": 0.40,  "output": 1.60},
-    "gpt-5.4-nano":                 {"input": 0.10,  "output": 0.40},
-    "gpt-5.1":                      {"input": 2.00,  "output": 8.00},
-    "gpt-5":                        {"input": 2.00,  "output": 8.00},
-    "gpt-4o":                       {"input": 2.50,  "output": 10.00},
-    "gpt-4o-mini":                  {"input": 0.15,  "output": 0.60},
-    "o1":                           {"input": 15.00, "output": 60.00},
-    "o1-mini":                      {"input": 3.00,  "output": 12.00},
+    "gpt-5.5": {"input": 5.00, "output": 30.00},
+    "gpt-5.5-pro": {"input": 30.00, "output": 180.00},
+    "gpt-5.4": {"input": 2.50, "output": 20.00},
+    "gpt-5.4-mini": {"input": 0.40, "output": 1.60},
+    "gpt-5.4-nano": {"input": 0.10, "output": 0.40},
+    "gpt-5.1": {"input": 2.00, "output": 8.00},
+    "gpt-5": {"input": 2.00, "output": 8.00},
+    "gpt-4o": {"input": 2.50, "output": 10.00},
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    "o1": {"input": 15.00, "output": 60.00},
+    "o1-mini": {"input": 3.00, "output": 12.00},
     # ── xAI (current — primary defaults) ────────────────────
-    "grok-4-3":                     {"input": 3.00,  "output": 15.00},
-    "grok-4-20-reasoning":          {"input": 3.00,  "output": 15.00},
-    "grok-4-20-non-reasoning":      {"input": 3.00,  "output": 15.00},
-    "grok-4-1-fast-reasoning":      {"input": 0.20,  "output": 0.50},
-    "grok-4-1-fast-non-reasoning":  {"input": 0.20,  "output": 0.50},
-    "grok-code-fast-1":             {"input": 0.20,  "output": 1.50},
-    "grok-4":                       {"input": 3.00,  "output": 15.00},
-    "grok-3":                       {"input": 3.00,  "output": 15.00},
+    "grok-4-3": {"input": 3.00, "output": 15.00},
+    "grok-4-20-reasoning": {"input": 3.00, "output": 15.00},
+    "grok-4-20-non-reasoning": {"input": 3.00, "output": 15.00},
+    "grok-4-1-fast-reasoning": {"input": 0.20, "output": 0.50},
+    "grok-4-1-fast-non-reasoning": {"input": 0.20, "output": 0.50},
+    "grok-code-fast-1": {"input": 0.20, "output": 1.50},
+    "grok-4": {"input": 3.00, "output": 15.00},
+    "grok-3": {"input": 3.00, "output": 15.00},
     # ── Legacy / opt-in via env ─────────────────────────────
-    "gemini-3.1-pro-preview":       {"input": 1.25,  "output": 10.00},
-    "gemini-3.1-pro":               {"input": 1.25,  "output": 10.00},
-    "gemini-3.1-flash-lite-preview":{"input": 0.075, "output": 0.30},
-    "gemini-3.1-flash-lite":        {"input": 0.075, "output": 0.30},
-    "gemini-3-flash-preview":       {"input": 0.10,  "output": 0.40},
-    "gemini-3-flash":               {"input": 0.10,  "output": 0.40},
-    "gemini-3-flash-preview-lite":  {"input": 0.075, "output": 0.30},
-    "gemini-2.0-flash":             {"input": 0.10,  "output": 0.40},
-    "gemini-1.5-pro":               {"input": 1.25,  "output": 5.00},
-    "gemini-1.5-flash":             {"input": 0.075, "output": 0.30},
-    "claude-sonnet-4.6":            {"input": 3.00,  "output": 15.00},
-    "claude-sonnet-4":              {"input": 3.00,  "output": 15.00},
-    "claude-opus-4":                {"input": 15.00, "output": 75.00},
-    "claude-3.5-sonnet":            {"input": 3.00,  "output": 15.00},
-    "claude-3-haiku":               {"input": 0.25,  "output": 1.25},
+    "gemini-3.1-pro-preview": {"input": 1.25, "output": 10.00},
+    "gemini-3.1-pro": {"input": 1.25, "output": 10.00},
+    "gemini-3.1-flash-lite-preview": {"input": 0.075, "output": 0.30},
+    "gemini-3.1-flash-lite": {"input": 0.075, "output": 0.30},
+    "gemini-3-flash-preview": {"input": 0.10, "output": 0.40},
+    "gemini-3-flash": {"input": 0.10, "output": 0.40},
+    "gemini-3-flash-preview-lite": {"input": 0.075, "output": 0.30},
+    "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
+    "gemini-1.5-pro": {"input": 1.25, "output": 5.00},
+    "gemini-1.5-flash": {"input": 0.075, "output": 0.30},
+    "claude-sonnet-4.6": {"input": 3.00, "output": 15.00},
+    "claude-sonnet-4": {"input": 3.00, "output": 15.00},
+    "claude-opus-4": {"input": 15.00, "output": 75.00},
+    "claude-3.5-sonnet": {"input": 3.00, "output": 15.00},
+    "claude-3-haiku": {"input": 0.25, "output": 1.25},
 }
 _DEFAULT_PRICING = {"input": 0.50, "output": 2.00}  # conservative default
 
@@ -105,6 +105,7 @@ def _get_pricing(model: str) -> dict:
 @dataclass
 class AgentUsage:
     """Accumulated LLM usage for a single agent."""
+
     agent_name: str
     model: str = ""
     call_count: int = 0
@@ -156,17 +157,12 @@ class TokenCounter:
         output_chars = len(output_text) if output_text else 0
 
         # Try to extract real token counts from response metadata
-        input_tokens, output_tokens = self._extract_tokens(
-            response_metadata, input_chars, output_chars
-        )
+        input_tokens, output_tokens = self._extract_tokens(response_metadata, input_chars, output_chars)
         total_tokens = input_tokens + output_tokens
 
         # Cost estimation — uses normalized model name + prefix-match fallback
         pricing = _get_pricing(model)
-        cost = (
-            (input_tokens / 1_000_000) * pricing["input"]
-            + (output_tokens / 1_000_000) * pricing["output"]
-        )
+        cost = (input_tokens / 1_000_000) * pricing["input"] + (output_tokens / 1_000_000) * pricing["output"]
 
         call_record = {
             "timestamp": time.time(),

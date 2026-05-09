@@ -15,34 +15,35 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-
 # ── Model Info ───────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class ModelInfo:
     """A single model entry in the catalog."""
-    id: str                # API model string (e.g. "gpt-5.4-mini")
-    display_name: str      # Human-friendly name
-    provider: str          # openai | anthropic | xai | gemini | openrouter
-    tier: str              # flagship | fast | mini | code
-    context_window: int    # in tokens (approximate)
+
+    id: str  # API model string (e.g. "gpt-5.4-mini")
+    display_name: str  # Human-friendly name
+    provider: str  # openai | anthropic | xai | gemini | openrouter
+    tier: str  # flagship | fast | mini | code
+    context_window: int  # in tokens (approximate)
 
 
 # ── Provider → API Key env vars ──────────────────────────────────────
 
 PROVIDER_ENV_KEYS: dict[str, tuple[str, ...]] = {
-    "openai":      ("OPENAI_API_KEY",),
-    "anthropic":   ("ANTHROPIC_API_KEY",),
-    "xai":         ("XAI_API_KEY",),
-    "gemini":      ("GOOGLE_API_KEY", "GOOGLE_API_KEYS"),
-    "openrouter":  ("OPENROUTER_API_KEY",),
+    "openai": ("OPENAI_API_KEY",),
+    "anthropic": ("ANTHROPIC_API_KEY",),
+    "xai": ("XAI_API_KEY",),
+    "gemini": ("GOOGLE_API_KEY", "GOOGLE_API_KEYS"),
+    "openrouter": ("OPENROUTER_API_KEY",),
 }
 
 PROVIDER_DISPLAY: dict[str, str] = {
-    "openai":     "OpenAI",
-    "anthropic":  "Anthropic",
-    "xai":        "xAI (Grok)",
-    "gemini":     "Google Gemini",
+    "openai": "OpenAI",
+    "anthropic": "Anthropic",
+    "xai": "xAI (Grok)",
+    "gemini": "Google Gemini",
     "openrouter": "OpenRouter",
 }
 
@@ -51,40 +52,40 @@ PROVIDER_DISPLAY: dict[str, str] = {
 
 PROVIDER_MODELS: dict[str, list[ModelInfo]] = {
     "openai": [
-        ModelInfo("gpt-5.5",                    "GPT-5.5",               "openai", "flagship",  256_000),
-        ModelInfo("gpt-5.4",                    "GPT-5.4",               "openai", "flagship",  128_000),
-        ModelInfo("gpt-5.4-mini",               "GPT-5.4 Mini",          "openai", "mini",      128_000),
-        ModelInfo("gpt-5.4-nano",               "GPT-5.4 Nano",          "openai", "mini",      128_000),
-        ModelInfo("gpt-5.2",                    "GPT-5.2",               "openai", "fast",      128_000),
-        ModelInfo("gpt-4.1-2025-04-14",         "GPT-4.1 (Apr 2025)",   "openai", "fast",      128_000),
-        ModelInfo("gpt-4.1-mini-2025-04-14",    "GPT-4.1 Mini (Apr 2025)", "openai", "mini",   128_000),
+        ModelInfo("gpt-5.5", "GPT-5.5", "openai", "flagship", 256_000),
+        ModelInfo("gpt-5.4", "GPT-5.4", "openai", "flagship", 128_000),
+        ModelInfo("gpt-5.4-mini", "GPT-5.4 Mini", "openai", "mini", 128_000),
+        ModelInfo("gpt-5.4-nano", "GPT-5.4 Nano", "openai", "mini", 128_000),
+        ModelInfo("gpt-5.2", "GPT-5.2", "openai", "fast", 128_000),
+        ModelInfo("gpt-4.1-2025-04-14", "GPT-4.1 (Apr 2025)", "openai", "fast", 128_000),
+        ModelInfo("gpt-4.1-mini-2025-04-14", "GPT-4.1 Mini (Apr 2025)", "openai", "mini", 128_000),
     ],
     "anthropic": [
-        ModelInfo("claude-opus-4-7",            "Claude Opus 4.7",       "anthropic", "flagship",  200_000),
-        ModelInfo("claude-sonnet-4-6",          "Claude Sonnet 4.6",     "anthropic", "fast",      200_000),
-        ModelInfo("claude-opus-4-6",            "Claude Opus 4.6",       "anthropic", "flagship",  200_000),
-        ModelInfo("claude-haiku-4-5",           "Claude Haiku 4.5",      "anthropic", "mini",      200_000),
-        ModelInfo("claude-sonnet-4-5",          "Claude Sonnet 4.5",     "anthropic", "fast",      200_000),
+        ModelInfo("claude-opus-4-7", "Claude Opus 4.7", "anthropic", "flagship", 200_000),
+        ModelInfo("claude-sonnet-4-6", "Claude Sonnet 4.6", "anthropic", "fast", 200_000),
+        ModelInfo("claude-opus-4-6", "Claude Opus 4.6", "anthropic", "flagship", 200_000),
+        ModelInfo("claude-haiku-4-5", "Claude Haiku 4.5", "anthropic", "mini", 200_000),
+        ModelInfo("claude-sonnet-4-5", "Claude Sonnet 4.5", "anthropic", "fast", 200_000),
     ],
     "xai": [
-        ModelInfo("grok-4.3",                   "Grok 4.3",              "xai", "flagship",  1_000_000),
-        ModelInfo("grok-4-1-fast-reasoning",    "Grok 4.1 Fast (Reasoning)",    "xai", "fast",  131_072),
-        ModelInfo("grok-4-1-fast-non-reasoning","Grok 4.1 Fast (Non-Reasoning)","xai", "fast",  131_072),
-        ModelInfo("grok-code-fast-1",           "Grok Code Fast 1",      "xai", "code",     131_072),
+        ModelInfo("grok-4.3", "Grok 4.3", "xai", "flagship", 1_000_000),
+        ModelInfo("grok-4-1-fast-reasoning", "Grok 4.1 Fast (Reasoning)", "xai", "fast", 131_072),
+        ModelInfo("grok-4-1-fast-non-reasoning", "Grok 4.1 Fast (Non-Reasoning)", "xai", "fast", 131_072),
+        ModelInfo("grok-code-fast-1", "Grok Code Fast 1", "xai", "code", 131_072),
     ],
     "gemini": [
-        ModelInfo("gemini-3.1-pro",             "Gemini 3.1 Pro",        "gemini", "flagship",  2_000_000),
-        ModelInfo("gemini-3-flash",             "Gemini 3 Flash",        "gemini", "fast",      1_000_000),
-        ModelInfo("gemini-3.1-flash-lite",      "Gemini 3.1 Flash Lite", "gemini", "mini",      1_000_000),
-        ModelInfo("gemini-2.5-pro",             "Gemini 2.5 Pro",        "gemini", "flagship",  1_000_000),
-        ModelInfo("gemini-2.5-flash",           "Gemini 2.5 Flash",      "gemini", "fast",      1_000_000),
+        ModelInfo("gemini-3.1-pro", "Gemini 3.1 Pro", "gemini", "flagship", 2_000_000),
+        ModelInfo("gemini-3-flash", "Gemini 3 Flash", "gemini", "fast", 1_000_000),
+        ModelInfo("gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite", "gemini", "mini", 1_000_000),
+        ModelInfo("gemini-2.5-pro", "Gemini 2.5 Pro", "gemini", "flagship", 1_000_000),
+        ModelInfo("gemini-2.5-flash", "Gemini 2.5 Flash", "gemini", "fast", 1_000_000),
     ],
     "openrouter": [
         # OpenRouter is a meta-provider — users type custom model strings.
         # We list a few popular defaults for convenience.
-        ModelInfo("anthropic/claude-sonnet-4-6", "Claude Sonnet 4.6 (OR)", "openrouter", "fast",  200_000),
-        ModelInfo("openai/gpt-5.4",              "GPT-5.4 (OR)",           "openrouter", "flagship", 128_000),
-        ModelInfo("google/gemini-3.1-pro",       "Gemini 3.1 Pro (OR)",    "openrouter", "flagship", 2_000_000),
+        ModelInfo("anthropic/claude-sonnet-4-6", "Claude Sonnet 4.6 (OR)", "openrouter", "fast", 200_000),
+        ModelInfo("openai/gpt-5.4", "GPT-5.4 (OR)", "openrouter", "flagship", 128_000),
+        ModelInfo("google/gemini-3.1-pro", "Gemini 3.1 Pro (OR)", "openrouter", "flagship", 2_000_000),
     ],
 }
 
@@ -92,42 +93,43 @@ PROVIDER_MODELS: dict[str, list[ModelInfo]] = {
 # ── Agent Roles → Env Vars ───────────────────────────────────────────
 
 AGENT_ROLES: dict[str, str] = {
-    "Main Agent":          "AGENT_MODEL_NAME",
-    "Recon Worker":        "RECON_MODEL_NAME",
-    "Attack Hypothesis":   "ATTACK_MODEL_NAME",
-    "Assumption Worker":   "ASSUMPTION_MODEL_NAME",
-    "Semantic Discovery":  "SEMANTIC_MODEL_NAME",
-    "Execution Trace":     "EXECUTION_TRACE_MODEL_NAME",
-    "Test Writer":         "TEST_WRITER_MODEL_NAME",
-    "Gate Filter":         "GATE_MODEL_NAME",
-    "Depth Workers":       "DEPTH_MODEL_NAME",
-    "Default Worker":      "WORKER_MODEL_NAME",
-    "Jury — Skeptic":      "JURY_SKEPTIC_MODEL",
-    "Jury — Attacker":     "JURY_ATTACKER_MODEL",
-    "Jury — Auditor":      "JURY_AUDITOR_MODEL",
-    "Jury — Judge":        "JURY_JUDGE_MODEL",
+    "Main Agent": "AGENT_MODEL_NAME",
+    "Recon Worker": "RECON_MODEL_NAME",
+    "Attack Hypothesis": "ATTACK_MODEL_NAME",
+    "Assumption Worker": "ASSUMPTION_MODEL_NAME",
+    "Semantic Discovery": "SEMANTIC_MODEL_NAME",
+    "Execution Trace": "EXECUTION_TRACE_MODEL_NAME",
+    "Test Writer": "TEST_WRITER_MODEL_NAME",
+    "Gate Filter": "GATE_MODEL_NAME",
+    "Depth Workers": "DEPTH_MODEL_NAME",
+    "Default Worker": "WORKER_MODEL_NAME",
+    "Jury — Skeptic": "JURY_SKEPTIC_MODEL",
+    "Jury — Attacker": "JURY_ATTACKER_MODEL",
+    "Jury — Auditor": "JURY_AUDITOR_MODEL",
+    "Jury — Judge": "JURY_JUDGE_MODEL",
 }
 
 # Sensible defaults per role (used when env var is not set)
 ROLE_DEFAULTS: dict[str, str] = {
-    "Main Agent":          "grok-4-1-fast-reasoning",
-    "Recon Worker":        "gpt-5.4-mini",
-    "Attack Hypothesis":   "grok-4-1-fast-reasoning",
-    "Assumption Worker":   "grok-4-1-fast-reasoning",
-    "Semantic Discovery":  "gpt-5.4-mini",
-    "Execution Trace":     "gpt-5.4-mini",
-    "Test Writer":         "grok-code-fast-1",
-    "Gate Filter":         "gpt-5.4-mini",
-    "Depth Workers":       "gpt-5.4-mini",
-    "Default Worker":      "gpt-5.4-mini",
-    "Jury — Skeptic":      "gpt-4.1-mini-2025-04-14",
-    "Jury — Attacker":     "grok-4-1-fast-non-reasoning",
-    "Jury — Auditor":      "gpt-4.1-mini-2025-04-14",
-    "Jury — Judge":        "grok-4-1-fast-non-reasoning",
+    "Main Agent": "grok-4-1-fast-reasoning",
+    "Recon Worker": "gpt-5.4-mini",
+    "Attack Hypothesis": "grok-4-1-fast-reasoning",
+    "Assumption Worker": "grok-4-1-fast-reasoning",
+    "Semantic Discovery": "gpt-5.4-mini",
+    "Execution Trace": "gpt-5.4-mini",
+    "Test Writer": "grok-code-fast-1",
+    "Gate Filter": "gpt-5.4-mini",
+    "Depth Workers": "gpt-5.4-mini",
+    "Default Worker": "gpt-5.4-mini",
+    "Jury — Skeptic": "gpt-4.1-mini-2025-04-14",
+    "Jury — Attacker": "grok-4-1-fast-non-reasoning",
+    "Jury — Auditor": "gpt-4.1-mini-2025-04-14",
+    "Jury — Judge": "grok-4-1-fast-non-reasoning",
 }
 
 
 # ── Public API ───────────────────────────────────────────────────────
+
 
 def get_available_providers() -> list[str]:
     """Return list of provider IDs that have at least one API key set."""

@@ -21,6 +21,7 @@ from src.utils.graph_queries import (
 #  Helpers
 # ═══════════════════════════════════════════════════════════════
 
+
 def _add_contract(g: nx.DiGraph, name: str, tier: str = "CORE"):
     g.add_node(name, type="contract", name=name, tier=tier)
 
@@ -37,54 +38,60 @@ def _add_func(
     **extra,
 ):
     fid = f"{contract}::{name}"
-    g.add_node(fid, **{
-        "type": "function",
-        "name": name,
-        "contract": contract,
-        "visibility": visibility,
-        "is_external_entry": is_external_entry,
-        "is_protected": is_protected,
-        "is_payable": is_payable,
-        "is_view_or_pure": False,
-        "is_constructor": False,
-        "reachable_from_external_entry": reachable,
-        "propagated_state_variables": [],
-        "writes_state": False,
-        "modifiers": [],
-        "signature": f"{name}()",
-        # DS1 / DS2 defaults
-        "safe_init_pattern": False,
-        "has_initializer_guard": False,
-        "has_reentrancy_guard": False,
-        "access_control_type": "none",
-        "unprotected_risk_level": "NONE",
-        "reentrancy_risk": False,
-        "can_escalate_privileges": False,
-        "is_unprotected_mutator": False,
-        "state_write_after_external_call": False,
-        "cei_violation_only": False,
-        "has_array_length_mutation": False,
-        "delegatecall_storage_risk": False,
-        "has_taint_risk": False,
-        "taint_risk_score": 0,
-        "taint_risk_types": [],
-        "tainted_state_writes": [],
-        **extra,
-    })
+    g.add_node(
+        fid,
+        **{
+            "type": "function",
+            "name": name,
+            "contract": contract,
+            "visibility": visibility,
+            "is_external_entry": is_external_entry,
+            "is_protected": is_protected,
+            "is_payable": is_payable,
+            "is_view_or_pure": False,
+            "is_constructor": False,
+            "reachable_from_external_entry": reachable,
+            "propagated_state_variables": [],
+            "writes_state": False,
+            "modifiers": [],
+            "signature": f"{name}()",
+            # DS1 / DS2 defaults
+            "safe_init_pattern": False,
+            "has_initializer_guard": False,
+            "has_reentrancy_guard": False,
+            "access_control_type": "none",
+            "unprotected_risk_level": "NONE",
+            "reentrancy_risk": False,
+            "can_escalate_privileges": False,
+            "is_unprotected_mutator": False,
+            "state_write_after_external_call": False,
+            "cei_violation_only": False,
+            "has_array_length_mutation": False,
+            "delegatecall_storage_risk": False,
+            "has_taint_risk": False,
+            "taint_risk_score": 0,
+            "taint_risk_types": [],
+            "tainted_state_writes": [],
+            **extra,
+        },
+    )
     return fid
 
 
 def _add_var(g: nx.DiGraph, contract: str, name: str, sensitivity_tags=None):
     vid = f"{contract}::{name}"
-    g.add_node(vid, **{
-        "type": "state_variable",
-        "node_type": "StateVariable",
-        "name": name,
-        "contract": contract,
-        "sensitivity_tags": sensitivity_tags or [],
-        "sensitivity_tag": (sensitivity_tags or [None])[0],
-        "is_sensitive": bool(sensitivity_tags),
-    })
+    g.add_node(
+        vid,
+        **{
+            "type": "state_variable",
+            "node_type": "StateVariable",
+            "name": name,
+            "contract": contract,
+            "sensitivity_tags": sensitivity_tags or [],
+            "sensitivity_tag": (sensitivity_tags or [None])[0],
+            "is_sensitive": bool(sensitivity_tags),
+        },
+    )
     return vid
 
 
@@ -98,6 +105,7 @@ def _link_writes(g, func_id, var_id):
 
 def _run_ds3(g: nx.DiGraph):
     from src.graph import GraphBuilder
+
     gb = GraphBuilder()
     gb.graph = g
     gb._build_state_dependency_graph()
@@ -116,8 +124,8 @@ def _run_ds3_with_scoring(g: nx.DiGraph):
 #  3.1 State Dependency Graph
 # ═══════════════════════════════════════════════════════════════
 
-class TestStateDependencyGraph:
 
+class TestStateDependencyGraph:
     def test_write_read_creates_dependency(self):
         """deposit() writes balance, withdraw() reads balance → dependency."""
         g = nx.DiGraph()
@@ -232,8 +240,8 @@ class TestStateDependencyGraph:
 #  3.2 Dangerous Sequence Detection
 # ═══════════════════════════════════════════════════════════════
 
-class TestDangerousSequences:
 
+class TestDangerousSequences:
     def test_accounting_manipulation_flagged(self):
         """Unprotected deposit writing accounting state → dangerous."""
         g = nx.DiGraph()
@@ -344,8 +352,8 @@ class TestDangerousSequences:
 #  3.3 Exploit Chain Generation
 # ═══════════════════════════════════════════════════════════════
 
-class TestExploitChains:
 
+class TestExploitChains:
     def test_two_step_chain_generated(self):
         g = nx.DiGraph()
         _add_contract(g, "V")
@@ -445,8 +453,8 @@ class TestExploitChains:
 #  Risk Score Integration
 # ═══════════════════════════════════════════════════════════════
 
-class TestRiskScoreIntegration:
 
+class TestRiskScoreIntegration:
     def test_sequence_risk_adds_to_structural(self):
         g = nx.DiGraph()
         _add_contract(g, "V")
@@ -507,10 +515,15 @@ class TestRiskScoreIntegration:
         g = nx.DiGraph()
         _add_contract(g, "V")
         vid = _add_var(g, "V", "admin", ["ACCESS_CRITICAL"])
-        f1 = _add_func(g, "V", "setAdmin", is_protected=False,
-                       sequence_risk_score=200,
-                       dangerous_sequences=[{"danger_types": ["PRIVILEGE_CHAIN"]}],
-                       has_dangerous_sequence=True)
+        f1 = _add_func(
+            g,
+            "V",
+            "setAdmin",
+            is_protected=False,
+            sequence_risk_score=200,
+            dangerous_sequences=[{"danger_types": ["PRIVILEGE_CHAIN"]}],
+            has_dangerous_sequence=True,
+        )
         _run_ds3_with_scoring(g)
 
         structural = g.nodes[f1]["structural_score"]
@@ -521,8 +534,8 @@ class TestRiskScoreIntegration:
 #  Query Layer
 # ═══════════════════════════════════════════════════════════════
 
-class TestQueryLayer:
 
+class TestQueryLayer:
     def test_get_state_dependencies(self):
         g = nx.DiGraph()
         _add_contract(g, "V")
@@ -621,8 +634,8 @@ class TestQueryLayer:
 #  End-to-End Scenario Tests
 # ═══════════════════════════════════════════════════════════════
 
-class TestEndToEnd:
 
+class TestEndToEnd:
     def test_defi_deposit_claim_withdraw_flow(self):
         """
         Classic DeFi exploit flow:

@@ -162,18 +162,14 @@ class GraphBuilder(
 
         self._file_cache.clear()
 
-
     def export_json(self, output_path: str):
         """
         Exports the graph to a JSON file using node-link data format.
         """
         data = nx.node_link_data(self.graph)
-        with open(output_path, 'w', encoding='utf-8') as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
         print(f"Graph exported to {output_path}")
 
     def get_graph_stats(self):
-        return {
-            "nodes": self.graph.number_of_nodes(),
-            "edges": self.graph.number_of_edges()
-        }
+        return {"nodes": self.graph.number_of_nodes(), "edges": self.graph.number_of_edges()}

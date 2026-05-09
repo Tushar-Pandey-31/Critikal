@@ -4,7 +4,7 @@ import sys
 import pytest
 
 # Add src to sys.path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from analysis_engine import AnalysisEngine
 from src.graph import GraphBuilder
@@ -17,7 +17,7 @@ from utils.graph_queries import GraphQueries
 @pytest.fixture(scope="module")
 def access_control_graph():
     """Builds the Knowledge Graph from the test contracts directory."""
-    repo_path = os.path.join(os.getcwd(), 'tests', 'contracts')
+    repo_path = os.path.join(os.getcwd(), "tests", "contracts")
 
     engine = AnalysisEngine()
     slither_obj = engine.run_analysis(repo_path)
@@ -46,7 +46,8 @@ class TestModifierExtraction:
         graph = access_control_graph
 
         modifier_nodes = [
-            (nid, nd) for nid, nd in graph.nodes(data=True)
+            (nid, nd)
+            for nid, nd in graph.nodes(data=True)
             if nd.get("type") == "modifier" and nd.get("contract") == "AccessControlTest"
         ]
 
@@ -54,12 +55,12 @@ class TestModifierExtraction:
         print(f"\nFound {len(modifier_nodes)} modifier nodes: {modifier_names}")
 
         # Should have: onlyOwner, onlyAdmin, whenNotPaused, onlyTxOrigin, onlyRole
-        assert len(modifier_nodes) >= 5, \
+        assert len(modifier_nodes) >= 5, (
             f"Expected at least 5 modifier nodes, got {len(modifier_nodes)}: {modifier_names}"
+        )
 
         for expected in ["onlyOwner", "onlyAdmin", "whenNotPaused", "onlyTxOrigin", "onlyRole"]:
-            assert expected in modifier_names, \
-                f"Modifier '{expected}' not found. Found: {modifier_names}"
+            assert expected in modifier_names, f"Modifier '{expected}' not found. Found: {modifier_names}"
 
     def test_onlyOwner_conditions(self, access_control_graph):
         """onlyOwner should have require condition checking msg.sender == owner."""
@@ -98,8 +99,9 @@ class TestModifierExtraction:
         mod_data = graph.nodes[mod_id]
 
         assert mod_data.get("is_access_control") == True
-        assert mod_data.get("access_control_pattern") == "role_mapping", \
+        assert mod_data.get("access_control_pattern") == "role_mapping", (
             f"Expected 'role_mapping', got '{mod_data.get('access_control_pattern')}'"
+        )
 
         # Should check msg.sender
         conditions = mod_data.get("conditions", [])
@@ -113,8 +115,9 @@ class TestModifierExtraction:
         assert graph.has_node(mod_id), f"Node {mod_id} not found"
         mod_data = graph.nodes[mod_id]
 
-        assert mod_data.get("access_control_pattern") == "boolean_flag", \
+        assert mod_data.get("access_control_pattern") == "boolean_flag", (
             f"Expected 'boolean_flag', got '{mod_data.get('access_control_pattern')}'"
+        )
 
     def test_onlyTxOrigin_pattern(self, access_control_graph):
         """onlyTxOrigin should be classified as 'tx_origin' pattern."""
@@ -125,8 +128,9 @@ class TestModifierExtraction:
         mod_data = graph.nodes[mod_id]
 
         assert mod_data.get("is_access_control") == True
-        assert mod_data.get("access_control_pattern") == "tx_origin", \
+        assert mod_data.get("access_control_pattern") == "tx_origin", (
             f"Expected 'tx_origin', got '{mod_data.get('access_control_pattern')}'"
+        )
 
         # Should check tx.origin
         conditions = mod_data.get("conditions", [])
@@ -143,21 +147,19 @@ class TestModifierExtraction:
         assert mod_data.get("is_access_control") == True
         pattern = mod_data.get("access_control_pattern")
         # hasRole pattern should be role_mapping or owner_check
-        assert pattern in ("role_mapping", "owner_check"), \
-            f"Expected role-based pattern, got '{pattern}'"
+        assert pattern in ("role_mapping", "owner_check"), f"Expected role-based pattern, got '{pattern}'"
 
     def test_has_modifier_edges(self, access_control_graph):
         """Contract should have HAS_MODIFIER edges to modifier nodes."""
         graph = access_control_graph
 
         has_modifier_edges = [
-            (src, tgt) for src, tgt, data in graph.edges(data=True)
-            if data.get("relationship") == "HAS_MODIFIER"
-            and src == "AccessControlTest"
+            (src, tgt)
+            for src, tgt, data in graph.edges(data=True)
+            if data.get("relationship") == "HAS_MODIFIER" and src == "AccessControlTest"
         ]
 
-        assert len(has_modifier_edges) >= 5, \
-            f"Expected at least 5 HAS_MODIFIER edges, got {len(has_modifier_edges)}"
+        assert len(has_modifier_edges) >= 5, f"Expected at least 5 HAS_MODIFIER edges, got {len(has_modifier_edges)}"
 
     def test_modifier_state_variable_access(self, access_control_graph):
         """Modifiers should track which state variables they read."""
@@ -168,8 +170,9 @@ class TestModifierExtraction:
         accessed_vars = mod_data.get("accesses_state_variables", [])
 
         # onlyOwner reads 'owner'
-        assert any("owner" in v for v in accessed_vars), \
+        assert any("owner" in v for v in accessed_vars), (
             f"onlyOwner should access 'owner' variable. Got: {accessed_vars}"
+        )
 
 
 # ================================================================
@@ -240,12 +243,7 @@ class TestFunctionAccessMapping:
         """Every function node in AccessControlTest should have access profile fields."""
         graph = access_control_graph
 
-        required_fields = [
-            "has_access_control",
-            "access_control_modifiers",
-            "has_inline_access_check",
-            "is_protected"
-        ]
+        required_fields = ["has_access_control", "access_control_modifiers", "has_inline_access_check", "is_protected"]
 
         for node_id, node_data in graph.nodes(data=True):
             if node_data.get("type") != "function":
@@ -254,8 +252,7 @@ class TestFunctionAccessMapping:
                 continue
 
             for field in required_fields:
-                assert field in node_data, \
-                    f"Function {node_id} missing field '{field}'"
+                assert field in node_data, f"Function {node_id} missing field '{field}'"
 
 
 # ================================================================
@@ -287,12 +284,12 @@ class TestPrivilegedRoleDetection:
         assert len(owner_roles) >= 1, f"Owner role not found. Roles: {[r['role_name'] for r in roles]}"
 
         owner_role = owner_roles[0]
-        assert len(owner_role["protected_functions"]) >= 1, \
-            "Owner role should protect at least 1 function"
+        assert len(owner_role["protected_functions"]) >= 1, "Owner role should protect at least 1 function"
 
         # setOwner should be protected by owner
-        assert any("setOwner" in f for f in owner_role["protected_functions"]), \
+        assert any("setOwner" in f for f in owner_role["protected_functions"]), (
             f"setOwner should be in protected functions. Got: {owner_role['protected_functions']}"
+        )
 
         assert owner_role["how_verified"] == "modifier"
         assert owner_role["pattern"] == "owner_check"
@@ -310,8 +307,9 @@ class TestPrivilegedRoleDetection:
         assert len(admin_roles) >= 1, f"Admin role not found. Roles: {[r['role_name'] for r in roles]}"
 
         admin_role = admin_roles[0]
-        assert any("adminWithdraw" in f for f in admin_role["protected_functions"]), \
+        assert any("adminWithdraw" in f for f in admin_role["protected_functions"]), (
             f"adminWithdraw should be protected by admin. Got: {admin_role['protected_functions']}"
+        )
 
     def test_role_profile_structure(self, access_control_graph):
         """Each RoleProfile should have all required fields."""
@@ -320,15 +318,11 @@ class TestPrivilegedRoleDetection:
         contract_data = graph.nodes.get("AccessControlTest", {})
         roles = contract_data.get("privileged_roles", [])
 
-        required_fields = [
-            "role_name", "protected_functions", "underlying_variable",
-            "how_verified", "pattern"
-        ]
+        required_fields = ["role_name", "protected_functions", "underlying_variable", "how_verified", "pattern"]
 
         for role in roles:
             for field in required_fields:
-                assert field in role, \
-                    f"Role '{role.get('role_name')}' missing field '{field}'"
+                assert field in role, f"Role '{role.get('role_name')}' missing field '{field}'"
 
 
 # ================================================================
@@ -345,10 +339,12 @@ class TestUnprotectedMutatorDetection:
         assert graph.has_node(func_id), f"Node {func_id} not found"
         func_data = graph.nodes[func_id]
 
-        assert func_data.get("is_unprotected_mutator") == True, \
+        assert func_data.get("is_unprotected_mutator") == True, (
             "unsafeIncrement should be flagged as unprotected mutator"
-        assert func_data.get("unprotected_risk_level") == "MEDIUM", \
+        )
+        assert func_data.get("unprotected_risk_level") == "MEDIUM", (
             f"Expected MEDIUM risk, got {func_data.get('unprotected_risk_level')}"
+        )
 
     def test_unsafe_set_value_flagged(self, access_control_graph):
         """unsafeSetValue (external, writes state, no modifier) should be flagged."""
@@ -369,8 +365,9 @@ class TestUnprotectedMutatorDetection:
         func_data = graph.nodes[func_id]
 
         assert func_data.get("is_unprotected_mutator") == True
-        assert func_data.get("unprotected_risk_level") == "HIGH", \
+        assert func_data.get("unprotected_risk_level") == "HIGH", (
             f"Payable unprotected mutator should be HIGH risk, got {func_data.get('unprotected_risk_level')}"
+        )
 
     def test_protected_function_not_flagged(self, access_control_graph):
         """setOwner (has onlyOwner modifier) should NOT be flagged."""
@@ -378,8 +375,9 @@ class TestUnprotectedMutatorDetection:
         func_id = "AccessControlTest::setOwner"
 
         func_data = graph.nodes[func_id]
-        assert func_data.get("is_unprotected_mutator") == False, \
+        assert func_data.get("is_unprotected_mutator") == False, (
             "Protected function should NOT be flagged as unprotected mutator"
+        )
 
     def test_inline_protected_not_flagged(self, access_control_graph):
         """inlineProtected (inline require) should NOT be flagged."""
@@ -387,8 +385,7 @@ class TestUnprotectedMutatorDetection:
         func_id = "AccessControlTest::inlineProtected"
 
         func_data = graph.nodes[func_id]
-        assert func_data.get("is_unprotected_mutator") == False, \
-            "Inline-protected function should NOT be flagged"
+        assert func_data.get("is_unprotected_mutator") == False, "Inline-protected function should NOT be flagged"
 
     def test_view_function_not_flagged(self, access_control_graph):
         """getBalance (view, no state writes) should NOT be flagged."""
@@ -396,8 +393,7 @@ class TestUnprotectedMutatorDetection:
         func_id = "AccessControlTest::getBalance"
 
         func_data = graph.nodes[func_id]
-        assert func_data.get("is_unprotected_mutator") == False, \
-            "View function should NOT be flagged"
+        assert func_data.get("is_unprotected_mutator") == False, "View function should NOT be flagged"
 
     def test_constructor_not_flagged(self, access_control_graph):
         """Constructor should NOT be flagged even though it writes state."""
@@ -406,15 +402,16 @@ class TestUnprotectedMutatorDetection:
         constructor_candidates = [
             "AccessControlTest::constructor",
             "AccessControlTest::slitherConstructorVariables",
-            "AccessControlTest::slitherConstructorConstantVariables"
+            "AccessControlTest::slitherConstructorConstantVariables",
         ]
 
         for candidate in constructor_candidates:
             if graph.has_node(candidate):
                 func_data = graph.nodes[candidate]
                 if func_data.get("is_constructor"):
-                    assert func_data.get("is_unprotected_mutator") == False, \
+                    assert func_data.get("is_unprotected_mutator") == False, (
                         "Constructor should NOT be flagged as unprotected mutator"
+                    )
 
 
 # ================================================================
@@ -446,8 +443,13 @@ class TestAccessControlQueryAPI:
 
         # Verify required fields
         required_fields = [
-            "function_id", "name", "contract", "visibility",
-            "has_access_control", "is_protected", "writes_state"
+            "function_id",
+            "name",
+            "contract",
+            "visibility",
+            "has_access_control",
+            "is_protected",
+            "writes_state",
         ]
         for entry in summary:
             for field in required_fields:
@@ -473,20 +475,22 @@ class TestAccessControlQueryAPI:
         roles = queries.get_privileged_roles("AccessControlTest")
 
         required_fields = [
-            "contract", "role_name", "protected_functions",
-            "underlying_variable", "how_verified", "pattern"
+            "contract",
+            "role_name",
+            "protected_functions",
+            "underlying_variable",
+            "how_verified",
+            "pattern",
         ]
         for role in roles:
             for field in required_fields:
-                assert field in role, \
-                    f"Role '{role.get('role_name')}' missing field '{field}'"
+                assert field in role, f"Role '{role.get('role_name')}' missing field '{field}'"
 
     def test_get_unprotected_mutators(self, queries):
         """get_unprotected_mutators should return flagged functions."""
         mutators = queries.get_unprotected_mutators("AccessControlTest")
 
-        assert len(mutators) >= 2, \
-            f"Expected at least 2 unprotected mutators, got {len(mutators)}"
+        assert len(mutators) >= 2, f"Expected at least 2 unprotected mutators, got {len(mutators)}"
 
         mutator_names = [m["name"] for m in mutators]
         assert "unsafeIncrement" in mutator_names
@@ -523,7 +527,7 @@ if __name__ == "__main__":
     print("=" * 60)
 
     # Build graph once
-    repo_path = os.path.join(os.getcwd(), 'tests', 'contracts')
+    repo_path = os.path.join(os.getcwd(), "tests", "contracts")
     engine = AnalysisEngine()
     slither_obj = engine.run_analysis(repo_path)
     assert slither_obj is not None, "Slither analysis failed"
@@ -539,8 +543,7 @@ if __name__ == "__main__":
     print("\n--- Modifier Nodes ---")
     for nid, nd in graph.nodes(data=True):
         if nd.get("type") == "modifier" and nd.get("contract") == "AccessControlTest":
-            print(f"  {nid}: pattern={nd.get('access_control_pattern')}, "
-                  f"conditions={len(nd.get('conditions', []))}")
+            print(f"  {nid}: pattern={nd.get('access_control_pattern')}, conditions={len(nd.get('conditions', []))}")
 
     print("\n--- Unprotected Mutators ---")
     for m in queries_obj.get_unprotected_mutators("AccessControlTest"):
@@ -548,8 +551,7 @@ if __name__ == "__main__":
 
     print("\n--- Privileged Roles ---")
     for r in queries_obj.get_privileged_roles("AccessControlTest"):
-        print(f"  {r['role_name']}: protects {len(r['protected_functions'])} functions, "
-              f"pattern={r['pattern']}")
+        print(f"  {r['role_name']}: protects {len(r['protected_functions'])} functions, pattern={r['pattern']}")
 
     print("\n" + "=" * 60)
     print("Summary complete. Run 'pytest tests/test_access_control.py -v' for full validation.")

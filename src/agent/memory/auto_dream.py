@@ -111,6 +111,7 @@ class AutoDream:
 
     def __init__(self, engagement_id: str, memory_dir: Path | None = None):
         from src.agent.memory.session_memory import MEMORY_BASE_DIR
+
         self.engagement_id = engagement_id
         self.memory_dir = (memory_dir or MEMORY_BASE_DIR) / engagement_id
         self.memory_dir.mkdir(parents=True, exist_ok=True)
@@ -164,10 +165,12 @@ class AutoDream:
 
             # Run LLM
             from src.llm.providers import get_worker_llm
+
             model = os.getenv("DREAM_MODEL_NAME", "gpt-5.4-mini")
             llm = get_worker_llm(model_name=model, temperature=0.0)
 
             from langchain_core.messages import HumanMessage
+
             response = await llm.ainvoke([HumanMessage(content=prompt)])
             result = response.content if isinstance(response.content, str) else str(response.content)
 
@@ -176,8 +179,7 @@ class AutoDream:
             self._lock.release()
 
             logger.info(
-                f"[dream] Consolidation complete for {self.engagement_id}: "
-                f"{len(entries)} entries → {len(result)} chars"
+                f"[dream] Consolidation complete for {self.engagement_id}: {len(entries)} entries → {len(result)} chars"
             )
             return True
 
@@ -187,9 +189,7 @@ class AutoDream:
                 self._lock.rollback(prior_mtime)
             return False
 
-    def _load_entries(
-        self, session_file: Path, since: float = 0
-    ) -> list[dict[str, Any]]:
+    def _load_entries(self, session_file: Path, since: float = 0) -> list[dict[str, Any]]:
         """Load session entries newer than 'since' timestamp."""
         entries = []
         with open(session_file) as f:
@@ -205,15 +205,12 @@ class AutoDream:
                     continue
         return entries
 
-    def _build_consolidation_prompt(
-        self, existing: str, new_entries: list[dict]
-    ) -> str:
+    def _build_consolidation_prompt(self, existing: str, new_entries: list[dict]) -> str:
         """
         Build the 4-phase consolidation prompt.
         """
         entries_text = "\n".join(
-            f"- [{e.get('type', '?')}] {e.get('description', '?')}: {e.get('content', '')[:300]}"
-            for e in new_entries
+            f"- [{e.get('type', '?')}] {e.get('description', '?')}: {e.get('content', '')[:300]}" for e in new_entries
         )
 
         existing_section = ""

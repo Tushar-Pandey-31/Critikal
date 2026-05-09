@@ -48,7 +48,7 @@ class EconomicAnalyzer:
             # If no access control or missing checks, assume missing cap.
             is_unprotected = not node_data.get("is_protected", False)
 
-            if (node_data.get("writes_total_supply") or node_data.get("mints_shares_proportionally")):
+            if node_data.get("writes_total_supply") or node_data.get("mints_shares_proportionally"):
                 if missing_cap or is_unprotected:
                     combined_multiplier += 0.5
                     flags.append("UNBOUNDED_MINT_RISK")

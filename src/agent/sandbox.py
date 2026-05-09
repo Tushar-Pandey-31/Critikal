@@ -28,11 +28,12 @@ SANDBOX_ENABLED = os.getenv("CRITIKAL_SANDBOX", "1").lower() not in ("0", "false
 @dataclass
 class SandboxOptions:
     """Controls what the sandbox permits."""
-    allow_network: bool = True          # Allow outbound network (needed for fork_url, API calls)
+
+    allow_network: bool = True  # Allow outbound network (needed for fork_url, API calls)
     writable_paths: list[str] = field(default_factory=list)  # Extra dirs to bind read-write
     readonly_paths: list[str] = field(default_factory=list)  # Extra dirs to bind read-only
-    env_vars: dict[str, str] = field(default_factory=dict)   # Extra env vars to pass through
-    working_dir: str | None = None       # Working directory inside sandbox
+    env_vars: dict[str, str] = field(default_factory=dict)  # Extra env vars to pass through
+    working_dir: str | None = None  # Working directory inside sandbox
 
 
 class SandboxManager:
@@ -116,9 +117,7 @@ class SandboxManager:
         elif system == "Darwin" and cls._check_sandbox_exec():
             return cls._wrap_sandbox_exec(command, shell, opts)
         else:
-            logger.debug(
-                "[sandbox] No sandbox available on %s — running unsandboxed", system
-            )
+            logger.debug("[sandbox] No sandbox available on %s — running unsandboxed", system)
             return command
 
     @classmethod
@@ -130,11 +129,16 @@ class SandboxManager:
             "bwrap",
             # ── Filesystem ──
             # Bind the whole system read-only as base
-            "--ro-bind", "/", "/",
+            "--ro-bind",
+            "/",
+            "/",
             # Overlay /dev, /proc, /tmp fresh
-            "--dev", "/dev",
-            "--proc", "/proc",
-            "--tmpfs", "/tmp",
+            "--dev",
+            "/dev",
+            "--proc",
+            "/proc",
+            "--tmpfs",
+            "/tmp",
             # ── Process isolation ──
             "--unshare-pid",
             "--unshare-ipc",
@@ -184,9 +188,19 @@ class SandboxManager:
         # We use --setenv for critical vars
         env_args = []
         pass_through = [
-            "PATH", "HOME", "USER", "LANG", "TERM",
-            "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY",
-            "ETHERSCAN_API_KEY", "ETH_RPC_URL", "FORK_URL", "DEPLOYER_PRIVATE_KEY",
+            "PATH",
+            "HOME",
+            "USER",
+            "LANG",
+            "TERM",
+            "ANTHROPIC_API_KEY",
+            "GOOGLE_API_KEY",
+            "OPENAI_API_KEY",
+            "XAI_API_KEY",
+            "ETHERSCAN_API_KEY",
+            "ETH_RPC_URL",
+            "FORK_URL",
+            "DEPLOYER_PRIVATE_KEY",
         ]
         for var in pass_through:
             val = os.environ.get(var)
@@ -211,10 +225,10 @@ class SandboxManager:
 
         profile_lines = [
             "(version 1)",
-            "(allow default)",              # Start permissive
-            "(deny process-fork)",          # No fork bombs
-            "(deny file-write* (subpath \"/System\"))",
-            "(deny file-write* (subpath \"/private/etc\"))",
+            "(allow default)",  # Start permissive
+            "(deny process-fork)",  # No fork bombs
+            '(deny file-write* (subpath "/System"))',
+            '(deny file-write* (subpath "/private/etc"))',
             network_rule,
         ]
 
@@ -225,9 +239,7 @@ class SandboxManager:
         profile = "\n".join(profile_lines)
 
         # Write profile to temp file (sandbox-exec takes a file path)
-        profile_file = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".sb", delete=False, prefix="critikal_sb_"
-        )
+        profile_file = tempfile.NamedTemporaryFile(mode="w", suffix=".sb", delete=False, prefix="critikal_sb_")
         profile_file.write(profile)
         profile_file.flush()
         profile_file.close()

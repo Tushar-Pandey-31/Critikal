@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 
 class JuryTool(Tool):
-
     def name(self) -> str:
         return "run_jury_debate"
 
@@ -66,7 +65,8 @@ class JuryTool(Tool):
         else:
             # Default: gate-passed findings only
             target_findings = [
-                f for f in ctx.findings
+                f
+                for f in ctx.findings
                 if getattr(f, "gate_verdict", None) == "PASS" or getattr(f, "gate_verdict", None) is None
             ]
 

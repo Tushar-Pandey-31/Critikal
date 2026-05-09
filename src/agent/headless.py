@@ -6,6 +6,7 @@ import uuid
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 def _stdout_prompt_callback():
     """Create a prompt callback for headless mode that reads from stdin."""
+
     async def _prompt(tool_name: str, params: dict, level: str) -> bool:
         # In yolo mode this won't be called
         # In ask mode, print and wait for input
@@ -40,6 +42,7 @@ def _stdout_prompt_callback():
             return answer in ("y", "yes")
         except (EOFError, KeyboardInterrupt):
             return False
+
     return _prompt
 
 
@@ -96,6 +99,7 @@ class HeadlessRunner:
         # fall back to another provider, and *that* fails too — the
         # real cause ("no key set") is buried under retry noise.
         from src.llm.providers import check_provider_credentials
+
         ok, detail = check_provider_credentials(self.model)
         if not ok:
             msg = f"Preflight failed: {detail}"
@@ -123,8 +127,10 @@ class HeadlessRunner:
         # Set up permission handler
         if self.permission_mode == "yolo":
             handler = PermissionHandler()
+
             async def _auto_approve(*a):
                 return True
+
             handler._prompt_callback = _auto_approve
         else:
             handler = PermissionHandler(prompt_callback=_stdout_prompt_callback())
@@ -141,9 +147,7 @@ class HeadlessRunner:
         )
 
         # Start event consumer (stdout printer)
-        consumer_task = asyncio.create_task(
-            self._consume_events(ctx.event_bus)
-        )
+        consumer_task = asyncio.create_task(self._consume_events(ctx.event_bus))
 
         # SessionStart hook (best-effort, pre-loop)
         if ctx.hooks is not None and ctx.hooks.has("SessionStart"):
@@ -191,11 +195,13 @@ class HeadlessRunner:
         stats = loop.get_conversation_stats()
         cost = ctx.cost_tracker.format_short() if ctx.cost_tracker else "$0.00"
         memories = ctx.memory.get_memory_count() if ctx.memory else 0
-        print(f"\n{'='*60}")
-        print(f"Session complete. Cost: {cost} | Turns: {stats['turns']} | "
-              f"Findings: {stats['findings']} | Memories: {memories}")
+        print(f"\n{'=' * 60}")
+        print(
+            f"Session complete. Cost: {cost} | Turns: {stats['turns']} | "
+            f"Findings: {stats['findings']} | Memories: {memories}"
+        )
         print(f"Engagement: {self.engagement_id}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         # Post-session: trigger memory consolidation (best-effort)
         if ctx.memory and ctx.memory.get_memory_count() > 0:

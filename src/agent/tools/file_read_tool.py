@@ -14,7 +14,6 @@ MAX_LINES = 2000
 
 
 class FileReadTool(Tool):
-
     def name(self) -> str:
         return "file_read"
 
@@ -55,9 +54,7 @@ class FileReadTool(Tool):
 
         raw_path = params.get("file_path") or params.get("path") or params.get("filename") or ""
         if not raw_path:
-            return ToolResult.error(
-                f"Missing 'file_path'. Got keys: {list(params.keys())}"
-            )
+            return ToolResult.error(f"Missing 'file_path'. Got keys: {list(params.keys())}")
         offset = max(params.get("offset", 0), 0)
         limit = min(params.get("limit", MAX_LINES), MAX_LINES)
 
@@ -74,9 +71,17 @@ class FileReadTool(Tool):
 
         # Binary detection
         mime, _ = mimetypes.guess_type(str(p))
-        if mime and not mime.startswith("text/") and mime not in (
-            "application/json", "application/xml", "application/javascript",
-            "application/x-yaml", "application/toml",
+        if (
+            mime
+            and not mime.startswith("text/")
+            and mime
+            not in (
+                "application/json",
+                "application/xml",
+                "application/javascript",
+                "application/x-yaml",
+                "application/toml",
+            )
         ):
             # Check first 8KB for null bytes
             try:
@@ -84,9 +89,7 @@ class FileReadTool(Tool):
                     chunk = f.read(8192)
                 if b"\x00" in chunk:
                     size = p.stat().st_size
-                    return ToolResult.success(
-                        f"Binary file: {p} ({size} bytes, type: {mime})"
-                    )
+                    return ToolResult.success(f"Binary file: {p} ({size} bytes, type: {mime})")
             except Exception:
                 pass
 
@@ -97,14 +100,12 @@ class FileReadTool(Tool):
             return ToolResult.error(f"Failed to read {p}: {e}")
 
         total = len(all_lines)
-        selected = all_lines[offset:offset + limit]
+        selected = all_lines[offset : offset + limit]
 
         if not selected:
             if total == 0:
                 return ToolResult.success(f"(empty file: {p})")
-            return ToolResult.error(
-                f"Offset {offset} is past end of file ({total} lines)."
-            )
+            return ToolResult.error(f"Offset {offset} is past end of file ({total} lines).")
 
         # Format with line numbers
         numbered = []

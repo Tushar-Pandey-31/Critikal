@@ -14,7 +14,6 @@ from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class IngestTool(Tool):
-
     def name(self) -> str:
         return "ingest_repo"
 
@@ -85,9 +84,7 @@ class IngestTool(Tool):
 
                 engine = AnalysisEngine()
                 try:
-                    slither_obj, ingestion_report = engine.run_analysis_v2(
-                        repo_path, targets=None
-                    )
+                    slither_obj, ingestion_report = engine.run_analysis_v2(repo_path, targets=None)
                 except Exception as e:
                     return ToolResult.success(
                         f"Repo cloned to {repo_path} but Slither failed: {e}. "

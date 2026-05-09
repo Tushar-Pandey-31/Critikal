@@ -2,7 +2,7 @@ import os
 import sys
 
 # Add src to sys.path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from analysis_engine import AnalysisEngine
 from src.graph import GraphBuilder
@@ -10,7 +10,7 @@ from src.graph import GraphBuilder
 
 def test_graph_builder():
     # Setup
-    repo_path = os.path.join(os.getcwd(), 'tests', 'contracts', 'Complex.sol')
+    repo_path = os.path.join(os.getcwd(), "tests", "contracts", "Complex.sol")
     print(f"Analyzing {repo_path}...")
 
     engine = AnalysisEngine()
@@ -40,9 +40,9 @@ def test_graph_builder():
     if graph.has_edge(src, dst):
         edge_data = graph.get_edge_data(src, dst)
         if edge_data["relationship"] == "CALLS":
-             print(f"PASS: Call Edge {src} -> {dst} found.")
+            print(f"PASS: Call Edge {src} -> {dst} found.")
         else:
-             print(f"FAIL: Edge {src} -> {dst} exists but type is {edge_data['relationship']}")
+            print(f"FAIL: Edge {src} -> {dst} exists but type is {edge_data['relationship']}")
     else:
         print(f"FAIL: Call Edge {src} -> {dst} MISSING.")
 
@@ -54,7 +54,7 @@ def test_graph_builder():
         if edge_data["relationship"] == "WRITES":
             print(f"PASS: State Access {src} -> WRITES -> {var_id} found.")
         else:
-             print(f"FAIL: Edge {src} -> {var_id} exists but type is {edge_data['relationship']}")
+            print(f"FAIL: Edge {src} -> {var_id} exists but type is {edge_data['relationship']}")
     else:
         print(f"FAIL: State Access {src} -> {var_id} MISSING.")
 
@@ -65,7 +65,7 @@ def test_graph_builder():
         if edge_data["relationship"] == "READS":
             print(f"PASS: State Access {src_get} -> READS -> {var_id} found.")
         else:
-             print(f"FAIL: Edge {src_get} -> {var_id} exists but type is {edge_data['relationship']}")
+            print(f"FAIL: Edge {src_get} -> {var_id} exists but type is {edge_data['relationship']}")
     else:
         print(f"FAIL: State Access {src_get} -> {var_id} MISSING.")
 
@@ -73,7 +73,7 @@ def test_graph_builder():
     # Slither might resolve this to Parent::setParentVar or Complex::setParentVar depending on how it handles inherited functions.
     # Usually internal calls point to the definition.
     src_call = "Complex::callParent"
-    dst_parent = "Parent::setParentVar" # Defined in Parent
+    dst_parent = "Parent::setParentVar"  # Defined in Parent
 
     # Check if edge exists to Parent::setParentVar
     if graph.has_edge(src_call, dst_parent):
@@ -82,9 +82,9 @@ def test_graph_builder():
         # Fallback check: maybe it points to Complex::setParentVar?
         dst_complex = "Complex::setParentVar"
         if graph.has_edge(src_call, dst_complex):
-             print(f"WARN: Call Edge points to {dst_complex} instead of {dst_parent}. Acceptable but noted.")
+            print(f"WARN: Call Edge points to {dst_complex} instead of {dst_parent}. Acceptable but noted.")
         else:
-             print(f"FAIL: Call Edge from {src_call} to setParentVar MISSING.")
+            print(f"FAIL: Call Edge from {src_call} to setParentVar MISSING.")
 
     # Export
     output_path = "test_graph_complex.json"
@@ -92,6 +92,7 @@ def test_graph_builder():
     if os.path.exists(output_path):
         print(f"Graph exported to {output_path}")
         os.remove(output_path)
+
 
 if __name__ == "__main__":
     test_graph_builder()

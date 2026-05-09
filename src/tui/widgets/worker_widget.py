@@ -9,11 +9,11 @@ from textual.containers import VerticalScroll
 from textual.reactive import reactive
 from textual.widgets import Static
 
-FG       = "#e8e8e8"
-DIM      = "#8a8a8a"
-DIMMER   = "#5a5a5a"
-ACCENT   = "#7dd3c0"
-DANGER   = "#e08a8a"
+FG = "#e8e8e8"
+DIM = "#8a8a8a"
+DIMMER = "#5a5a5a"
+ACCENT = "#7dd3c0"
+DANGER = "#e08a8a"
 
 
 class WorkerEntry(Static):
@@ -30,9 +30,9 @@ class WorkerEntry(Static):
 
     def _refresh_entry(self):
         icons = {
-            "running":    ("◐", ACCENT),
-            "done":       ("✓", DIMMER),
-            "error":      ("✗", DANGER),
+            "running": ("◐", ACCENT),
+            "done": ("✓", DIMMER),
+            "error": ("✗", DANGER),
             "background": ("◓", DIM),
         }
         icon, color = icons.get(self.status, ("·", DIM))

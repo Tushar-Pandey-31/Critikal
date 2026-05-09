@@ -2,7 +2,7 @@ import os
 import sys
 
 # Add src to sys.path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from analysis_engine import AnalysisEngine
 from src.graph import GraphBuilder
@@ -12,7 +12,7 @@ from utils.graph_queries import GraphQueries
 def test_external_entry_detection():
     """Test that is_external_entry is correctly computed for various function visibilities."""
     # Setup - pass the directory containing the contract, not the file itself
-    repo_path = os.path.join(os.getcwd(), 'tests', 'contracts')
+    repo_path = os.path.join(os.getcwd(), "tests", "contracts")
     print(f"\nAnalyzing contracts in {repo_path}...")
 
     engine = AnalysisEngine()
@@ -31,29 +31,31 @@ def test_external_entry_detection():
     # Test 1: Public function should be external entry
     public_func = "AttackSurfaceTest::publicDeposit"
     assert graph.has_node(public_func), f"Node {public_func} not found"
-    assert graph.nodes[public_func]["is_external_entry"] == True, \
-        "Public function should be marked as external entry"
+    assert graph.nodes[public_func]["is_external_entry"] == True, "Public function should be marked as external entry"
     print(f"✓ PASS: {public_func} is correctly marked as external entry")
 
     # Test 2: External function should be external entry
     external_func = "AttackSurfaceTest::externalWithdraw"
     assert graph.has_node(external_func), f"Node {external_func} not found"
-    assert graph.nodes[external_func]["is_external_entry"] == True, \
+    assert graph.nodes[external_func]["is_external_entry"] == True, (
         "External function should be marked as external entry"
+    )
     print(f"✓ PASS: {external_func} is correctly marked as external entry")
 
     # Test 3: Internal function should NOT be external entry
     internal_func = "AttackSurfaceTest::internalHelper"
     assert graph.has_node(internal_func), f"Node {internal_func} not found"
-    assert graph.nodes[internal_func]["is_external_entry"] == False, \
+    assert graph.nodes[internal_func]["is_external_entry"] == False, (
         "Internal function should NOT be marked as external entry"
+    )
     print(f"✓ PASS: {internal_func} is correctly marked as NOT external entry")
 
     # Test 4: Private function should NOT be external entry
     private_func = "AttackSurfaceTest::privateCompute"
     assert graph.has_node(private_func), f"Node {private_func} not found"
-    assert graph.nodes[private_func]["is_external_entry"] == False, \
+    assert graph.nodes[private_func]["is_external_entry"] == False, (
         "Private function should NOT be marked as external entry"
+    )
     print(f"✓ PASS: {private_func} is correctly marked as NOT external entry")
 
     # Test 5: Constructor should NOT be external entry (even though it may be public in metadata)
@@ -62,7 +64,7 @@ def test_external_entry_detection():
     constructor_candidates = [
         "AttackSurfaceTest::constructor",
         "AttackSurfaceTest::slitherConstructorConstantVariables",
-        "AttackSurfaceTest::slitherConstructorVariables"
+        "AttackSurfaceTest::slitherConstructorVariables",
     ]
 
     # Find the actual constructor
@@ -72,8 +74,7 @@ def test_external_entry_detection():
             node_data = graph.nodes[candidate]
             if node_data.get("is_constructor"):
                 constructor_found = True
-                assert node_data["is_external_entry"] == False, \
-                    "Constructor should NOT be marked as external entry"
+                assert node_data["is_external_entry"] == False, "Constructor should NOT be marked as external entry"
                 print(f"✓ PASS: {candidate} (constructor) is correctly marked as NOT external entry")
                 break
 
@@ -83,19 +84,15 @@ def test_external_entry_detection():
     # Test 6: Payable function is correctly identified
     payable_func = "AttackSurfaceTest::externalPayableDeposit"
     assert graph.has_node(payable_func), f"Node {payable_func} not found"
-    assert graph.nodes[payable_func]["is_payable"] == True, \
-        "Payable function should be marked as payable"
-    assert graph.nodes[payable_func]["is_external_entry"] == True, \
-        "External payable function should be external entry"
+    assert graph.nodes[payable_func]["is_payable"] == True, "Payable function should be marked as payable"
+    assert graph.nodes[payable_func]["is_external_entry"] == True, "External payable function should be external entry"
     print(f"✓ PASS: {payable_func} is correctly marked as payable and external entry")
 
     # Test 7: Non-payable function
     view_func = "AttackSurfaceTest::getBalance"
     assert graph.has_node(view_func), f"Node {view_func} not found"
-    assert graph.nodes[view_func]["is_payable"] == False, \
-        "Non-payable function should not be marked as payable"
-    assert graph.nodes[view_func]["is_external_entry"] == True, \
-        "Public view function should be external entry"
+    assert graph.nodes[view_func]["is_payable"] == False, "Non-payable function should not be marked as payable"
+    assert graph.nodes[view_func]["is_external_entry"] == True, "Public view function should be external entry"
     print(f"✓ PASS: {view_func} is correctly marked as NOT payable but is external entry")
 
     # Test 8: Receive function should be external entry and payable
@@ -121,7 +118,7 @@ def test_external_entry_detection():
 def test_get_external_entry_points_query():
     """Test the get_external_entry_points query function."""
     # Setup - pass the directory containing the contract
-    repo_path = os.path.join(os.getcwd(), 'tests', 'contracts')
+    repo_path = os.path.join(os.getcwd(), "tests", "contracts")
 
     engine = AnalysisEngine()
     slither_obj = engine.run_analysis(repo_path)
@@ -147,7 +144,7 @@ def test_get_external_entry_points_query():
     assert len(entry_points) >= 4, f"Expected at least 4 entry points, found {len(entry_points)}"
 
     # Verify specific functions are in the list
-    entry_point_names = [ep['node_id'] for ep in entry_points]
+    entry_point_names = [ep["node_id"] for ep in entry_points]
 
     assert "AttackSurfaceTest::publicDeposit" in entry_point_names
     assert "AttackSurfaceTest::externalWithdraw" in entry_point_names
@@ -162,14 +159,15 @@ def test_get_external_entry_points_query():
 
     # Test contract filtering
     filtered_points = queries.get_external_entry_points(contract_name="AttackSurfaceTest")
-    attack_surface_points = [ep for ep in entry_points if ep['contract'] == 'AttackSurfaceTest']
+    attack_surface_points = [ep for ep in entry_points if ep["contract"] == "AttackSurfaceTest"]
 
     print(f"\nFiltered to AttackSurfaceTest: {len(filtered_points)} entry points")
-    assert len(filtered_points) == len(attack_surface_points), \
+    assert len(filtered_points) == len(attack_surface_points), (
         f"Contract filter should return {len(attack_surface_points)} AttackSurfaceTest entries, got {len(filtered_points)}"
+    )
 
     # Verify the filtered points include our expected functions
-    filtered_names = [ep['node_id'] for ep in filtered_points]
+    filtered_names = [ep["node_id"] for ep in filtered_points]
     assert "AttackSurfaceTest::publicDeposit" in filtered_names
     assert "AttackSurfaceTest::externalWithdraw" in filtered_names
 
@@ -183,7 +181,7 @@ def test_get_external_entry_points_query():
 def test_inheritance_detection():
     """Test that inherited public/external functions are included in the attack surface."""
     # Analyze all contracts including InheritanceTest
-    repo_path = os.path.join(os.getcwd(), 'tests', 'contracts')
+    repo_path = os.path.join(os.getcwd(), "tests", "contracts")
 
     engine = AnalysisEngine()
     slither_obj = engine.run_analysis(repo_path)
@@ -207,7 +205,9 @@ def test_inheritance_detection():
 
     base_external = "BaseContract::baseExternalFunction"
     if graph.has_node(base_external):
-        assert graph.nodes[base_external]["is_external_entry"] == True, "Base external function should be external entry"
+        assert graph.nodes[base_external]["is_external_entry"] == True, (
+            "Base external function should be external entry"
+        )
         print(f"✓ PASS: {base_external} is marked as external entry")
     else:
         print(f"⚠ SKIP: {base_external} not found")
@@ -223,14 +223,16 @@ def test_inheritance_detection():
     # Test that internal function is NOT external entry
     base_internal = "BaseContract::baseInternalFunction"
     if graph.has_node(base_internal):
-        assert graph.nodes[base_internal]["is_external_entry"] == False, "Base internal function should NOT be external entry"
+        assert graph.nodes[base_internal]["is_external_entry"] == False, (
+            "Base internal function should NOT be external entry"
+        )
         print(f"✓ PASS: {base_internal} is correctly marked as NOT external entry")
     else:
         print(f"⚠ SKIP: {base_internal} not found")
 
     # Use query to get all entry points for ChildContract
     # Note: Slither includes inherited functions in the child's function list
-    queries= GraphQueries(graph)
+    queries = GraphQueries(graph)
     child_entries = queries.get_external_entry_points(contract_name="ChildContract")
 
     print(f"\nFound {len(child_entries)} entry points in ChildContract")
@@ -238,7 +240,7 @@ def test_inheritance_detection():
         print(f"  - {ep['node_id']}")
 
     # Verify child has its own public functions
-    child_entry_names = [ep['node_id'] for ep in child_entries]
+    child_entry_names = [ep["node_id"] for ep in child_entries]
     if child_public in child_entry_names:
         print("✓ PASS: ChildContract includes its own public functions")
 

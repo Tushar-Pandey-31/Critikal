@@ -9,11 +9,13 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class Result:
     success: bool
     stdout: str
     stderr: str
+
 
 class SandboxManager:
     """Manages an isolated temp environment for running Foundry tests."""
@@ -34,6 +36,7 @@ class SandboxManager:
     def _resolve_foundry_root(self, base: Path) -> Path:
         """BUG-009 fix: delegates to shared utility."""
         from src.utils.foundry_root import resolve_foundry_root
+
         resolved = resolve_foundry_root(base)
         if resolved != base:
             logger.info(f"[Sandbox] Foundry root resolved: {base} -> {resolved}")
@@ -48,12 +51,7 @@ class SandboxManager:
         remappings_content = ""
         if foundry_root and foundry_root.exists():
             try:
-                proc = subprocess.run(
-                    ["forge", "remappings"],
-                    cwd=str(foundry_root),
-                    capture_output=True,
-                    text=True
-                )
+                proc = subprocess.run(["forge", "remappings"], cwd=str(foundry_root), capture_output=True, text=True)
                 if proc.returncode == 0:
                     remappings_content = proc.stdout
                     remap_count = len(remappings_content.splitlines())
@@ -72,7 +70,7 @@ class SandboxManager:
             str(foundry_root),
             str(self.tmp_dir),
             dirs_exist_ok=True,
-            ignore=shutil.ignore_patterns("out", "cache", "broadcast", "__pycache__")
+            ignore=shutil.ignore_patterns("out", "cache", "broadcast", "__pycache__"),
         )
         print("  [Sandbox] Repo copy complete")
         logger.info("[Sandbox] copytree complete.")
@@ -88,9 +86,7 @@ class SandboxManager:
         if remappings_content:
             remap_file.write_text(remappings_content)
             print(f"  [Sandbox] Wrote remappings.txt ({len(remappings_content.splitlines())} entries)")
-            self._clean_remappings_for_pruned_libs(
-                ["layerzero", "devtools", "LayerZero", "lz-evm"]
-            )
+            self._clean_remappings_for_pruned_libs(["layerzero", "devtools", "LayerZero", "lz-evm"])
         elif not remap_file.exists():
             remap_file.write_text("forge-std/=lib/forge-std/src/\nds-test/=lib/forge-std/lib/ds-test/src/\n")
             print("  [Sandbox] Wrote fallback remappings.txt (2 entries)")
@@ -149,12 +145,7 @@ class SandboxManager:
         if src_lib and src_lib.exists():
             print(f"  [Sandbox] Copying lib/ from original repo ({src_lib})...")
             logger.info(f"[Sandbox] Copying lib/ from {src_lib} ...")
-            shutil.copytree(
-                str(src_lib),
-                str(self.tmp_dir / "lib"),
-                dirs_exist_ok=True,
-                symlinks=False
-            )
+            shutil.copytree(str(src_lib), str(self.tmp_dir / "lib"), dirs_exist_ok=True, symlinks=False)
             try:
                 lib_contents = sorted([p.name for p in (self.tmp_dir / "lib").iterdir()])
                 print(f"  [Sandbox] lib/ copied. Contents: {lib_contents}")
@@ -182,7 +173,9 @@ class SandboxManager:
             print("  [Sandbox] forge-std/Test.sol confirmed after forge install")
             logger.info("[Sandbox] forge-std/Test.sol confirmed after forge install.")
         else:
-            print(f"  [Sandbox] FAILED: forge-std still missing after install! stderr={result.stderr[:300] if result.stderr else 'none'}")
+            print(
+                f"  [Sandbox] FAILED: forge-std still missing after install! stderr={result.stderr[:300] if result.stderr else 'none'}"
+            )
             logger.warning(
                 f"[Sandbox] forge install finished but forge-std/Test.sol STILL missing! "
                 f"stderr={result.stderr[:200] if result.stderr else 'none'}"
@@ -221,9 +214,7 @@ class SandboxManager:
             pruned.append("layerzero-v2")
 
         if pruned:
-            self._clean_remappings_for_pruned_libs(
-                ["layerzero", "devtools", "LayerZero", "lz-evm"]
-            )
+            self._clean_remappings_for_pruned_libs(["layerzero", "devtools", "LayerZero", "lz-evm"])
 
     def _clean_remappings_for_pruned_libs(self, pruned_prefixes: list[str]) -> None:
         """Remove remapping entries that reference pruned lib directories."""
@@ -239,13 +230,12 @@ class SandboxManager:
     def _patch_foundry_toml(self) -> None:
         """Remove unknown profile sections from foundry.toml to prevent warnings."""
         import re as _re
+
         toml_path = self.tmp_dir / "foundry.toml"
         if not toml_path.exists():
             return
         content = toml_path.read_text()
-        cleaned = _re.sub(
-            r'\[profile\.dependencies\].*?(?=\[profile\.|$)', '', content, flags=_re.DOTALL
-        )
+        cleaned = _re.sub(r"\[profile\.dependencies\].*?(?=\[profile\.|$)", "", content, flags=_re.DOTALL)
         if cleaned != content:
             toml_path.write_text(cleaned)
             print("  [Sandbox] Patched foundry.toml — removed [profile.dependencies]")
@@ -291,7 +281,9 @@ class SandboxManager:
                 result = subprocess.run(
                     ["forge", "install", forge_pkg, "--no-git", "--quiet"],
                     cwd=str(cwd_for_install),
-                    capture_output=True, text=True, timeout=120,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
                 )
                 if result.returncode == 0:
                     print(f"  [Sandbox] Restored lib/{lib_name} via forge install")
@@ -314,7 +306,9 @@ class SandboxManager:
                 proc = subprocess.run(
                     ["forge", "remappings"],
                     cwd=str(cwd_for_install),
-                    capture_output=True, text=True, timeout=30,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
                 )
                 if proc.returncode == 0 and proc.stdout.strip():
                     remap_file = self.tmp_dir / "remappings.txt"
@@ -339,15 +333,17 @@ class SandboxManager:
         file_path.parent.mkdir(parents=True, exist_ok=True)
         if "SPDX-License-Identifier" not in content:
             content = "// SPDX-License-Identifier: UNLICENSED\n" + content
-        with open(file_path, 'w', encoding='utf-8') as f:
+        with open(file_path, "w", encoding="utf-8") as f:
             f.write(content)
-        print(f"  [Sandbox] Wrote test file: {file_path.relative_to(self.tmp_dir)}  ({len(content)} chars, {content.count(chr(10))+1} lines)")
+        print(
+            f"  [Sandbox] Wrote test file: {file_path.relative_to(self.tmp_dir)}  ({len(content)} chars, {content.count(chr(10)) + 1} lines)"
+        )
 
     def read_source_file(self, relative_path: str) -> str | None:
         file_path = self.tmp_dir / relative_path
         if file_path.exists():
             try:
-                return file_path.read_text(encoding='utf-8')
+                return file_path.read_text(encoding="utf-8")
             except Exception as e:
                 logger.warning(f"[Sandbox] Could not read {relative_path}: {e}")
         return None
@@ -360,7 +356,7 @@ class SandboxManager:
                 continue
             for sol_file in base.rglob("*.sol"):
                 try:
-                    content = sol_file.read_text(encoding='utf-8', errors='replace')
+                    content = sol_file.read_text(encoding="utf-8", errors="replace")
                     if f"contract {contract_name}" in content:
                         return str(sol_file.relative_to(self.tmp_dir))
                 except Exception:
@@ -405,12 +401,14 @@ class SandboxManager:
         toml_file = self.tmp_dir / "foundry.toml"
         if toml_file.exists():
             from src.pipeline.workers.test_writer_worker import TestWriterWorker
+
             return TestWriterWorker._parse_toml_remappings(toml_file.read_text())
         return remappings
 
     def run(self, cmd: str) -> Result:
         import shlex
         import time as _time
+
         print(f"  [Sandbox] RUN: {cmd}")
         t0 = _time.time()
         try:
@@ -420,20 +418,18 @@ class SandboxManager:
                 shell=False,
                 capture_output=True,
                 text=True,
-                encoding='utf-8',
-                errors='replace',
-                timeout=120
+                encoding="utf-8",
+                errors="replace",
+                timeout=120,
             )
             elapsed = _time.time() - t0
-            result = Result(
-                success=(proc.returncode == 0),
-                stdout=proc.stdout,
-                stderr=proc.stderr
-            )
+            result = Result(success=(proc.returncode == 0), stdout=proc.stdout, stderr=proc.stderr)
             status = "OK" if result.success else "FAIL"
-            print(f"  [Sandbox] RUN result: {status}  rc={proc.returncode}  elapsed={elapsed:.1f}s  stdout={len(proc.stdout)} chars  stderr={len(proc.stderr)} chars")
+            print(
+                f"  [Sandbox] RUN result: {status}  rc={proc.returncode}  elapsed={elapsed:.1f}s  stdout={len(proc.stdout)} chars  stderr={len(proc.stderr)} chars"
+            )
             if not result.success and proc.stderr:
-                stderr_preview = proc.stderr.strip().replace('\n', ' | ')[:300]
+                stderr_preview = proc.stderr.strip().replace("\n", " | ")[:300]
                 print(f"  [Sandbox] stderr preview: {stderr_preview}")
             return result
         except subprocess.TimeoutExpired as e:
@@ -445,9 +441,12 @@ class SandboxManager:
             print(f"  [Sandbox] RUN ERROR: {cmd}  {e}  after {elapsed:.1f}s")
             return Result(success=False, stdout="", stderr=str(e))
 
-    def setup_bridge_mode_toml(self, deploy_paths: dict[str, str] | None = None,
-                               target_contract: str | None = None,
-                               target_source_path: str | None = None) -> tuple[dict[str, str], dict[str, dict]]:
+    def setup_bridge_mode_toml(
+        self,
+        deploy_paths: dict[str, str] | None = None,
+        target_contract: str | None = None,
+        target_source_path: str | None = None,
+    ) -> tuple[dict[str, str], dict[str, dict]]:
         """
         Write a foundry.toml for bridge mode and pre-compile legacy contracts.
 
@@ -557,7 +556,9 @@ runs = 10
         try:
             proc = subprocess.run(
                 [str(solc_bin), "--combined-json", "abi,bin", str(sol_file)],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
         except Exception as e:
             logger.warning(f"[Sandbox] solc execution failed: {e}")
@@ -642,11 +643,8 @@ runs = 10
             source_text = sol_file.read_text(encoding="utf-8", errors="replace")
         except Exception:
             source_text = ""
-        raw_addrs = set(_re.findall(r'(0x[0-9a-fA-F]{40})', source_text))
-        hardcoded_addrs = [
-            a for a in raw_addrs
-            if a.lower().replace("0", "").replace("x", "")
-        ]
+        raw_addrs = set(_re.findall(r"(0x[0-9a-fA-F]{40})", source_text))
+        hardcoded_addrs = [a for a in raw_addrs if a.lower().replace("0", "").replace("x", "")]
 
         # Find address-setter functions in ABI (single address param,
         # name contains "set"/"log"/"init" — used for wiring deps)
@@ -665,9 +663,11 @@ runs = 10
         n_deps = len(dep_bytecodes)
         n_ctor = len(ctor_inputs)
         n_hc = len(hardcoded_addrs)
-        print(f"  [Sandbox] Pre-compiled {sol_rel} with solc {pragma_version} "
-              f"({len(bytecode_raw)//2} bytes, {n_deps} deps, "
-              f"{n_ctor} ctor params, {n_hc} hardcoded addrs)")
+        print(
+            f"  [Sandbox] Pre-compiled {sol_rel} with solc {pragma_version} "
+            f"({len(bytecode_raw) // 2} bytes, {n_deps} deps, "
+            f"{n_ctor} ctor params, {n_hc} hardcoded addrs)"
+        )
 
         return {
             "deploy_path": deploy_path,
@@ -681,11 +681,12 @@ runs = 10
     def _detect_pragma_version(self, sol_file: Path) -> str | None:
         """Extract the minimum solc version from a pragma directive."""
         import re as _re
+
         try:
             content = sol_file.read_text(encoding="utf-8", errors="replace")
         except Exception:
             return None
-        m = _re.search(r'pragma\s+solidity\s+[\^~>=<]*\s*(0\.\d+\.\d+)', content)
+        m = _re.search(r"pragma\s+solidity\s+[\^~>=<]*\s*(0\.\d+\.\d+)", content)
         return m.group(1) if m else None
 
     def _find_solc_binary(self, version: str) -> Path | None:
@@ -742,6 +743,7 @@ runs = 10
         target_bin = target_dir / f"solc-{version}"
 
         import platform as _platform
+
         system = _platform.system().lower()
         if system == "linux":
             url = f"https://github.com/ethereum/solidity/releases/download/v{version}/solc-static-linux"
@@ -752,6 +754,7 @@ runs = 10
 
         try:
             import urllib.request
+
             print(f"  [Sandbox] Downloading solc {version} from {url}...")
             urllib.request.urlretrieve(url, str(target_bin))
             target_bin.chmod(0o755)
@@ -765,9 +768,11 @@ runs = 10
         print(f"  [Sandbox] Cleaning up {self.tmp_dir}")
         try:
             if self.tmp_dir.exists():
+
                 def handle_remove_readonly(func, path, exc):
                     os.chmod(path, stat.S_IWRITE)
                     func(path)
+
                 shutil.rmtree(self.tmp_dir, onerror=handle_remove_readonly)
                 print("  [Sandbox] Cleanup complete")
         except Exception as e:

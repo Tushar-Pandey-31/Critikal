@@ -32,20 +32,20 @@ def _normalize_vuln_class(vc: str) -> str:
     """
     vc = vc.lower().strip()
     # Strip common prefixes/suffixes
-    vc = re.sub(r'[^a-z0-9_]', '_', vc)
-    vc = re.sub(r'_+', '_', vc).strip('_')
+    vc = re.sub(r"[^a-z0-9_]", "_", vc)
+    vc = re.sub(r"_+", "_", vc).strip("_")
 
     # Canonical mappings for common synonyms
     _CANONICAL = {
-        'initializer_replay': 'initializer_frontrun',
-        'unprotected_initializer': 'initializer_frontrun',
-        'uninitialized_implementation': 'initializer_frontrun',
-        'initializer_frontrun': 'initializer_frontrun',
-        'access_control': 'access_control',
-        'unprotected_function': 'access_control',
-        'keeper_drain': 'admin_privilege',
-        'admin_privilege': 'admin_privilege',
-        'rug_pull': 'admin_privilege',
+        "initializer_replay": "initializer_frontrun",
+        "unprotected_initializer": "initializer_frontrun",
+        "uninitialized_implementation": "initializer_frontrun",
+        "initializer_frontrun": "initializer_frontrun",
+        "access_control": "access_control",
+        "unprotected_function": "access_control",
+        "keeper_drain": "admin_privilege",
+        "admin_privilege": "admin_privilege",
+        "rug_pull": "admin_privilege",
     }
 
     # Check exact match first
@@ -129,6 +129,7 @@ def _group_by_root_cause(findings: list) -> list[list]:
 #  Main renderer
 # ═══════════════════════════════════════════════════════════
 
+
 def render_markdown_report(
     repo_url: str,
     repo_name: str,
@@ -174,8 +175,7 @@ def render_markdown_report(
         "",
         "## Executive Summary",
         "",
-        f"{total_findings} vulnerability finding(s) identified. "
-        f"{total_proven} proven with working Foundry PoC.",
+        f"{total_findings} vulnerability finding(s) identified. {total_proven} proven with working Foundry PoC.",
         "",
         "| Severity | Count | Proven |",
         "|----------|-------|--------|",
@@ -188,7 +188,9 @@ def render_markdown_report(
     # Jury summary
     # FIX: ESCALATE means jurors disagreed — do NOT count as Confirmed.
     # ESCALATE is already counted in its own row below.
-    jury_confirmed = sum(1 for f in findings if getattr(f, "jury_decision", "") in ("CONFIRMED", "CONFIRMED_UNPROVABLE"))
+    jury_confirmed = sum(
+        1 for f in findings if getattr(f, "jury_decision", "") in ("CONFIRMED", "CONFIRMED_UNPROVABLE")
+    )
     jury_rejected_count = len(jury_rejected) if jury_rejected else 0
     jury_unprovable_count = sum(1 for f in findings if getattr(f, "jury_decision", "") == "CONFIRMED_UNPROVABLE")
 
@@ -199,7 +201,9 @@ def render_markdown_report(
         lines.append(f"| Confirmed | {jury_confirmed - jury_unprovable_count} |")
         lines.append(f"| Confirmed (unprovable in isolation) | {jury_unprovable_count} |")
         lines.append(f"| Rejected (false positives) | {jury_rejected_count} |")
-        lines.append(f"| Escalated (human review needed) | {sum(1 for f in findings if getattr(f, 'jury_decision', '') == 'ESCALATE')} |")
+        lines.append(
+            f"| Escalated (human review needed) | {sum(1 for f in findings if getattr(f, 'jury_decision', '') == 'ESCALATE')} |"
+        )
 
     lines += ["", "---", ""]
 
@@ -230,19 +234,15 @@ def render_markdown_report(
         for chain in chain_hypotheses:
             enabler = chain.enabler_finding
             blocked = chain.blocked_finding
-            e_id = getattr(enabler, 'report_id', enabler.id[:8])
-            b_id = getattr(blocked, 'report_id', blocked.id[:8])
+            e_id = getattr(enabler, "report_id", enabler.id[:8])
+            b_id = getattr(blocked, "report_id", blocked.id[:8])
             lines.append(f"### {chain.chain_id}: {enabler.affected_function} → {blocked.affected_function}\n")
             lines.append(f"**Match:** {chain.match_strength} {chain.match_type}  ")
             lines.append(f"**Chain Severity:** `{chain.chain_severity}`\n")
             lines.append("| Role | Finding | Contract | Function |")
             lines.append("|------|---------|----------|----------|")
-            lines.append(
-                f"| Enabler | {e_id} | {enabler.affected_contract} | {enabler.affected_function} |"
-            )
-            lines.append(
-                f"| Blocked | {b_id} | {blocked.affected_contract} | {blocked.affected_function} |"
-            )
+            lines.append(f"| Enabler | {e_id} | {enabler.affected_contract} | {enabler.affected_function} |")
+            lines.append(f"| Blocked | {b_id} | {blocked.affected_contract} | {blocked.affected_function} |")
             lines.append(f"\n**Postcondition (B creates):** {chain.matched_postcondition}  ")
             lines.append(f"**Precondition (A needs):** {chain.matched_precondition}\n")
             if chain.combined_attack_steps:
@@ -336,7 +336,6 @@ def _render_finding(finding, leads: list[dict]) -> list[str]:
             agent = dv.get("agent", "unknown")
             verdict_d = dv.get("verdict", "CONTESTED")
             lines.append(f"  - `{agent}` → **{verdict_d}** (confidence: {dv.get('confidence', '?')})  ")
-
 
     lines += [
         "",
@@ -445,7 +444,7 @@ def _render_finding(finding, leads: list[dict]) -> list[str]:
             "### Reproduction",
             "",
             "```bash",
-            'forge test --match-test test_exploit -vvv',
+            "forge test --match-test test_exploit -vvv",
             "```",
             "",
         ]
@@ -507,8 +506,10 @@ def _find_test_code(finding, leads: list[dict]) -> str | None:
         if lead_node and lead_node == finding_node and lead.get("test_code"):
             return lead["test_code"]
     for lead in leads:
-        if (finding.affected_contract == lead.get("affected_contract")
-                and finding.affected_function == lead.get("affected_function")
-                and lead.get("test_code")):
+        if (
+            finding.affected_contract == lead.get("affected_contract")
+            and finding.affected_function == lead.get("affected_function")
+            and lead.get("test_code")
+        ):
             return lead["test_code"]
     return None

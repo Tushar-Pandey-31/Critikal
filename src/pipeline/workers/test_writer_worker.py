@@ -16,21 +16,23 @@ def _has_meaningful_assertions(test_code: str) -> bool:
     such tests so they are not marked as PROVEN exploits.
     """
     # Strip single-line comments
-    stripped = re.sub(r'//.*?\n', '\n', test_code)
+    stripped = re.sub(r"//.*?\n", "\n", test_code)
     # Strip multi-line comments
-    stripped = re.sub(r'/\*.*?\*/', '', stripped, flags=re.DOTALL)
+    stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
     # Check for Foundry/Solidity assertion patterns
-    return bool(re.search(
-        r'\b(assert\w*|require|vm\.expect\w*|assertTrue|assertFalse|assertEq|assertGt|assertLt|assertGe|assertLe|assertApproxEq)\s*\(',
-        stripped,
-    ))
+    return bool(
+        re.search(
+            r"\b(assert\w*|require|vm\.expect\w*|assertTrue|assertFalse|assertEq|assertGt|assertLt|assertGe|assertLe|assertApproxEq)\s*\(",
+            stripped,
+        )
+    )
 
 
 _VACUOUS_TEST_MSG = (
     "CRITICAL: Your test_exploit() contains NO assertions (assert*, require, vm.expect*). "
     "A test without assertions always passes \u2014 that proves nothing. "
-    "You MUST end with assertions that FAIL if the exploit doesn\'t work, e.g.: "
-    "assertGt(attacker_balance_after, attacker_balance_before, \'no profit extracted\');"
+    "You MUST end with assertions that FAIL if the exploit doesn't work, e.g.: "
+    "assertGt(attacker_balance_after, attacker_balance_before, 'no profit extracted');"
 )
 
 from src.models.finding import Finding
@@ -88,8 +90,8 @@ _ERROR_RULES: list[tuple[str, str]] = [
         r"incompatible versions|Found incompatible",
         "BRIDGE VIOLATION (incompatible versions): You imported a legacy .sol file directly into your test.\n"
         "Fix: REMOVE ALL imports from contracts/ or src/. Use ONLY:\n"
-        "  import \"forge-std/Test.sol\";\n"
-        "  import \"./BridgeInterfaces.sol\";\n"
+        '  import "forge-std/Test.sol";\n'
+        '  import "./BridgeInterfaces.sol";\n'
         "Deploy legacy contracts via deployCode(), NOT import. This is mandatory in bridge mode.",
     ),
     (
@@ -109,7 +111,7 @@ _ERROR_RULES: list[tuple[str, str]] = [
         "      bool public exploitSucceeded;  ← NO explicit function for this\n"
         "      ITarget target;\n"
         "      ...\n"
-        "  }                              ← NO second interface or function exploitSucceeded()\n"
+        "  }                              ← NO second interface or function exploitSucceeded()\n",
     ),
     (
         r"uint256\(.*address\)|explicit type conversion.*address.*uint256",
@@ -183,15 +185,16 @@ _GUARD_PATTERNS: list[str] = [
 
 # Solidity patterns that indicate a time-lock guard on withdraw/collect
 _TIMELOCK_PATTERNS: list[re.Pattern] = [
-    re.compile(r'\bunlockTime\b', re.IGNORECASE),
-    re.compile(r'\blockTime\b', re.IGNORECASE),
-    re.compile(r'\block_time\b', re.IGNORECASE),
-    re.compile(r'now\s*[><=]+\s*\w*[Tt]ime', re.IGNORECASE),
-    re.compile(r'block\.timestamp\s*[><=]+\s*\w*[Tt]ime', re.IGNORECASE),
-    re.compile(r'\w*[Tt]ime\s*[><=]+\s*now', re.IGNORECASE),
-    re.compile(r'\w*[Tt]ime\s*[><=]+\s*block\.timestamp', re.IGNORECASE),
-    re.compile(r'require\s*\(.*[Tt]ime.*\)', re.IGNORECASE),
+    re.compile(r"\bunlockTime\b", re.IGNORECASE),
+    re.compile(r"\blockTime\b", re.IGNORECASE),
+    re.compile(r"\block_time\b", re.IGNORECASE),
+    re.compile(r"now\s*[><=]+\s*\w*[Tt]ime", re.IGNORECASE),
+    re.compile(r"block\.timestamp\s*[><=]+\s*\w*[Tt]ime", re.IGNORECASE),
+    re.compile(r"\w*[Tt]ime\s*[><=]+\s*now", re.IGNORECASE),
+    re.compile(r"\w*[Tt]ime\s*[><=]+\s*block\.timestamp", re.IGNORECASE),
+    re.compile(r"require\s*\(.*[Tt]ime.*\)", re.IGNORECASE),
 ]
+
 
 def _detect_timelock_in_source(source_code: str) -> bool:
     """Return True if any time-lock guard pattern is found in the Solidity source."""
@@ -230,13 +233,13 @@ def _detect_timelock_failure(test_logs: str) -> bool:
     lines = test_logs.splitlines()
     for i, line in enumerate(lines):
         # Look for the withdraw/collect call that terminates immediately
-        if re.search(r'(Collect|CashOut|withdraw)\s*\(', line, re.IGNORECASE):
+        if re.search(r"(Collect|CashOut|withdraw)\s*\(", line, re.IGNORECASE):
             # Check if the next non-empty line is just a ← [Stop] with tiny gas
             for j in range(i + 1, min(i + 5, len(lines))):
                 next_line = lines[j].strip()
-                if next_line and '←' in next_line and '[Stop]' in next_line:
+                if next_line and "←" in next_line and "[Stop]" in next_line:
                     # Extract gas number from the call line, e.g. [2802]
-                    gas_match = re.search(r'\[(\d+)\]', line)
+                    gas_match = re.search(r"\[(\d+)\]", line)
                     if gas_match and int(gas_match.group(1)) < 10_000:
                         return True
                     break
@@ -260,7 +263,7 @@ class TestWriterWorker(WorkerAgent):
         last_err = error_history[-1]
         import_fix_hint = ""
         if "src/src" in last_err or ("6275" in last_err and "not found" in last_err.lower()):
-            import_fix_hint = "IMPORT FIX: Use project-root paths like \"src/core/X.sol\", NOT \"../src/core/X.sol\".\n\n"
+            import_fix_hint = 'IMPORT FIX: Use project-root paths like "src/core/X.sol", NOT "../src/core/X.sol".\n\n'
         seen = set()
         key_errors = []
         for err in error_history[-3:]:
@@ -283,7 +286,11 @@ class TestWriterWorker(WorkerAgent):
             if len(key_errors) >= 15:
                 break
         if not key_errors:
-            return import_fix_hint + "\n\nPrevious attempts failed. Fix the errors from the last attempt.\n" + "\n---\n".join(error_history[-2:])
+            return (
+                import_fix_hint
+                + "\n\nPrevious attempts failed. Fix the errors from the last attempt.\n"
+                + "\n---\n".join(error_history[-2:])
+            )
         return import_fix_hint + "\n\n=== FIX THESE ERRORS (from previous attempt) ===\n" + "\n".join(key_errors[-12:])
 
     def _extract_test_code(self, response: str) -> str:
@@ -306,7 +313,7 @@ class TestWriterWorker(WorkerAgent):
             # Find the last closing brace
             last_brace = candidate.rfind("}")
             if last_brace > 0:
-                return candidate[:last_brace + 1].strip()
+                return candidate[: last_brace + 1].strip()
         # Raw response might be Solidity directly
         candidate = response.strip()
         solidity_markers = ("pragma solidity", "contract ", "function ", "import ")
@@ -327,22 +334,22 @@ class TestWriterWorker(WorkerAgent):
         # Uses a simple brace-counting approach since regex can't handle nested braces
         seen_interfaces: set[str] = set()
         result_lines = []
-        lines = solidity_code.split('\n')
+        lines = solidity_code.split("\n")
 
         i = 0
         while i < len(lines):
             line = lines[i]
             # Check if this line starts an interface definition
-            m = re.match(r'^\s*interface\s+(\w+)\s*\{?\s*$', line)
+            m = re.match(r"^\s*interface\s+(\w+)\s*\{?\s*$", line)
             if m:
                 iface_name = m.group(1)
                 if iface_name in seen_interfaces:
                     # Skip this duplicate interface block entirely
                     # Find the closing brace at the same nesting level
-                    depth = line.count('{') - line.count('}')
+                    depth = line.count("{") - line.count("}")
                     i += 1
                     while i < len(lines) and depth > 0:
-                        depth += lines[i].count('{') - lines[i].count('}')
+                        depth += lines[i].count("{") - lines[i].count("}")
                         i += 1
                     # Skip the closing brace line too if depth hit 0
                     continue
@@ -350,11 +357,11 @@ class TestWriterWorker(WorkerAgent):
                     seen_interfaces.add(iface_name)
                     result_lines.append(line)
                     # If opening brace is on same line, track depth
-                    depth = line.count('{') - line.count('}')
+                    depth = line.count("{") - line.count("}")
                     if depth > 0:
                         i += 1
                         while i < len(lines) and depth > 0:
-                            depth += lines[i].count('{') - lines[i].count('}')
+                            depth += lines[i].count("{") - lines[i].count("}")
                             result_lines.append(lines[i])
                             i += 1
                         continue
@@ -362,7 +369,7 @@ class TestWriterWorker(WorkerAgent):
                 result_lines.append(line)
             i += 1
 
-        return '\n'.join(result_lines)
+        return "\n".join(result_lines)
 
     @staticmethod
     def _fix_exploit_succeeded_conflict(solidity_code: str) -> str:
@@ -373,39 +380,35 @@ class TestWriterWorker(WorkerAgent):
         """
         import re
 
-        has_public_var = bool(re.search(
-            r'\bbool\s+public\s+exploitSucceeded\b', solidity_code
-        ))
+        has_public_var = bool(re.search(r"\bbool\s+public\s+exploitSucceeded\b", solidity_code))
         if not has_public_var:
             return solidity_code
 
-        has_explicit_fn = bool(re.search(
-            r'\bfunction\s+exploitSucceeded\s*\(', solidity_code
-        ))
+        has_explicit_fn = bool(re.search(r"\bfunction\s+exploitSucceeded\s*\(", solidity_code))
         if not has_explicit_fn:
             return solidity_code
 
-        lines = solidity_code.split('\n')
+        lines = solidity_code.split("\n")
         result_lines = []
         i = 0
         while i < len(lines):
             line = lines[i]
-            if re.match(r'\s*function\s+exploitSucceeded\s*\(', line):
-                depth = line.count('{') - line.count('}')
+            if re.match(r"\s*function\s+exploitSucceeded\s*\(", line):
+                depth = line.count("{") - line.count("}")
                 if depth > 0:
                     i += 1
                     while i < len(lines) and depth > 0:
-                        depth += lines[i].count('{') - lines[i].count('}')
+                        depth += lines[i].count("{") - lines[i].count("}")
                         i += 1
                     continue
-                elif '{' not in line:
+                elif "{" not in line:
                     i += 1
                     while i < len(lines):
-                        depth += lines[i].count('{') - lines[i].count('}')
+                        depth += lines[i].count("{") - lines[i].count("}")
                         if depth > 0:
                             i += 1
                             while i < len(lines) and depth > 0:
-                                depth += lines[i].count('{') - lines[i].count('}')
+                                depth += lines[i].count("{") - lines[i].count("}")
                                 i += 1
                             break
                         i += 1
@@ -417,7 +420,7 @@ class TestWriterWorker(WorkerAgent):
                 result_lines.append(line)
             i += 1
 
-        return '\n'.join(result_lines)
+        return "\n".join(result_lines)
 
     def _has_exact_test_exploit(self, code: str) -> bool:
         return bool(re.search(r"\bfunction\s+test_exploit\s*\(", code))
@@ -447,28 +450,39 @@ class TestWriterWorker(WorkerAgent):
             return False, (
                 f"FABRICATED: bridge mode test contains no deployCode() call. "
                 f"The LLM deployed its own mock instead of the real {target_contract}. "
-                f"You MUST use: address deployed = deployCode(\"<path>:{target_contract}\");"
+                f'You MUST use: address deployed = deployCode("<path>:{target_contract}");'
             )
 
         # Rule 2: look for contract definitions that shadow the target
         # Strip comments first to avoid false positives in NatSpec
         stripped = TestWriterWorker._strip_solidity_comments(test_code)
-        defined_contracts = re.findall(r'\bcontract\s+(\w+)', stripped)
+        defined_contracts = re.findall(r"\bcontract\s+(\w+)", stripped)
 
         # These names are always allowed — they are test infrastructure, not fabrication.
         # The fuzzy mock-of-target check below still catches `MockTargetName` patterns.
         allowed = {
-            "ExploitTest", "AttackContract", "Attacker", "Exploit",
+            "ExploitTest",
+            "AttackContract",
+            "Attacker",
+            "Exploit",
             # Common exploit helper patterns the LLM legitimately writes:
-            "ReentrancyAttacker", "FlashLoanReceiver", "MaliciousReceiver",
-            "CallbackContract", "AttackHelper", "MaliciousContract",
-            "ForceEther", "TxOriginAttacker",
+            "ReentrancyAttacker",
+            "FlashLoanReceiver",
+            "MaliciousReceiver",
+            "CallbackContract",
+            "AttackHelper",
+            "MaliciousContract",
+            "ForceEther",
+            "TxOriginAttacker",
             # Fee-on-transfer mock tokens are legitimate test infrastructure:
-            "FeeOnTransferToken", "FeeToken", "TaxToken", "MockFeeToken",
+            "FeeOnTransferToken",
+            "FeeToken",
+            "TaxToken",
+            "MockFeeToken",
         }
 
         target_lower = target_contract.lower()
-        target_parts = [p for p in re.split(r'[_A-Z]', target_contract) if len(p) > 3]
+        target_parts = [p for p in re.split(r"[_A-Z]", target_contract) if len(p) > 3]
 
         for name in defined_contracts:
             if name in allowed:
@@ -497,15 +511,29 @@ class TestWriterWorker(WorkerAgent):
 
         if vuln_lower in ("reentrancy", "cei_violation", "cross_contract_reentrancy"):
             # Reentrancy PoCs MUST show re-entry: either a callback contract or balance drain assertion
-            has_callback = any(kw in test_lower for kw in [
-                "receive()", "fallback()", "tokensreceived", "onreceived",
-                "onerc721received", "onerc1155received", "reentrancyattacker",
-                "attackcontract", "callbackcontract"
-            ])
-            has_drain = any(kw in test_lower for kw in [
-                "assertgt(address(attacker).balance", "assertlt(address(target).balance",
-                "drained", "re-enter"
-            ])
+            has_callback = any(
+                kw in test_lower
+                for kw in [
+                    "receive()",
+                    "fallback()",
+                    "tokensreceived",
+                    "onreceived",
+                    "onerc721received",
+                    "onerc1155received",
+                    "reentrancyattacker",
+                    "attackcontract",
+                    "callbackcontract",
+                ]
+            )
+            has_drain = any(
+                kw in test_lower
+                for kw in [
+                    "assertgt(address(attacker).balance",
+                    "assertlt(address(target).balance",
+                    "drained",
+                    "re-enter",
+                ]
+            )
             if not has_callback and not has_drain:
                 return False, (
                     f"WEAK_POC: Claimed {vulnerability_class} but test has no callback contract "
@@ -515,14 +543,14 @@ class TestWriterWorker(WorkerAgent):
 
         elif "fee_on_transfer" in vuln_lower or "fee_accounting" in vuln_lower:
             # Fee-on-transfer PoCs MUST use a fee-on-transfer token, not a normal ERC20
-            has_fee_token = any(kw in test_lower for kw in [
-                "feeontransfer", "feetoken", "taxtoken", "transferfee",
-                "fee = ", "fee =", "_fee"
-            ])
-            has_accounting_check = any(kw in test_lower for kw in [
-                "balanceof(address(", "balancebefore", "balanceafter",
-                "accounting", "mismatch"
-            ])
+            has_fee_token = any(
+                kw in test_lower
+                for kw in ["feeontransfer", "feetoken", "taxtoken", "transferfee", "fee = ", "fee =", "_fee"]
+            )
+            has_accounting_check = any(
+                kw in test_lower
+                for kw in ["balanceof(address(", "balancebefore", "balanceafter", "accounting", "mismatch"]
+            )
             if not has_fee_token:
                 return False, (
                     f"WEAK_POC: Claimed {vulnerability_class} but test uses a normal ERC20 token. "
@@ -532,10 +560,18 @@ class TestWriterWorker(WorkerAgent):
 
         elif "inflation" in vuln_lower or "first_depositor" in vuln_lower:
             # First depositor PoCs MUST show totalSupply==0 scenario + donation
-            has_first_deposit = any(kw in test_lower for kw in [
-                "totalsupply", "first deposit", "inflation", "donate",
-                "0 shares", "zero shares", "exchange rate"
-            ])
+            has_first_deposit = any(
+                kw in test_lower
+                for kw in [
+                    "totalsupply",
+                    "first deposit",
+                    "inflation",
+                    "donate",
+                    "0 shares",
+                    "zero shares",
+                    "exchange rate",
+                ]
+            )
             if not has_first_deposit:
                 return False, (
                     f"WEAK_POC: Claimed {vulnerability_class} but test doesn't demonstrate "
@@ -586,21 +622,15 @@ class TestWriterWorker(WorkerAgent):
             pre_state = "uint256 targetBefore = address(target).balance;"
             assertion = (
                 'assertGt(address(attacker).balance, 0, "attacker drained nothing");\n'
-                '        assertLt(address(target).balance, targetBefore, '
+                "        assertLt(address(target).balance, targetBefore, "
                 '"target balance unchanged");'
             )
         elif "access_control" in vuln or "unprotected" in vuln:
             pre_state = "// capture pre-state"
-            assertion = (
-                'assertTrue(attacker.exploitSucceeded(), '
-                '"access control exploit failed");'
-            )
+            assertion = 'assertTrue(attacker.exploitSucceeded(), "access control exploit failed");'
         elif "overflow" in vuln or "underflow" in vuln or "arithmetic" in vuln:
             pre_state = "uint256 balanceBefore = address(target).balance;"
-            assertion = (
-                'assertTrue(attacker.exploitSucceeded(), '
-                '"arithmetic exploit failed");'
-            )
+            assertion = 'assertTrue(attacker.exploitSucceeded(), "arithmetic exploit failed");'
         else:
             pre_state = "uint256 stateBefore = address(target).balance;"
             assertion = 'assertTrue(attacker.exploitSucceeded(), "exploit failed");'
@@ -609,8 +639,11 @@ class TestWriterWorker(WorkerAgent):
 
         if bytecode_hex:
             deploy_block, init_block = self._build_legacy_deploy_block(
-                bytecode_hex, dep_bytecodes or {}, ctor_inputs or [],
-                hardcoded_addrs or [], addr_setters or [],
+                bytecode_hex,
+                dep_bytecodes or {},
+                ctor_inputs or [],
+                hardcoded_addrs or [],
+                addr_setters or [],
             )
         else:
             deploy_block = f'address targetAddr = deployCode("{deploy_path}");'
@@ -667,9 +700,7 @@ contract ExploitTest is Test {{
         """
         hardcoded_addrs = hardcoded_addrs or []
         addr_setters = addr_setters or []
-        usable_deps = {
-            name: bc for name, bc in dep_bytecodes.items() if len(bc) > 0
-        }
+        usable_deps = {name: bc for name, bc in dep_bytecodes.items() if len(bc) > 0}
 
         lines: list[str] = []
         dep_vars: list[str] = []
@@ -688,14 +719,10 @@ contract ExploitTest is Test {{
         etch_lines: list[str] = []
         if dep_vars and hardcoded_addrs:
             for hc_addr in hardcoded_addrs:
-                etch_lines.append(
-                    f"vm.etch({hc_addr}, {dep_vars[0]}.code);"
-                )
+                etch_lines.append(f"vm.etch({hc_addr}, {dep_vars[0]}.code);")
 
         # Build target deployment
-        addr_param_count = sum(
-            1 for inp in ctor_inputs if inp.get("type") == "address"
-        )
+        addr_param_count = sum(1 for inp in ctor_inputs if inp.get("type") == "address")
 
         if addr_param_count > 0 and dep_vars:
             ctor_arg_parts: list[str] = []
@@ -705,13 +732,13 @@ contract ExploitTest is Test {{
                     ctor_arg_parts.append(dep_vars[dep_idx])
                     dep_idx += 1
                 elif inp.get("type", "").startswith(("uint", "int")):
-                    ctor_arg_parts.append(f'{inp["type"]}(0)')
+                    ctor_arg_parts.append(f"{inp['type']}(0)")
                 elif inp.get("type") == "bool":
                     ctor_arg_parts.append("false")
                 elif inp.get("type") == "address":
                     ctor_arg_parts.append("address(0)")
                 else:
-                    ctor_arg_parts.append(f'{inp["type"]}(0)')
+                    ctor_arg_parts.append(f"{inp['type']}(0)")
 
             ctor_args_str = ", ".join(ctor_arg_parts)
             target_deploy = (
@@ -743,9 +770,7 @@ contract ExploitTest is Test {{
         init_parts: list[str] = []
         if addr_setters and dep_vars:
             for setter_sig in addr_setters:
-                init_parts.append(
-                    f'target.call(abi.encodeWithSignature("{setter_sig}", {dep_vars[0]}));'
-                )
+                init_parts.append(f'target.call(abi.encodeWithSignature("{setter_sig}", {dep_vars[0]}));')
 
         init_block = ""
         if init_parts:
@@ -797,17 +822,12 @@ CRITICAL: If Put(uint _lockTime) exists, pass _lockTime = 0 — NOT any positive
 """
         source_section = timelock_section
         if real_sources:
-            source_section += (
-                "\n=== REAL CONTRACT SOURCE "
-                "(READ ONLY — understand logic, do not import) ===\n"
-            )
+            source_section += "\n=== REAL CONTRACT SOURCE (READ ONLY — understand logic, do not import) ===\n"
             for path, code in real_sources.items():
                 source_section += f"// {path}\n{code}\n\n"
 
         rag = "" if skip_rag else self._fetch_rag_context(finding)
-        err_rag = "" if skip_rag else (
-            self._fetch_error_rag_context(error_history) if error_history else ""
-        )
+        err_rag = "" if skip_rag else (self._fetch_error_rag_context(error_history) if error_history else "")
 
         system = f"""You are an expert smart-contract exploit developer.
 You must write ONLY AttackContract.sol — the attack logic contract.
@@ -957,9 +977,7 @@ Hypothesis: {finding.hypothesis}
             {"role": "user", "content": user},
         ]
 
-    _AUTOCORRECT_IMPORT_RE = re.compile(
-        r'import\s+"([^"]+)"\s*;|import\s+\{[^}]+\}\s+from\s+"([^"]+)"\s*;'
-    )
+    _AUTOCORRECT_IMPORT_RE = re.compile(r'import\s+"([^"]+)"\s*;|import\s+\{[^}]+\}\s+from\s+"([^"]+)"\s*;')
 
     def _auto_correct_imports(
         self,
@@ -993,7 +1011,11 @@ Hypothesis: {finding.hypothesis}
             for f in matches:
                 try:
                     rel_str = str(f.relative_to(sandbox.tmp_dir)).replace("\\", "/")
-                    if not rel_str.startswith("lib/") and not rel_str.startswith("out/") and not rel_str.startswith("cache/"):
+                    if (
+                        not rel_str.startswith("lib/")
+                        and not rel_str.startswith("out/")
+                        and not rel_str.startswith("cache/")
+                    ):
                         valid.append(f)
                 except ValueError:
                     pass
@@ -1015,24 +1037,23 @@ Hypothesis: {finding.hypothesis}
             logger.info(f"[TestWriter] Auto-corrected imports: {fixed}")
         return test_code
 
-    _IMPORT_RE = re.compile(
-        r'import\s+(?:"([^"]+)"|{[^}]+}\s+from\s+"([^"]+)")\s*;',
-        re.MULTILINE
-    )
+    _IMPORT_RE = re.compile(r'import\s+(?:"([^"]+)"|{[^}]+}\s+from\s+"([^"]+)")\s*;', re.MULTILINE)
     _MAX_DEP_FILES = 12
     _MAX_TOTAL_CHARS = 120_000
-    _TARGET_FILE_CAP = 50_000     # Never truncate the target contract
+    _TARGET_FILE_CAP = 50_000  # Never truncate the target contract
     _INTERFACE_FILE_CAP = 4000
     _IMPL_FILE_CAP = 3000
 
-    def _resolve_import_path(self, import_path: str, remappings: dict[str, str], repo: Path, from_file: Path | None = None) -> Path | None:
+    def _resolve_import_path(
+        self, import_path: str, remappings: dict[str, str], repo: Path, from_file: Path | None = None
+    ) -> Path | None:
         path_str = import_path.strip()
         if not path_str:
             return None
         for alias, target in sorted(remappings.items(), key=lambda x: -len(x[0])):
             alias_stripped = alias.rstrip("/")
             if path_str.startswith(alias_stripped + "/") or path_str == alias_stripped:
-                path_str = target.rstrip("/") + path_str[len(alias_stripped):]
+                path_str = target.rstrip("/") + path_str[len(alias_stripped) :]
                 break
         if path_str.startswith("./") or path_str.startswith("../"):
             if not from_file or not from_file.parent:
@@ -1071,9 +1092,9 @@ Hypothesis: {finding.hypothesis}
         comment text like '// This is because abstract contract Foo...'.
         """
         # Remove /* ... */ blocks first (they can span lines)
-        source = re.sub(r'/\*.*?\*/', ' ', source, flags=re.DOTALL)
+        source = re.sub(r"/\*.*?\*/", " ", source, flags=re.DOTALL)
         # Remove // ... to end of line
-        source = re.sub(r'//[^\n]*', ' ', source)
+        source = re.sub(r"//[^\n]*", " ", source)
         return source
 
     @staticmethod
@@ -1086,7 +1107,7 @@ Hypothesis: {finding.hypothesis}
         Returns the raw version constraint string, e.g. '=0.7.6', '^0.8.17',
         or None if no pragma found.
         """
-        pragma_re = re.compile(r'pragma\s+solidity\s+([^;]+);')
+        pragma_re = re.compile(r"pragma\s+solidity\s+([^;]+);")
         for source in sources.values():
             m = pragma_re.search(source)
             if m:
@@ -1099,7 +1120,7 @@ Hypothesis: {finding.hypothesis}
     @staticmethod
     def _parse_pragma_major_minor(pragma_str: str) -> tuple[int, int]:
         """Extract (major, minor) from pragma strings like '^0.5.16', '>=0.6.0'."""
-        match = re.search(r'(\d+)\.(\d+)', pragma_str)
+        match = re.search(r"(\d+)\.(\d+)", pragma_str)
         if match:
             return int(match.group(1)), int(match.group(2))
         return 0, 8
@@ -1128,7 +1149,9 @@ Hypothesis: {finding.hypothesis}
         source_section += "\n"
 
         # Bridge interfaces content
-        source_section += "\n=== BridgeInterfaces.sol (already written to test/ — just import \"./BridgeInterfaces.sol\") ===\n"
+        source_section += (
+            '\n=== BridgeInterfaces.sol (already written to test/ — just import "./BridgeInterfaces.sol") ===\n'
+        )
         source_section += bridge_interfaces_src + "\n"
 
         # Starter template
@@ -1169,10 +1192,12 @@ Hypothesis: {finding.hypothesis}
         exploit_seq_str = ""
         if exploit_sequence:
             steps_text = "\n".join(
-                f"  Step {s.get('step', i+1)}: [{s.get('role', '?')}] {s.get('node', '?')}"
+                f"  Step {s.get('step', i + 1)}: [{s.get('role', '?')}] {s.get('node', '?')}"
                 for i, s in enumerate(exploit_sequence)
             )
-            exploit_seq_str = f"## Pre-Computed Exploit Chain (from graph)\n{steps_text}\n\nUse this chain to guide your test.\n\n"
+            exploit_seq_str = (
+                f"## Pre-Computed Exploit Chain (from graph)\n{steps_text}\n\nUse this chain to guide your test.\n\n"
+            )
 
         user_content = (
             f"Vulnerability Class: {finding.vulnerability_class}\n"
@@ -1189,12 +1214,15 @@ Hypothesis: {finding.hypothesis}
             "Generate a complete Foundry test using the VERSION BRIDGE PATTERN that proves this vulnerability."
         )
 
-        return [
-            {"role": "system", "content": BRIDGE_MODE_SYSTEM_PROMPT},
-            {"role": "user", "content": user_content}
-        ]
+        return [{"role": "system", "content": BRIDGE_MODE_SYSTEM_PROMPT}, {"role": "user", "content": user_content}]
 
-    def _collect_repo_sources(self, finding: Finding, repo_path: str | None, remappings: dict[str, str], _lib_imports_out: set[str] | None = None) -> dict[str, str]:
+    def _collect_repo_sources(
+        self,
+        finding: Finding,
+        repo_path: str | None,
+        remappings: dict[str, str],
+        _lib_imports_out: set[str] | None = None,
+    ) -> dict[str, str]:
         if not repo_path:
             return {}
         repo = Path(repo_path)
@@ -1204,7 +1232,7 @@ Hypothesis: {finding.hypothesis}
         target_path: Path | None = None
         # Compile anchored pattern once for efficiency
         _contract_def_re = re.compile(
-            rf'^(?:abstract\s+)?contract\s+{re.escape(contract_name)}[\s({{]',
+            rf"^(?:abstract\s+)?contract\s+{re.escape(contract_name)}[\s({{]",
             re.MULTILINE,
         )
         for search_dir in ["src", "contracts", "."]:
@@ -1215,7 +1243,7 @@ Hypothesis: {finding.hypothesis}
                 if "lib" in sol_file.parts:
                     continue
                 try:
-                    content = sol_file.read_text(encoding='utf-8', errors='replace')
+                    content = sol_file.read_text(encoding="utf-8", errors="replace")
                     # Strip comments first (method already exists) to avoid
                     # false-positives from NatSpec / inline notes that merely
                     # *mention* the contract name.  The anchored regex then
@@ -1236,9 +1264,7 @@ Hypothesis: {finding.hypothesis}
                     candidate = repo / Path(graph_source.replace("\\", "/"))
                 if candidate.exists():
                     target_path = candidate
-                    logger.info(
-                        f"[TestWriter] Resolved {contract_name} via graph source_file: {graph_source}"
-                    )
+                    logger.info(f"[TestWriter] Resolved {contract_name} via graph source_file: {graph_source}")
         if not target_path:
             return {}
         collected: dict[str, str] = {}
@@ -1252,12 +1278,16 @@ Hypothesis: {finding.hypothesis}
                 continue
             seen.add(rel)
             try:
-                content = current.read_text(encoding='utf-8', errors='replace')
+                content = current.read_text(encoding="utf-8", errors="replace")
             except Exception:
                 continue
             is_target = current == target_path
             is_interface = self._is_interface_file(content, rel)
-            cap = self._TARGET_FILE_CAP if is_target else (self._INTERFACE_FILE_CAP if is_interface else self._IMPL_FILE_CAP)
+            cap = (
+                self._TARGET_FILE_CAP
+                if is_target
+                else (self._INTERFACE_FILE_CAP if is_interface else self._IMPL_FILE_CAP)
+            )
             if len(content) > cap:
                 content = content[:cap] + "\n... [truncated]"
             collected[rel] = content
@@ -1275,7 +1305,13 @@ Hypothesis: {finding.hypothesis}
                     _lib_imports_out.add(imp)
         return collected
 
-    def _collect_minimal_sources(self, finding: Finding, repo_path: str | None, remappings: dict[str, str], _lib_imports_out: set[str] | None = None) -> dict[str, str]:
+    def _collect_minimal_sources(
+        self,
+        finding: Finding,
+        repo_path: str | None,
+        remappings: dict[str, str],
+        _lib_imports_out: set[str] | None = None,
+    ) -> dict[str, str]:
         """BUG-004 fix: delegate to _collect_repo_sources with reduced limits instead of duplicating 60 lines."""
         # Temporarily reduce limits for a minimal collection
         saved_max_files = self._MAX_DEP_FILES
@@ -1326,6 +1362,7 @@ Hypothesis: {finding.hypothesis}
         # Try stdlib tomllib first (Python 3.11+), fall back to manual parsing
         try:
             import tomllib
+
             data = tomllib.loads(content)
             raw_remappings = data.get("profile", {}).get("default", {}).get("remappings", [])
             if not raw_remappings:
@@ -1404,8 +1441,10 @@ Hypothesis: {finding.hypothesis}
         """
         if not repo_path:
             return {
-                "naming_conflicts": [], "abstract_contracts": [],
-                "conflict_warnings": "", "abstract_warnings": "",
+                "naming_conflicts": [],
+                "abstract_contracts": [],
+                "conflict_warnings": "",
+                "abstract_warnings": "",
             }
 
         repo = Path(repo_path)
@@ -1414,15 +1453,21 @@ Hypothesis: {finding.hypothesis}
 
         # Anchored to line start: only matches actual Solidity contract declarations.
         # Group 1: optional 'abstract ' keyword. Group 2: contract identifier.
-        contract_decl_re = re.compile(
-            r'^\s*(abstract\s+)?contract\s+([A-Za-z_]\w*)\b',
-            re.MULTILINE
-        )
+        contract_decl_re = re.compile(r"^\s*(abstract\s+)?contract\s+([A-Za-z_]\w*)\b", re.MULTILINE)
         # Forge-std base names that legitimately appear in every project
         skip_names = {
-            "Test", "Script", "console", "console2",
-            "stdError", "stdMath", "StdAssertions", "StdChains",
-            "StdCheats", "StdUtils", "Vm", "DSTest",
+            "Test",
+            "Script",
+            "console",
+            "console2",
+            "stdError",
+            "stdMath",
+            "StdAssertions",
+            "StdChains",
+            "StdCheats",
+            "StdUtils",
+            "Vm",
+            "DSTest",
         }
 
         for search_dir in ["src", "contracts", "."]:
@@ -1490,6 +1535,7 @@ Hypothesis: {finding.hypothesis}
 
     def _fetch_rag_context(self, finding: Finding) -> str:
         from src.knowledge.rag_system import search_security_knowledge
+
         queries = [
             f"{finding.vulnerability_class} exploit Foundry test pattern",
             f"Solidity {finding.vulnerability_class} vulnerability proof of concept",
@@ -1517,6 +1563,7 @@ Hypothesis: {finding.hypothesis}
         if not error_history:
             return ""
         from src.knowledge.rag_system import search_security_knowledge
+
         last_err = error_history[-1]
         codes = re.findall(r"Warning \((\d+)\)|Error \((\d+)\)|error (\d+):", last_err)
         codes = [c for t in codes for c in t if c]
@@ -1601,13 +1648,13 @@ Hypothesis: {finding.hypothesis}
             first_path = list(real_sources.keys())[0] if real_sources else "src/core/Contract.sol"
             pragma_line = f"pragma solidity {target_pragma};" if target_pragma else "pragma solidity ^0.8.17;"
             source_section += "\n=== STARTER TEMPLATE (use this structure) ===\n"
-            source_section += f'// {pragma_line}\n'
+            source_section += f"// {pragma_line}\n"
             source_section += '// import "forge-std/Test.sol";\n'
             source_section += f'// import "{first_path}";\n'
-            source_section += '// contract ExploitTest is Test {\n'
-            source_section += '//     function setUp() public { /* deploy real contracts */ }\n'
-            source_section += '//     function test_exploit() public { /* attack logic */ }\n'
-            source_section += '// }\n\n'
+            source_section += "// contract ExploitTest is Test {\n"
+            source_section += "//     function setUp() public { /* deploy real contracts */ }\n"
+            source_section += "//     function test_exploit() public { /* attack logic */ }\n"
+            source_section += "// }\n\n"
 
             if repo_manifest:
                 source_section += "\n=== AVAILABLE CONTRACTS IN REPO (import these real contracts, never mock) ===\n"
@@ -1639,7 +1686,9 @@ Hypothesis: {finding.hypothesis}
                 for fn_name, sig in sorted(contract_signatures.items()):
                     source_section += f"  {fn_name}: {sig}\n"
                 source_section += "\n"
-            source_section += "(Note: These are extracted snippets, not full source files. Synthesize mock contracts as needed.)\n\n"
+            source_section += (
+                "(Note: These are extracted snippets, not full source files. Synthesize mock contracts as needed.)\n\n"
+            )
             for node_id, code in relevant_code.items():
                 source_section += f"--- Snippet: {node_id} ---\n{code}\n\n"
 
@@ -1695,11 +1744,7 @@ Hypothesis: {finding.hypothesis}
             "Generate a complete Foundry test that proves this vulnerability."
         )
 
-        return [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content}
-        ]
-
+        return [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}]
 
     def _parse_exploit_body_response(self, response: str) -> tuple[str, str]:
         """
@@ -1726,7 +1771,8 @@ Hypothesis: {finding.hypothesis}
             # Look for lines that look like Solidity statements
             lines = response.strip().split("\n")
             sol_lines = [
-                l for l in lines
+                l
+                for l in lines
                 if any(kw in l for kw in ("vm.", "assert", "target.", "attacker", "new ", "address("))
                 and not l.strip().startswith("//")
                 and not l.strip().startswith("#")
@@ -1742,9 +1788,7 @@ Hypothesis: {finding.hypothesis}
             if "contract " in code and "function " in code:
                 # Looks like a helper contract — but check if it also has
                 # standalone statements (vm.prank, assert, etc.)
-                has_standalone = any(
-                    kw in code for kw in ("vm.prank", "vm.start", "assert", "vm.deal")
-                )
+                has_standalone = any(kw in code for kw in ("vm.prank", "vm.start", "assert", "vm.deal"))
                 if has_standalone and "contract " in code:
                     # Mixed: split at the first standalone statement
                     lines = code.split("\n")
@@ -1792,7 +1836,6 @@ Hypothesis: {finding.hypothesis}
             return "", helpers + "\n" + exploit
 
         return helpers, exploit
-
 
     def _build_variant_prompt(self, finding: "Finding", failed_code: str, failed_logs: str) -> list[dict]:
         """
@@ -1843,9 +1886,9 @@ Rules:
         contract = finding.affected_contract
         func = finding.affected_function
 
-        what_to_prove = jury_brief.get('what_to_prove', f'{func} is callable without authorization')
-        attack_steps = jury_brief.get('attack_steps', [f'Call {func} directly'])
-        success = jury_brief.get('what_success_looks_like', 'call succeeds without revert')
+        what_to_prove = jury_brief.get("what_to_prove", f"{func} is callable without authorization")
+        attack_steps = jury_brief.get("attack_steps", [f"Call {func} directly"])
+        success = jury_brief.get("what_success_looks_like", "call succeeds without revert")
 
         system = """You are writing a Foundry test. Output ONLY a complete .t.sol file.
 The file MUST contain:
@@ -1863,13 +1906,11 @@ Nothing else matters. Just write the test."""
             f"Function: {func}\n\n"
             f"Source code:\n"
             f"```solidity\n{source_code[:3000]}\n```\n\n"
-            f"Attack steps:\n"
-            + "\n".join(f"- {s}" for s in attack_steps)
-            + f"\n\nSuccess condition: {success}\n\n"
+            f"Attack steps:\n" + "\n".join(f"- {s}" for s in attack_steps) + f"\n\nSuccess condition: {success}\n\n"
             f"Output a complete .t.sol file exactly matching this structure. Do NOT write any other contracts:\n"
             f"```solidity\n"
             f"pragma solidity ^0.8.0;\n"
-            f"import \"forge-std/Test.sol\";\n"
+            f'import "forge-std/Test.sol";\n'
             f"// imports here\n"
             f"contract ExploitTest is Test {{\n"
             f"    function setUp() public {{\n"
@@ -1893,9 +1934,7 @@ Nothing else matters. Just write the test."""
         if not finding or not isinstance(finding, Finding):
             print("  [TestWriter] ERROR: Missing or invalid finding in task context")
             return WorkerOutput(
-                worker_type=self.get_worker_type(),
-                confidence=0,
-                raw_output={"error": "Missing or invalid finding"}
+                worker_type=self.get_worker_type(), confidence=0, raw_output={"error": "Missing or invalid finding"}
             )
 
         relevant_code = task.context.get("relevant_code", {})
@@ -1903,11 +1942,13 @@ Nothing else matters. Just write the test."""
         contract_signatures = task.context.get("contract_signatures", {}) or {}
         self._caller_context = task.context.get("caller_context", [])
 
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print(f"  [TestWriter] === START === {finding.affected_contract}::{finding.affected_function}")
         print(f"  [TestWriter] Vulnerability: {finding.vulnerability_class}  |  Confidence: {finding.confidence}")
         print(f"  [TestWriter] Repo path: {repo_path}")
-        print(f"  [TestWriter] Relevant code snippets: {len(relevant_code)}  |  Contract signatures: {len(contract_signatures)}")
+        print(
+            f"  [TestWriter] Relevant code snippets: {len(relevant_code)}  |  Contract signatures: {len(contract_signatures)}"
+        )
 
         remappings = self._get_remappings_from_repo(repo_path)
         if remappings:
@@ -1915,12 +1956,19 @@ Nothing else matters. Just write the test."""
 
         lib_imports: set[str] = set()
         real_sources_full = self._collect_repo_sources(finding, repo_path, remappings, _lib_imports_out=lib_imports)
-        real_sources_minimal = self._collect_minimal_sources(finding, repo_path, remappings, _lib_imports_out=lib_imports)
+        real_sources_minimal = self._collect_minimal_sources(
+            finding, repo_path, remappings, _lib_imports_out=lib_imports
+        )
         repo_manifest = self._get_repo_file_manifest(repo_path) if repo_path else []
 
-        import_cheatsheet = self._generate_import_cheatsheet(
-            real_sources_full or real_sources_minimal, lib_imports,
-        ) if (real_sources_full or real_sources_minimal) else None
+        import_cheatsheet = (
+            self._generate_import_cheatsheet(
+                real_sources_full or real_sources_minimal,
+                lib_imports,
+            )
+            if (real_sources_full or real_sources_minimal)
+            else None
+        )
 
         if real_sources_full:
             total_chars = sum(len(v) for v in real_sources_full.values())
@@ -1928,7 +1976,9 @@ Nothing else matters. Just write the test."""
             for p in list(real_sources_full.keys())[:8]:
                 print(f"    - {p}  ({len(real_sources_full[p])} chars)")
             print(f"  [TestWriter] Collected MINIMAL sources: {len(real_sources_minimal)} files")
-            logger.info(f"[TestWriter] Found real source + deps for {finding.affected_contract}: {len(real_sources_full)} files (minimal: {len(real_sources_minimal)})")
+            logger.info(
+                f"[TestWriter] Found real source + deps for {finding.affected_contract}: {len(real_sources_full)} files (minimal: {len(real_sources_minimal)})"
+            )
         else:
             print(f"  [TestWriter] No real source found for {finding.affected_contract} — using MOCK mode")
             logger.info(f"[TestWriter] No real source found for {finding.affected_contract}, using mock mode")
@@ -1965,12 +2015,17 @@ Nothing else matters. Just write the test."""
 
             # Collect signatures for all contracts referenced in the finding
             from src.utils.graph_queries import get_contract_signatures as _get_sigs
+
             bridge_contracts = [finding.affected_contract]
             if self.graph is not None:
                 for node_id, nd in self.graph.nodes(data=True):
                     if nd.get("type") == "contract" and nd.get("contract") == finding.affected_contract:
                         continue
-                    if nd.get("type") == "function" and nd.get("contract") and nd.get("contract") != finding.affected_contract:
+                    if (
+                        nd.get("type") == "function"
+                        and nd.get("contract")
+                        and nd.get("contract") != finding.affected_contract
+                    ):
                         cname = nd["contract"]
                         if cname not in bridge_contracts:
                             bridge_contracts.append(cname)
@@ -1985,7 +2040,9 @@ Nothing else matters. Just write the test."""
                         all_sigs[cname] = sigs
 
             bridge_interfaces_src = generate_bridge_interfaces(
-                bridge_contracts, all_sigs, graph=self.graph,
+                bridge_contracts,
+                all_sigs,
+                graph=self.graph,
             )
             for cname in bridge_contracts:
                 deploy_paths[cname] = resolve_deploy_code_path(cname, repo_manifest, real_sources_full)
@@ -1996,9 +2053,7 @@ Nothing else matters. Just write the test."""
             print(f"  [TestWriter] Standard mode (pragma {target_pragma or 'default'} is 0.8+)")
 
         # Pre-analyze repo for naming conflicts and abstract contracts.
-        repo_conflicts = self._detect_repo_contract_conflicts(
-            repo_path if real_sources_full else None
-        )
+        repo_conflicts = self._detect_repo_contract_conflicts(repo_path if real_sources_full else None)
         if repo_conflicts["naming_conflicts"]:
             print(f"  [TestWriter] Naming conflicts: {repo_conflicts['naming_conflicts']}")
             logger.info(f"[TestWriter] Naming conflicts detected: {repo_conflicts['naming_conflicts']}")
@@ -2060,7 +2115,10 @@ Nothing else matters. Just write the test."""
                 target_deploy_path = deploy_paths.get(finding.affected_contract, "")
                 pc = precompiled_data.get(finding.affected_contract, {})
                 scaffold_code = self._generate_test_scaffold(
-                    finding, target_deploy_path, is_legacy, target_pragma,
+                    finding,
+                    target_deploy_path,
+                    is_legacy,
+                    target_pragma,
                     bytecode_hex=pc.get("bytecode"),
                     dep_bytecodes=pc.get("dep_bytecodes", {}),
                     ctor_inputs=pc.get("ctor_inputs", []),
@@ -2099,7 +2157,9 @@ Nothing else matters. Just write the test."""
                     print(f"  [TestWriter] Building deterministic harness for {finding.affected_contract}...")
 
                     # First, run forge build to generate ABI artifacts
-                    build_result = sandbox.run("forge build --no-cache --ignored-error-codes 8429 --ignored-error-codes 2424")
+                    build_result = sandbox.run(
+                        "forge build --no-cache --ignored-error-codes 8429 --ignored-error-codes 2424"
+                    )
                     if build_result.success:
                         print("  [TestWriter] forge build succeeded — ABI artifacts available")
                     else:
@@ -2150,30 +2210,37 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                             ]
 
                             prompt_chars = sum(len(m.get("content", "")) for m in prompt)
-                            print(f"  [TestWriter] Exploit-body prompt: {prompt_chars} chars (vs ~50K+ for full-prompt)")
+                            print(
+                                f"  [TestWriter] Exploit-body prompt: {prompt_chars} chars (vs ~50K+ for full-prompt)"
+                            )
 
                             # Call LLM
                             try:
                                 import time as _time
+
                                 t_llm = _time.time()
                                 response = await asyncio.wait_for(
-                                    asyncio.to_thread(self.llm_client.invoke, prompt),
-                                    timeout=self.LLM_TIMEOUT
+                                    asyncio.to_thread(self.llm_client.invoke, prompt), timeout=self.LLM_TIMEOUT
                                 )
                                 llm_elapsed = _time.time() - t_llm
                                 content = response.content if hasattr(response, "content") else str(response)
                                 if isinstance(content, list):
-                                    content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
+                                    content = "".join(
+                                        [c.get("text", "") if isinstance(c, dict) else str(c) for c in content]
+                                    )
                                 print(f"  [TestWriter] LLM responded in {llm_elapsed:.1f}s ({len(content)} chars)")
 
                                 # Track cost
                                 try:
                                     from src.utils.token_counter import get_token_counter
+
                                     input_text = "\n".join(m.get("content", "") for m in prompt)
                                     _tw_model = self._get_llm_model_name()
                                     get_token_counter().record(
-                                        "TestWriterWorker", _tw_model,
-                                        input_text, content,
+                                        "TestWriterWorker",
+                                        _tw_model,
+                                        input_text,
+                                        content,
                                         getattr(response, "response_metadata", None),
                                     )
                                 except Exception:
@@ -2203,9 +2270,7 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                             self._clear_forge_cache(sandbox)
 
                             build_res = sandbox.run(
-                                "forge build --no-cache"
-                                " --ignored-error-codes 8429"
-                                " --ignored-error-codes 2424"
+                                "forge build --no-cache --ignored-error-codes 8429 --ignored-error-codes 2424"
                             )
 
                             if not build_res.success:
@@ -2213,8 +2278,7 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                                 print("  [TestWriter] Harness+exploit compilation failed")
                                 preview = exploit_body[:300] + ("..." if len(exploit_body) > 300 else "")
                                 harness_error_history.append(
-                                    f"Compilation failed:\n{build_err[:400]}\n\n"
-                                    f"Your exploit body (preview):\n{preview}"
+                                    f"Compilation failed:\n{build_err[:400]}\n\nYour exploit body (preview):\n{preview}"
                                 )
                                 continue
 
@@ -2232,8 +2296,10 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                             if test_res.success and passed_by_logs:
                                 # Authenticity check
                                 authentic, auth_reason = self._check_test_authenticity(
-                                    full_test, finding.affected_contract, is_legacy,
-                                    vulnerability_class=getattr(finding, 'vulnerability_class', ''),
+                                    full_test,
+                                    finding.affected_contract,
+                                    is_legacy,
+                                    vulnerability_class=getattr(finding, "vulnerability_class", ""),
                                 )
                                 if authentic:
                                     if not _has_meaningful_assertions(full_test):
@@ -2259,7 +2325,9 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                         if harness_succeeded:
                             print("  [TestWriter] ═══ HARNESS MODE SUCCESS ═══")
                         else:
-                            print(f"  [TestWriter] Harness mode exhausted {harness_attempts} attempts — falling back to full-prompt")
+                            print(
+                                f"  [TestWriter] Harness mode exhausted {harness_attempts} attempts — falling back to full-prompt"
+                            )
                             error_history.extend(harness_error_history[-2:])
 
                 except Exception as e:
@@ -2274,7 +2342,9 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                 # Skip the legacy loop entirely
                 pass
             else:
-                print(f"\n  [TestWriter] Starting full-prompt attempt loop (max={effective_max - attempts}, LLM timeout={self.LLM_TIMEOUT}s)")
+                print(
+                    f"\n  [TestWriter] Starting full-prompt attempt loop (max={effective_max - attempts}, LLM timeout={self.LLM_TIMEOUT}s)"
+                )
 
             while attempts < effective_max and not harness_succeeded:
                 attempts += 1
@@ -2286,18 +2356,21 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                 _used_template = False
                 if attempts == 1 and not is_legacy:
                     from src.pipeline.workers.poc_templates import get_template_for_vuln
+
                     vuln_class = finding.vulnerability_class or ""
                     _template_fn = get_template_for_vuln(vuln_class)
                     if _template_fn:
                         # resolve_deploy_code_path is already imported at module level (line 21)
                         deploy_path_for_template = deploy_paths.get(
                             finding.affected_contract,
-                            resolve_deploy_code_path(finding.affected_contract, repo_manifest, real_sources_full)
+                            resolve_deploy_code_path(finding.affected_contract, repo_manifest, real_sources_full),
                         )
                         template_pragma = target_pragma or "^0.8.20"
                         test_code_generated = _template_fn(
-                            finding, deploy_path_for_template,
-                            finding.affected_contract, template_pragma,
+                            finding,
+                            deploy_path_for_template,
+                            finding.affected_contract,
+                            template_pragma,
                         )
                         print(
                             f"  [TestWriter] Using deterministic template for "
@@ -2305,10 +2378,7 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                         )
                         _used_template = True
                     else:
-                        print(
-                            f"  [TestWriter] No template for '{vuln_class}' — "
-                            f"using LLM on attempt 1"
-                        )
+                        print(f"  [TestWriter] No template for '{vuln_class}' — using LLM on attempt 1")
 
                 if not _used_template:
                     # ── Original LLM path ──
@@ -2316,7 +2386,9 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                     # (less context = more compile errors on first attempts)
                     sources_for_attempt = real_sources_full or real_sources_minimal
                     source_mode = "FULL" if real_sources_full else "MINIMAL-FALLBACK"
-                    print(f"  [TestWriter] Source mode: {source_mode} ({len(sources_for_attempt) if sources_for_attempt else 0} files)")
+                    print(
+                        f"  [TestWriter] Source mode: {source_mode} ({len(sources_for_attempt) if sources_for_attempt else 0} files)"
+                    )
                     logger.info(f"[TestWriter] Attempt {attempts}/{effective_max} building prompt...")
 
                 if _used_template:
@@ -2324,7 +2396,7 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                     if use_two_file_mode:
                         test_path = sandbox.get_test_path()
                         attack_path = Path(test_path).parent / "AttackContract.sol"
-                        attack_path.write_text(test_code_generated, encoding='utf-8')
+                        attack_path.write_text(test_code_generated, encoding="utf-8")
                     else:
                         test_path = sandbox.get_test_path()
                         test_file = f"{test_path}/ExploitTest.t.sol"
@@ -2334,7 +2406,9 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                     build_res = sandbox.run("forge build --no-cache")
                     if build_res.success:
                         print("  [TestWriter] Template compiled successfully!")
-                        test_res = sandbox.run("forge test --match-test test_exploit --no-cache -vvvv --ignored-error-codes 8429 --ignored-error-codes 2424")
+                        test_res = sandbox.run(
+                            "forge test --match-test test_exploit --no-cache -vvvv --ignored-error-codes 8429 --ignored-error-codes 2424"
+                        )
                         test_logs = test_res.stdout or ""
                         if test_res.success:
                             if not _has_meaningful_assertions(test_code_generated):
@@ -2347,7 +2421,9 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                                 break
                         else:
                             print("  [TestWriter] Template compiled but test failed — falling through to LLM")
-                            error_history.append(f"Code you wrote:\n```solidity\n{test_code_generated}\n```\n\nTemplate compiled but test failed.\nLogs:\n{test_logs[:400]}")
+                            error_history.append(
+                                f"Code you wrote:\n```solidity\n{test_code_generated}\n```\n\nTemplate compiled but test failed.\nLogs:\n{test_logs[:400]}"
+                            )
                     else:
                         build_err = build_res.stdout + build_res.stderr
                         print("  [TestWriter] Template failed to compile — errors will seed LLM attempt")
@@ -2383,9 +2459,7 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                 if use_minimal_prompt and not is_legacy and not use_two_file_mode:
                     # Problem 2B: after 2 consecutive test_exploit() misses, strip ALL
                     # complexity and give Claude only the vulnerable source + directive.
-                    _min_src_text = next(
-                        iter((real_sources_full or real_sources_minimal or {}).values()), ""
-                    )
+                    _min_src_text = next(iter((real_sources_full or real_sources_minimal or {}).values()), "")
                     _jury_brief = task.context.get("jury_brief", {})
                     prompt = self._build_minimal_prompt(finding, _min_src_text, _jury_brief)
                     print(
@@ -2470,7 +2544,9 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                     # Append to the last (user) message content
                     prompt[-1]["content"] += "\n".join(brief_lines)
 
-                print(f"  [TestWriter] Prompt built: {len(prompt)} messages, {prompt_chars} total chars (RAG={'skip' if attempts==1 else 'on'})")
+                print(
+                    f"  [TestWriter] Prompt built: {len(prompt)} messages, {prompt_chars} total chars (RAG={'skip' if attempts == 1 else 'on'})"
+                )
 
                 try:
                     print(f"  [TestWriter] Calling LLM at {time.strftime('%H:%M:%S')} (timeout={self.LLM_TIMEOUT}s)...")
@@ -2481,8 +2557,7 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                     )
                     t_llm = time.time()
                     response = await asyncio.wait_for(
-                        asyncio.to_thread(self.llm_client.invoke, prompt),
-                        timeout=self.LLM_TIMEOUT
+                        asyncio.to_thread(self.llm_client.invoke, prompt), timeout=self.LLM_TIMEOUT
                     )
                     llm_elapsed = time.time() - t_llm
                     content = response.content if hasattr(response, "content") else str(response)
@@ -2493,12 +2568,15 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                     # ── Token tracking ──
                     try:
                         from src.utils.token_counter import get_token_counter
+
                         input_text = "\n".join(m.get("content", "") for m in prompt)
                         # FIX-3: Use actual model name, not hardcoded
                         _tw_model = self._get_llm_model_name()
                         get_token_counter().record(
-                            "TestWriterWorker", _tw_model,
-                            input_text, content,
+                            "TestWriterWorker",
+                            _tw_model,
+                            input_text,
+                            content,
                             getattr(response, "response_metadata", None),
                         )
                     except Exception:
@@ -2513,42 +2591,41 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                         error_history.append("No Solidity code returned by LLM")
                         continue
 
-                    print(f"  [TestWriter] Extracted test code: {len(test_code_generated)} chars, {test_code_generated.count(chr(10))+1} lines")
-                    funcs = re.findall(r'function\s+(\w+)\s*\(', test_code_generated)
+                    print(
+                        f"  [TestWriter] Extracted test code: {len(test_code_generated)} chars, {test_code_generated.count(chr(10)) + 1} lines"
+                    )
+                    funcs = re.findall(r"function\s+(\w+)\s*\(", test_code_generated)
                     print(f"  [TestWriter] Functions found: {funcs}")
 
                     original_len = len(test_code_generated)
                     test_code_generated = self._deduplicate_interfaces(test_code_generated)
                     test_code_generated = self._fix_exploit_succeeded_conflict(test_code_generated)
                     if len(test_code_generated) != original_len:
-                        print(f"  [TestWriter] Deduplicated AttackContract: {original_len} → {len(test_code_generated)} chars")
+                        print(
+                            f"  [TestWriter] Deduplicated AttackContract: {original_len} → {len(test_code_generated)} chars"
+                        )
 
                     if use_two_file_mode:
                         # LLM wrote AttackContract.sol — validate it has the right structure
-                        if not re.search(r'\bcontract\s+AttackContract\b', test_code_generated):
+                        if not re.search(r"\bcontract\s+AttackContract\b", test_code_generated):
                             print("  [TestWriter] SKIP: Missing 'contract AttackContract' — retrying")
-                            error_history.append(
-                                "The file must define 'contract AttackContract'. Do not rename it."
-                            )
+                            error_history.append("The file must define 'contract AttackContract'. Do not rename it.")
                             continue
-                        if not re.search(r'\bfunction\s+execute\s*\(', test_code_generated):
+                        if not re.search(r"\bfunction\s+execute\s*\(", test_code_generated):
                             print("  [TestWriter] SKIP: Missing 'function execute()' — retrying")
-                            error_history.append(
-                                "AttackContract must include 'function execute() external payable'."
-                            )
+                            error_history.append("AttackContract must include 'function execute() external payable'.")
                             continue
                         # Write only the attack contract — scaffold is already written
                         test_path = sandbox.get_test_path()
                         test_file = f"{test_path}/AttackContract.sol"
                         sandbox.write_test_file(test_file, test_code_generated)
-                        print(
-                            f"  [TestWriter] Wrote AttackContract.sol "
-                            f"({len(test_code_generated)} chars)"
-                        )
+                        print(f"  [TestWriter] Wrote AttackContract.sol ({len(test_code_generated)} chars)")
                     else:
                         if not self._has_exact_test_exploit(test_code_generated):
                             print("  [TestWriter] SKIP: Missing 'function test_exploit()' — retrying")
-                            logger.info(f"[TestWriter] Attempt {attempts}: Missing 'function test_exploit()' in generated code.")
+                            logger.info(
+                                f"[TestWriter] Attempt {attempts}: Missing 'function test_exploit()' in generated code."
+                            )
                             if funcs:
                                 logger.info(f"[TestWriter]   Found functions: {funcs}")
                             # Problem 2A: replace the last error entry if it was also a
@@ -2562,7 +2639,7 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                                 f"REQUIRED OUTPUT STRUCTURE (non-negotiable):\n"
                                 f"```solidity\n"
                                 f"pragma solidity ^0.8.0;\n"
-                                f"import \"forge-std/Test.sol\";\n"
+                                f'import "forge-std/Test.sol";\n'
                                 f"// ... any helper contracts ...\n"
                                 f"contract ExploitTest is Test {{\n"
                                 f"    function setUp() public {{ /* deploy contracts */ }}\n"
@@ -2595,7 +2672,9 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
 
                         if not is_legacy and not use_two_file_mode:
                             test_code_generated = self._auto_correct_imports(
-                                test_code_generated, sandbox, remappings,
+                                test_code_generated,
+                                sandbox,
+                                remappings,
                                 collected_paths=list(sources_for_attempt.keys()) if sources_for_attempt else None,
                             )
 
@@ -2629,14 +2708,20 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                             stripped = ln.strip()
                             if stripped.startswith("Warning") or ("Warning" in stripped and "Error" not in stripped):
                                 in_error_block = False
-                            elif stripped.startswith("Error") or stripped.startswith("ParserError") or "Error:" in stripped:
+                            elif (
+                                stripped.startswith("Error")
+                                or stripped.startswith("ParserError")
+                                or "Error:" in stripped
+                            ):
                                 in_error_block = True
 
                             if in_error_block:
                                 parsed_err_lines.append(ln)
 
                         if not parsed_err_lines:
-                            parsed_err_lines = [ln for ln in test_logs.splitlines()[-50:] if ln.strip() and "Warning" not in ln]
+                            parsed_err_lines = [
+                                ln for ln in test_logs.splitlines()[-50:] if ln.strip() and "Warning" not in ln
+                            ]
 
                         short_err = "\n".join(parsed_err_lines[:50]) if parsed_err_lines else test_logs[-1000:]
 
@@ -2654,7 +2739,7 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                             error_entry = f"Build Failed:\n{short_err}"
 
                         # ── Loop detection: same error code appearing 2+ times ───────────
-                        error_codes_this_attempt = re.findall(r'Error \((\d+)\)', short_err)
+                        error_codes_this_attempt = re.findall(r"Error \((\d+)\)", short_err)
                         for code in error_codes_this_attempt:
                             persistent_error_codes[code] = persistent_error_codes.get(code, 0) + 1
 
@@ -2671,12 +2756,18 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                                 f"Do not repeat any pattern from your previous attempts."
                             )
                             error_entry += loop_msg
-                            print(f"  [TestWriter] Loop detected on error codes {looping_codes} — injecting strategy switch")
+                            print(
+                                f"  [TestWriter] Loop detected on error codes {looping_codes} — injecting strategy switch"
+                            )
 
                         if test_code_generated:
                             # FIX-6: Only include first 500 chars to prevent context blowup
-                            code_preview = test_code_generated[:500] + ("\n... [truncated]" if len(test_code_generated) > 500 else "")
-                            error_entry = f"Code you wrote (preview):\n```solidity\n{code_preview}\n```\n\n" + error_entry
+                            code_preview = test_code_generated[:500] + (
+                                "\n... [truncated]" if len(test_code_generated) > 500 else ""
+                            )
+                            error_entry = (
+                                f"Code you wrote (preview):\n```solidity\n{code_preview}\n```\n\n" + error_entry
+                            )
                         error_history.append(error_entry)
                         compiled = False
                         self._clear_forge_cache(sandbox)
@@ -2691,9 +2782,10 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                         exploit_success = False
                         error_history.append(_VACUOUS_TEST_MSG)
 
-                    print(f"  [TestWriter] COMPILED OK  |  forge_success={test_res.success}  |  [PASS] in logs={passed_by_logs}  |  exploit_success={exploit_success}")
+                    print(
+                        f"  [TestWriter] COMPILED OK  |  forge_success={test_res.success}  |  [PASS] in logs={passed_by_logs}  |  exploit_success={exploit_success}"
+                    )
                     print(f"  [TestWriter] FORGE STDOUT:\n{test_res.stdout}")
-
 
                     if exploit_success:
                         # ── Authenticity gate ─────────────────────────────────────────────
@@ -2707,7 +2799,7 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                                 test_code_generated,
                                 finding.affected_contract,
                                 is_legacy,
-                                vulnerability_class=getattr(finding, 'vulnerability_class', ''),
+                                vulnerability_class=getattr(finding, "vulnerability_class", ""),
                             )
                         if not authentic:
                             print(f"  [TestWriter] FABRICATED PROOF REJECTED: {auth_reason}")
@@ -2732,7 +2824,9 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
 
                     # Show why test failed even though it compiled
                     print("  [TestWriter] Test compiled but exploit FAILED")
-                    fail_lines = [ln for ln in test_logs.splitlines() if "[FAIL]" in ln or "Error" in ln or "revert" in ln.lower()]
+                    fail_lines = [
+                        ln for ln in test_logs.splitlines() if "[FAIL]" in ln or "Error" in ln or "revert" in ln.lower()
+                    ]
                     for line in fail_lines[:5]:
                         print(f"    {line.strip()}")
 
@@ -2749,7 +2843,10 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                                 target_deploy_path = deploy_paths.get(finding.affected_contract, "")
                                 pc = precompiled_data.get(finding.affected_contract, {})
                                 scaffold_code = self._generate_test_scaffold(
-                                    finding, target_deploy_path, is_legacy, target_pragma,
+                                    finding,
+                                    target_deploy_path,
+                                    is_legacy,
+                                    target_pragma,
                                     bytecode_hex=pc.get("bytecode"),
                                     dep_bytecodes=pc.get("dep_bytecodes", {}),
                                     ctor_inputs=pc.get("ctor_inputs", []),
@@ -2786,7 +2883,9 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
 
                     err_msg = f"Test compiled but exploit check failed.\nLogs:\n{test_logs[:400]}"
                     if test_code_generated:
-                        code_preview = test_code_generated[:500] + ("\n... [truncated]" if len(test_code_generated) > 500 else "")
+                        code_preview = test_code_generated[:500] + (
+                            "\n... [truncated]" if len(test_code_generated) > 500 else ""
+                        )
                         err_msg = f"Code you wrote (preview):\n```solidity\n{code_preview}\n```\n\n" + err_msg
 
                     # ── v2: Variant Exploration ──────────────────────────────────
@@ -2794,25 +2893,30 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                     # where the exploit is real but the specific parameters fail.
                     if not use_two_file_mode and not is_legacy and attempts < effective_max:
                         print("  [TestWriter] ── VARIANT EXPLORATION ──")
-                        variant_prompt = self._build_variant_prompt(
-                            finding, test_code_generated, test_logs[:800]
-                        )
+                        variant_prompt = self._build_variant_prompt(finding, test_code_generated, test_logs[:800])
                         try:
                             t_var = time.time()
                             var_response = await asyncio.wait_for(
-                                asyncio.to_thread(self.llm_client.invoke, variant_prompt),
-                                timeout=self.LLM_TIMEOUT
+                                asyncio.to_thread(self.llm_client.invoke, variant_prompt), timeout=self.LLM_TIMEOUT
                             )
                             var_elapsed = time.time() - t_var
-                            var_content = var_response.content if hasattr(var_response, "content") else str(var_response)
+                            var_content = (
+                                var_response.content if hasattr(var_response, "content") else str(var_response)
+                            )
                             if isinstance(var_content, list):
-                                var_content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in var_content])
-                            print(f"  [TestWriter] Variant LLM responded in {var_elapsed:.1f}s ({len(var_content)} chars)")
+                                var_content = "".join(
+                                    [c.get("text", "") if isinstance(c, dict) else str(c) for c in var_content]
+                                )
+                            print(
+                                f"  [TestWriter] Variant LLM responded in {var_elapsed:.1f}s ({len(var_content)} chars)"
+                            )
 
                             var_code = self._extract_test_code(var_content)
                             if var_code and self._has_exact_test_exploit(var_code):
                                 var_code = self._auto_correct_imports(
-                                    var_code, sandbox, remappings,
+                                    var_code,
+                                    sandbox,
+                                    remappings,
                                     collected_paths=list(sources_for_attempt.keys()) if sources_for_attempt else None,
                                 )
                                 test_path = sandbox.get_test_path()
@@ -2825,20 +2929,28 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                                     " --ignored-error-codes 8429 --ignored-error-codes 2424"
                                 )
                                 var_logs = (var_test_res.stdout or "") + "\n" + (var_test_res.stderr or "")
-                                var_passed = var_test_res.success and ("[PASS]" in var_logs or "exploit succeeded" in var_logs.lower())
+                                var_passed = var_test_res.success and (
+                                    "[PASS]" in var_logs or "exploit succeeded" in var_logs.lower()
+                                )
 
                                 if var_passed:
                                     # Check authenticity
                                     authentic, auth_reason = self._check_test_authenticity(
-                                        var_code, finding.affected_contract, is_legacy,
-                                        vulnerability_class=getattr(finding, 'vulnerability_class', ''),
+                                        var_code,
+                                        finding.affected_contract,
+                                        is_legacy,
+                                        vulnerability_class=getattr(finding, "vulnerability_class", ""),
                                     )
                                     if authentic:
                                         if not _has_meaningful_assertions(var_code):
-                                            print("  [TestWriter] REJECT: Variant passed vacuously (no assertions found)")
+                                            print(
+                                                "  [TestWriter] REJECT: Variant passed vacuously (no assertions found)"
+                                            )
                                             error_history.append(_VACUOUS_TEST_MSG)
                                         else:
-                                            print("  [TestWriter] ✓ VARIANT SUCCEEDED! Exploit proven via relaxed parameters")
+                                            print(
+                                                "  [TestWriter] ✓ VARIANT SUCCEEDED! Exploit proven via relaxed parameters"
+                                            )
                                             exploit_success = True
                                             variant_success = True
                                             test_code_generated = var_code
@@ -2847,7 +2959,9 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                                     else:
                                         print(f"  [TestWriter] Variant passed but FABRICATED: {auth_reason}")
                                 else:
-                                    print("  [TestWriter] Variant also failed — exploit genuinely not provable with this approach")
+                                    print(
+                                        "  [TestWriter] Variant also failed — exploit genuinely not provable with this approach"
+                                    )
                             else:
                                 print("  [TestWriter] Variant LLM did not produce valid test code")
                         except (TimeoutError, Exception) as var_err:
@@ -2879,7 +2993,7 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                     proven_dir.mkdir(exist_ok=True)
                     task_slug = task.task_id.replace("/", "_").replace("::", "_")[:60]
                     artifact_path = proven_dir / f"{task_slug}.t.sol"
-                    artifact_path.write_text(test_code_generated, encoding='utf-8')
+                    artifact_path.write_text(test_code_generated, encoding="utf-8")
                     print(f"  [TestWriter] Saved proven exploit artifact: {artifact_path}")
                 except Exception as e:
                     print(f"  [TestWriter] Warning: could not save proven exploit artifact: {e}")
@@ -2896,13 +3010,15 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
         final_confidence = max(0, min(100, original_conf + adjustment))
 
         print(f"  [TestWriter] === RESULT === {finding.affected_contract}::{finding.affected_function}")
-        print(f"  [TestWriter]   Mode: {'BRIDGE' if is_legacy else 'STANDARD'}  |  Attempts: {attempts}/{effective_max}")
+        print(
+            f"  [TestWriter]   Mode: {'BRIDGE' if is_legacy else 'STANDARD'}  |  Attempts: {attempts}/{effective_max}"
+        )
         print(f"  [TestWriter]   Compiled: {compiled}  |  Exploit proven: {exploit_success}")
         print(f"  [TestWriter]   Confidence: {original_conf} -> {final_confidence} (adjustment={adjustment:+d})")
         print(f"  [TestWriter]   Used real source: {bool(real_sources_full)}")
         if error_history:
             print(f"  [TestWriter]   Last error: {error_history[-1][:150]}")
-        print(f"{'='*70}\n")
+        print(f"{'=' * 70}\n")
 
         # ── v2: Assign evidence tag ───────────────────────────────
         if compiled and exploit_success and variant_success:
@@ -2929,7 +3045,7 @@ Try a COMPLETELY DIFFERENT approach. Do not repeat the same strategy.
                 "last_error": error_history[-1] if error_history else None,
                 "used_real_source": bool(real_sources_full),
                 "bridge_mode": is_legacy,
-            }
+            },
         )
 
     def _get_llm_model_name(self) -> str:

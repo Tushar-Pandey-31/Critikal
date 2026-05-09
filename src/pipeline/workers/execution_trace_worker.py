@@ -247,15 +247,19 @@ class ExecutionTraceWorker(WorkerAgent):
         # Find sibling functions in the same contract
         try:
             for node_id, data in self.graph.nodes(data=True):
-                if (data.get("contract_name") == hotspot.contract and
-                    node_id != hotspot.node_id and
-                    data.get("node_type") == "function"):
-                    sibling_functions.append({
-                        "name": data.get("function_name", node_id),
-                        "visibility": data.get("visibility", "unknown"),
-                        "writes_state": data.get("writes_state", False),
-                        "state_vars_written": data.get("state_variables_written", []),
-                    })
+                if (
+                    data.get("contract_name") == hotspot.contract
+                    and node_id != hotspot.node_id
+                    and data.get("node_type") == "function"
+                ):
+                    sibling_functions.append(
+                        {
+                            "name": data.get("function_name", node_id),
+                            "visibility": data.get("visibility", "unknown"),
+                            "writes_state": data.get("writes_state", False),
+                            "state_vars_written": data.get("state_variables_written", []),
+                        }
+                    )
         except Exception:
             pass
 
@@ -309,22 +313,19 @@ Return ONLY the JSON object.
                 )
                 content = response.content if hasattr(response, "content") else str(response)
                 if isinstance(content, list):
-                    content = "".join(
-                        c.get("text", "") if isinstance(c, dict) else str(c)
-                        for c in content
-                    )
+                    content = "".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in content)
 
                 # Token tracking
                 try:
                     from src.utils.token_counter import get_token_counter
+
                     model_name = os.getenv("EXECUTION_TRACE_MODEL_NAME", "gpt-5.4-mini")
-                    input_text = "\n".join(
-                        m.get("content", "") if isinstance(m, dict) else str(m)
-                        for m in messages
-                    )
+                    input_text = "\n".join(m.get("content", "") if isinstance(m, dict) else str(m) for m in messages)
                     get_token_counter().record(
-                        "ExecutionTraceWorker", model_name,
-                        input_text, str(content),
+                        "ExecutionTraceWorker",
+                        model_name,
+                        input_text,
+                        str(content),
                         getattr(response, "response_metadata", None),
                     )
                 except Exception:
@@ -364,9 +365,21 @@ Return ONLY the JSON object.
     def _read_source_from_disk(self, contract_name: str) -> str:
         """Fallback: read source from disk when graph has no source data."""
         import glob
-        repo_path = getattr(self.graph, '_repo_path', None) or os.getcwd()
-        exclude_dirs = {"test", "tests", "mock", "mocks", "lib", "node_modules",
-                        "script", "scripts", "echidna", "fuzz", "fuzzing"}
+
+        repo_path = getattr(self.graph, "_repo_path", None) or os.getcwd()
+        exclude_dirs = {
+            "test",
+            "tests",
+            "mock",
+            "mocks",
+            "lib",
+            "node_modules",
+            "script",
+            "scripts",
+            "echidna",
+            "fuzz",
+            "fuzzing",
+        }
         sol_files = glob.glob(os.path.join(repo_path, "**", "*.sol"), recursive=True)
         for f in sol_files:
             parts = f.replace("\\", "/").split("/")

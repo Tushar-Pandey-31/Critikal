@@ -11,20 +11,20 @@ from textual.containers import VerticalScroll
 from textual.reactive import reactive
 from textual.widgets import Static
 
-FG       = "#e8e8e8"
-DIM      = "#8a8a8a"
-DIMMER   = "#5a5a5a"
-ACCENT   = "#7dd3c0"
-DANGER   = "#e08a8a"
-WARN     = "#d9c47d"
+FG = "#e8e8e8"
+DIM = "#8a8a8a"
+DIMMER = "#5a5a5a"
+ACCENT = "#7dd3c0"
+DANGER = "#e08a8a"
+WARN = "#d9c47d"
 
 
 # severity → (glyph, style)
 SEVERITY_STYLES = {
     "CRITICAL": ("◆", f"bold {DANGER}"),
-    "HIGH":     ("◆", f"bold {WARN}"),
-    "MEDIUM":   ("◇", FG),
-    "LOW":      ("·", DIM),
+    "HIGH": ("◆", f"bold {WARN}"),
+    "MEDIUM": ("◇", FG),
+    "LOW": ("·", DIM),
 }
 
 

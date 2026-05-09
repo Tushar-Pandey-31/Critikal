@@ -1,7 +1,5 @@
 """Graph node and edge construction from Slither IR."""
 
-
-
 ENABLE_CROSS_CONTRACT_EDGES = True
 
 
@@ -58,10 +56,10 @@ class NodeEdgeMixin:
                 abs_path = str(src_mapping.filename.absolute)
                 source_file = abs_path
                 content = self._read_file_cached(abs_path)
-                source_code = content[src_mapping.start:src_mapping.start + src_mapping.length]
+                source_code = content[src_mapping.start : src_mapping.start + src_mapping.length]
                 # Calculate line numbers manually
-                start_line = content[:src_mapping.start].count('\n') + 1
-                end_line = start_line + source_code.count('\n')
+                start_line = content[: src_mapping.start].count("\n") + 1
+                end_line = start_line + source_code.count("\n")
             except Exception:
                 pass
 
@@ -74,10 +72,7 @@ class NodeEdgeMixin:
         # - OR is a fallback/receive function (always externally callable)
         # - Must NOT be a constructor
         is_external_entry = (
-            (
-                str(function.visibility) in ["public", "external"]
-                and not function.is_constructor
-            )
+            (str(function.visibility) in ["public", "external"] and not function.is_constructor)
             or function.is_fallback
             or function.is_receive
         )
@@ -122,7 +117,11 @@ class NodeEdgeMixin:
             for p in params:
                 t = getattr(p, "type", None)
                 param_types.append(str(t) if t else "???")
-            return f"{function.name}({','.join(param_types)})" if not function.is_constructor else f"constructor({','.join(param_types)})"
+            return (
+                f"{function.name}({','.join(param_types)})"
+                if not function.is_constructor
+                else f"constructor({','.join(param_types)})"
+            )
         except Exception:
             return ""
 
@@ -184,12 +183,7 @@ class NodeEdgeMixin:
             # Deduplicate: only add edge if not already added
             if target_node_id not in added_calls:
                 # Add edge with call_type metadata
-                self.graph.add_edge(
-                    src_node_id,
-                    target_node_id,
-                    relationship="CALLS",
-                    call_type="internal"
-                )
+                self.graph.add_edge(src_node_id, target_node_id, relationship="CALLS", call_type="internal")
                 added_calls.add(target_node_id)
 
         # Note: External calls are intentionally excluded for Story 2.3
@@ -211,7 +205,9 @@ class NodeEdgeMixin:
                         if self.graph.has_node(t_cname) and hasattr(target_func, "name"):
                             target_id = f"{t_cname}::{target_func.name}"
                             if self.graph.has_node(target_id):
-                                self.graph.add_edge(caller_id, target_id, relationship="CROSS_CONTRACT_CALL", call_type="cross_contract")
+                                self.graph.add_edge(
+                                    caller_id, target_id, relationship="CROSS_CONTRACT_CALL", call_type="cross_contract"
+                                )
                                 self.graph.nodes[target_id]["reachable_from_cross_contract"] = True
 
     def _add_state_access_edges(self, contract, function):
@@ -233,7 +229,7 @@ class NodeEdgeMixin:
                     storage_location="storage",
                     declaring_contract=state_var.contract.name,
                     name=state_var.name,
-                    contract=state_var.contract.name
+                    contract=state_var.contract.name,
                 )
 
             self.graph.add_edge(src_node_id, var_node_id, relationship="READS")
@@ -251,7 +247,7 @@ class NodeEdgeMixin:
                     storage_location="storage",
                     declaring_contract=state_var.contract.name,
                     name=state_var.name,
-                    contract=state_var.contract.name
+                    contract=state_var.contract.name,
                 )
 
             self.graph.add_edge(src_node_id, var_node_id, relationship="WRITES")

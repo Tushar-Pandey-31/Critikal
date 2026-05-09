@@ -4,12 +4,13 @@ Test Suite for Story 3.1 — Recursive Write Propagation
 Verifies that state variable writes propagate correctly through
 CALLS edges in the knowledge graph.
 """
+
 import os
 import sys
 
 import pytest
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from analysis_engine import AnalysisEngine
 from src.graph import GraphBuilder
@@ -18,7 +19,7 @@ from src.graph import GraphBuilder
 @pytest.fixture(scope="module")
 def graph():
     """Build graph from all test contracts (including WritePropagationTest.sol)."""
-    contract_path = os.path.join(os.getcwd(), 'tests', 'contracts')
+    contract_path = os.path.join(os.getcwd(), "tests", "contracts")
 
     engine = AnalysisEngine()
     slither_obj = engine.run_analysis(contract_path)

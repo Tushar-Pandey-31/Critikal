@@ -49,10 +49,7 @@ def test_live_get_raises_not_implemented_without_full_impl():
     client = EtherscanClient(api_key="fake_key")
     # Mock requests.get to return a valid-looking but empty response
     mock_response = MagicMock()
-    mock_response.json.return_value = {
-        "status": "1",
-        "result": [{"SourceCode": "", "Proxy": "0", "ContractName": ""}]
-    }
+    mock_response.json.return_value = {"status": "1", "result": [{"SourceCode": "", "Proxy": "0", "ContractName": ""}]}
     mock_response.raise_for_status = MagicMock()
     with patch("requests.get", return_value=mock_response):
         # Should not crash — should return ContractInfo with data_source="etherscan"

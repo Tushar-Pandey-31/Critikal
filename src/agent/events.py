@@ -15,24 +15,24 @@ from typing import Any
 
 
 class EventType(Enum):
-    MESSAGE_CHUNK = "message_chunk"         # Streaming text delta from LLM
-    MESSAGE_COMPLETE = "message_complete"   # Full assistant message done
-    TOOL_START = "tool_start"               # Tool invocation begins
-    TOOL_COMPLETE = "tool_complete"         # Tool invocation finished
-    FINDING_ADDED = "finding_added"         # New finding discovered
-    COST_UPDATE = "cost_update"             # Cost tracker updated
-    WORKER_SPAWNED = "worker_spawned"       # Sub-agent started
-    WORKER_COMPLETE = "worker_complete"     # Sub-agent finished
-    TURN_COMPLETE = "turn_complete"         # Agent turn finished
-    COMPACT = "compact"                     # Context was compacted
-    STATUS = "status"                       # Generic status message
-    ERROR = "error"                         # Error occurred
+    MESSAGE_CHUNK = "message_chunk"  # Streaming text delta from LLM
+    MESSAGE_COMPLETE = "message_complete"  # Full assistant message done
+    TOOL_START = "tool_start"  # Tool invocation begins
+    TOOL_COMPLETE = "tool_complete"  # Tool invocation finished
+    FINDING_ADDED = "finding_added"  # New finding discovered
+    COST_UPDATE = "cost_update"  # Cost tracker updated
+    WORKER_SPAWNED = "worker_spawned"  # Sub-agent started
+    WORKER_COMPLETE = "worker_complete"  # Sub-agent finished
+    TURN_COMPLETE = "turn_complete"  # Agent turn finished
+    COMPACT = "compact"  # Context was compacted
+    STATUS = "status"  # Generic status message
+    ERROR = "error"  # Error occurred
 
     # ── Lifecycle hooks ──
-    PRE_TOOL_USE = "PreToolUse"             # Fires before every tool execution
-    POST_TOOL_USE = "PostToolUse"           # Fires after every tool execution
-    SESSION_START = "SessionStart"          # Fires when the agent starts
-    SESSION_END = "SessionEnd"              # Fires when the agent exits
+    PRE_TOOL_USE = "PreToolUse"  # Fires before every tool execution
+    POST_TOOL_USE = "PostToolUse"  # Fires after every tool execution
+    SESSION_START = "SessionStart"  # Fires when the agent starts
+    SESSION_END = "SessionEnd"  # Fires when the agent exits
 
 
 @dataclass

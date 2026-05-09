@@ -4,7 +4,7 @@ import sys
 import pytest
 
 # Add src to sys.path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from analysis_engine import AnalysisEngine
 from src.graph import GraphBuilder
@@ -17,7 +17,7 @@ from utils.graph_queries import GraphQueries
 @pytest.fixture(scope="module")
 def graph_and_queries():
     """Builds the graph once and shares it across all tests in this module."""
-    repo_path = os.path.join(os.getcwd(), 'tests', 'contracts')
+    repo_path = os.path.join(os.getcwd(), "tests", "contracts")
     engine = AnalysisEngine()
     slither_obj = engine.run_analysis(repo_path)
     assert slither_obj is not None, "Analysis failed, cannot run external call tests"
@@ -37,12 +37,11 @@ def test_low_level_call(graph_and_queries):
     assert graph.has_node(node_id), f"Node {node_id} not found"
 
     data = graph.nodes[node_id]
-    assert data.get("makes_external_call") == True, \
-        "lowLevelCall() should make external call"
-    assert "call" in data.get("external_call_type", []), \
+    assert data.get("makes_external_call") == True, "lowLevelCall() should make external call"
+    assert "call" in data.get("external_call_type", []), (
         f"lowLevelCall() should have 'call' type, got {data.get('external_call_type')}"
-    assert data.get("state_write_after_external_call") == True, \
-        "lowLevelCall() writes state AFTER external call"
+    )
+    assert data.get("state_write_after_external_call") == True, "lowLevelCall() writes state AFTER external call"
 
     print(f"✓ PASS: {node_id}")
     print(f"  - external_call_type: {data.get('external_call_type')}")
@@ -58,12 +57,11 @@ def test_send_ether(graph_and_queries):
     assert graph.has_node(node_id), f"Node {node_id} not found"
 
     data = graph.nodes[node_id]
-    assert data.get("makes_external_call") == True, \
-        "sendEther() should make external call"
-    assert "send" in data.get("external_call_type", []), \
+    assert data.get("makes_external_call") == True, "sendEther() should make external call"
+    assert "send" in data.get("external_call_type", []), (
         f"sendEther() should have 'send' type, got {data.get('external_call_type')}"
-    assert data.get("state_write_after_external_call") == True, \
-        "sendEther() writes state AFTER external call"
+    )
+    assert data.get("state_write_after_external_call") == True, "sendEther() writes state AFTER external call"
 
     print(f"✓ PASS: {node_id}")
     print(f"  - external_call_type: {data.get('external_call_type')}")
@@ -78,12 +76,13 @@ def test_transfer_ether(graph_and_queries):
     assert graph.has_node(node_id), f"Node {node_id} not found"
 
     data = graph.nodes[node_id]
-    assert data.get("makes_external_call") == True, \
-        "transferEther() should make external call"
-    assert "transfer" in data.get("external_call_type", []), \
+    assert data.get("makes_external_call") == True, "transferEther() should make external call"
+    assert "transfer" in data.get("external_call_type", []), (
         f"transferEther() should have 'transfer' type, got {data.get('external_call_type')}"
-    assert data.get("state_write_after_external_call") == False, \
+    )
+    assert data.get("state_write_after_external_call") == False, (
         "transferEther() has NO state write after external call"
+    )
 
     print(f"✓ PASS: {node_id}")
     print(f"  - external_call_type: {data.get('external_call_type')}")
@@ -99,10 +98,10 @@ def test_delegate_call(graph_and_queries):
     assert graph.has_node(node_id), f"Node {node_id} not found"
 
     data = graph.nodes[node_id]
-    assert data.get("makes_external_call") == True, \
-        "delegateCall() should make external call"
-    assert "delegatecall" in data.get("external_call_type", []), \
+    assert data.get("makes_external_call") == True, "delegateCall() should make external call"
+    assert "delegatecall" in data.get("external_call_type", []), (
         f"delegateCall() should have 'delegatecall' type, got {data.get('external_call_type')}"
+    )
 
     print(f"✓ PASS: {node_id}")
     print(f"  - external_call_type: {data.get('external_call_type')}")
@@ -117,12 +116,11 @@ def test_high_level_call(graph_and_queries):
     assert graph.has_node(node_id), f"Node {node_id} not found"
 
     data = graph.nodes[node_id]
-    assert data.get("makes_external_call") == True, \
-        "highLevelCall() should make external call"
-    assert "interface" in data.get("external_call_type", []), \
+    assert data.get("makes_external_call") == True, "highLevelCall() should make external call"
+    assert "interface" in data.get("external_call_type", []), (
         f"highLevelCall() should have 'interface' type, got {data.get('external_call_type')}"
-    assert data.get("state_write_after_external_call") == True, \
-        "highLevelCall() writes state AFTER external call"
+    )
+    assert data.get("state_write_after_external_call") == True, "highLevelCall() writes state AFTER external call"
 
     print(f"✓ PASS: {node_id}")
     print(f"  - external_call_type: {data.get('external_call_type')}")
@@ -138,12 +136,11 @@ def test_no_external_call(graph_and_queries):
     assert graph.has_node(node_id), f"Node {node_id} not found"
 
     data = graph.nodes[node_id]
-    assert data.get("makes_external_call") == False, \
-        "noExternalCall() should NOT make external call"
-    assert len(data.get("external_call_type", [])) == 0, \
-        "noExternalCall() should have empty external_call_type"
-    assert data.get("state_write_after_external_call") == False, \
+    assert data.get("makes_external_call") == False, "noExternalCall() should NOT make external call"
+    assert len(data.get("external_call_type", [])) == 0, "noExternalCall() should have empty external_call_type"
+    assert data.get("state_write_after_external_call") == False, (
         "noExternalCall() should not flag state_write_after_external_call"
+    )
 
     print(f"✓ PASS: {node_id}")
     print(f"  - makes_external_call: {data.get('makes_external_call')}")
@@ -158,16 +155,13 @@ def test_multiple_external_calls(graph_and_queries):
     assert graph.has_node(node_id), f"Node {node_id} not found"
 
     data = graph.nodes[node_id]
-    assert data.get("makes_external_call") == True, \
-        "multipleExternalCalls() should make external calls"
+    assert data.get("makes_external_call") == True, "multipleExternalCalls() should make external calls"
 
     call_types = data.get("external_call_type", [])
-    assert len(call_types) >= 2, \
-        f"multipleExternalCalls() should have >= 2 call types, got {call_types}"
+    assert len(call_types) >= 2, f"multipleExternalCalls() should have >= 2 call types, got {call_types}"
 
     call_nodes = data.get("external_call_nodes", [])
-    assert len(call_nodes) >= 2, \
-        f"multipleExternalCalls() should have >= 2 call descriptions, got {len(call_nodes)}"
+    assert len(call_nodes) >= 2, f"multipleExternalCalls() should have >= 2 call descriptions, got {len(call_nodes)}"
 
     print(f"✓ PASS: {node_id}")
     print(f"  - external_call_type: {call_types}")
@@ -183,10 +177,10 @@ def test_call_then_write(graph_and_queries):
     assert graph.has_node(node_id), f"Node {node_id} not found"
 
     data = graph.nodes[node_id]
-    assert data.get("makes_external_call") == True, \
-        "callThenWrite() should make external call"
-    assert data.get("state_write_after_external_call") == True, \
+    assert data.get("makes_external_call") == True, "callThenWrite() should make external call"
+    assert data.get("state_write_after_external_call") == True, (
         "callThenWrite() should flag state_write_after_external_call (CEI violation)"
+    )
 
     print(f"✓ PASS: {node_id}")
     print(f"  - state_write_after_external_call: {data.get('state_write_after_external_call')}")
@@ -201,10 +195,10 @@ def test_write_then_call(graph_and_queries):
     assert graph.has_node(node_id), f"Node {node_id} not found"
 
     data = graph.nodes[node_id]
-    assert data.get("makes_external_call") == True, \
-        "writeThenCall() should make external call"
-    assert data.get("state_write_after_external_call") == False, \
+    assert data.get("makes_external_call") == True, "writeThenCall() should make external call"
+    assert data.get("state_write_after_external_call") == False, (
         "writeThenCall() should NOT flag state_write_after_external_call (safe CEI)"
+    )
 
     print(f"✓ PASS: {node_id}")
     print(f"  - state_write_after_external_call: {data.get('state_write_after_external_call')}")
@@ -219,12 +213,12 @@ def test_multiple_writes_and_calls(graph_and_queries):
     assert graph.has_node(node_id), f"Node {node_id} not found"
 
     data = graph.nodes[node_id]
-    assert data.get("makes_external_call") == True, \
-        "multipleWritesAndCalls() should make external call"
+    assert data.get("makes_external_call") == True, "multipleWritesAndCalls() should make external call"
 
     # Should be flagged as unsafe because of the second write AFTER the call
-    assert data.get("state_write_after_external_call") == True, \
+    assert data.get("state_write_after_external_call") == True, (
         "multipleWritesAndCalls() should flag state_write_after_external_call (second write is after call)"
+    )
 
     print(f"✓ PASS: {node_id}")
     print(f"  - state_write_after_external_call: {data.get('state_write_after_external_call')}")
@@ -239,12 +233,12 @@ def test_write_in_callee(graph_and_queries):
     assert graph.has_node(node_id), f"Node {node_id} not found"
 
     data = graph.nodes[node_id]
-    assert data.get("makes_external_call") == True, \
-        "writeInCallee() should make external call"
+    assert data.get("makes_external_call") == True, "writeInCallee() should make external call"
 
     # Should be flagged as unsafe because call happens before indirect write in _updateBalance
-    assert data.get("state_write_after_external_call") == True, \
+    assert data.get("state_write_after_external_call") == True, (
         "writeInCallee() should flag state_write_after_external_call (indirect write via internal call)"
+    )
 
     print(f"✓ PASS: {node_id}")
     print(f"  - state_write_after_external_call: {data.get('state_write_after_external_call')}")
@@ -260,11 +254,11 @@ def test_modifier_call_write(graph_and_queries):
 
     data = graph.nodes[node_id]
     # Modifier makes external call, function body writes state -> Violation
-    assert data.get("makes_external_call") == True, \
-        "modifierCallWrite() should make external call (via modifier)"
+    assert data.get("makes_external_call") == True, "modifierCallWrite() should make external call (via modifier)"
 
-    assert data.get("state_write_after_external_call") == True, \
+    assert data.get("state_write_after_external_call") == True, (
         "modifierCallWrite() should flag state_write_after_external_call (modifier call before body write)"
+    )
 
     print(f"✓ PASS: {node_id}")
     print(f"  - state_write_after_external_call: {data.get('state_write_after_external_call')}")
@@ -279,12 +273,12 @@ def test_conditional_write(graph_and_queries):
     assert graph.has_node(node_id), f"Node {node_id} not found"
 
     data = graph.nodes[node_id]
-    assert data.get("makes_external_call") == True, \
-        "conditionalWrite() should make external call"
+    assert data.get("makes_external_call") == True, "conditionalWrite() should make external call"
 
     # Write inside if block is structurally after the call -> Violation
-    assert data.get("state_write_after_external_call") == True, \
+    assert data.get("state_write_after_external_call") == True, (
         "conditionalWrite() should flag state_write_after_external_call (conditional write)"
+    )
 
     print(f"✓ PASS: {node_id}")
     print(f"  - state_write_after_external_call: {data.get('state_write_after_external_call')}")
@@ -299,12 +293,12 @@ def test_safe_pull(graph_and_queries):
     assert graph.has_node(node_id), f"Node {node_id} not found"
 
     data = graph.nodes[node_id]
-    assert data.get("makes_external_call") == True, \
-        "safePull() should make external call"
+    assert data.get("makes_external_call") == True, "safePull() should make external call"
 
     # Write happens before call -> Safe
-    assert data.get("state_write_after_external_call") == False, \
+    assert data.get("state_write_after_external_call") == False, (
         "safePull() should NOT flag state_write_after_external_call (safe check-effect-interaction)"
+    )
 
     print(f"✓ PASS: {node_id}")
     print(f"  - state_write_after_external_call: {data.get('state_write_after_external_call')}")
@@ -319,18 +313,20 @@ def test_external_call_no_mutation(graph_and_queries):
     assert graph.has_node(node_id), f"Node {node_id} not found"
 
     data = graph.nodes[node_id]
-    assert data.get("makes_external_call") == True, \
-        "externalCallNoMutation() should make external call"
+    assert data.get("makes_external_call") == True, "externalCallNoMutation() should make external call"
 
     # No state writes anywhere -> Safe
-    assert data.get("state_write_after_external_call") == False, \
+    assert data.get("state_write_after_external_call") == False, (
         "externalCallNoMutation() should NOT flag state_write_after_external_call (no mutation)"
+    )
 
     print(f"✓ PASS: {node_id}")
+
 
 # ================================================================
 # NEW: Modifier Stacking & Order Cases
 # ================================================================
+
 
 def test_body_write_modifier_post_call(graph_and_queries):
     graph, _ = graph_and_queries
@@ -340,8 +336,9 @@ def test_body_write_modifier_post_call(graph_and_queries):
     data = graph.nodes[node_id]
     # Write in body (Phase 1), Call in modifier POST (Phase 2)
     # This is SAFE because write happens BEFORE call starts
-    assert data.get("state_write_after_external_call") == False, \
+    assert data.get("state_write_after_external_call") == False, (
         "bodyWriteModifierPostCall() should NOT flag violation (call happens AFTER body write)"
+    )
 
     print(f"✓ PASS: {node_id}")
 
@@ -353,8 +350,9 @@ def test_modifier_internal_write_safe(graph_and_queries):
 
     data = graph.nodes[node_id]
     # Write then Call in same modifier (Phase 0) -> Safe
-    assert data.get("state_write_after_external_call") == False, \
+    assert data.get("state_write_after_external_call") == False, (
         "modifierInternalWriteSafe() should NOT flag violation (write before call in same mod)"
+    )
 
     print(f"✓ PASS: {node_id}")
 
@@ -366,8 +364,9 @@ def test_modifier_internal_write_violation(graph_and_queries):
 
     data = graph.nodes[node_id]
     # Call then Write in same modifier (Phase 0) -> Violation
-    assert data.get("state_write_after_external_call") == True, \
+    assert data.get("state_write_after_external_call") == True, (
         "modifierInternalWriteViolation() should flag violation (call before write in same mod)"
+    )
 
     print(f"✓ PASS: {node_id}")
 
@@ -379,8 +378,9 @@ def test_multiple_modifiers_stacking(graph_and_queries):
 
     data = graph.nodes[node_id]
     # Execution: A-pre(call) -> Body -> B-post(write) -> Violation
-    assert data.get("state_write_after_external_call") == True, \
+    assert data.get("state_write_after_external_call") == True, (
         "multipleModifiersStacking() should flag violation (call in A-pre before write in B-post)"
+    )
 
     print(f"✓ PASS: {node_id}")
 
@@ -398,8 +398,7 @@ def test_external_call_edges_exist(graph_and_queries):
             continue
 
         ext_edges = queries.get_external_call_edges(node_id)
-        assert len(ext_edges) > 0, \
-            f"{node_id} has makes_external_call=True but no EXTERNAL_CALL edges"
+        assert len(ext_edges) > 0, f"{node_id} has makes_external_call=True but no EXTERNAL_CALL edges"
 
     print("✓ PASS: All external-call functions have EXTERNAL_CALL edges")
 
@@ -465,8 +464,7 @@ def test_view_interface_call_is_staticcall(graph_and_queries):
     assert len(edges) >= 1, "externalCallNoMutation should have EXTERNAL_CALL edges"
 
     call_types = [e["call_type"] for e in edges]
-    assert "staticcall" in call_types, \
-        f"View function call should be classified as staticcall, got {call_types}"
+    assert "staticcall" in call_types, f"View function call should be classified as staticcall, got {call_types}"
 
     print("✓ PASS: view interface call classified as staticcall")
 
@@ -479,8 +477,9 @@ def test_view_call_then_write(graph_and_queries):
     data = graph.nodes[node_id]
     assert data.get("makes_external_call") is True
     assert data.get("state_write_after_external_call") is True
-    assert data.get("state_write_after_reentrant_call") is False, \
+    assert data.get("state_write_after_reentrant_call") is False, (
         "staticcall should NOT set state_write_after_reentrant_call"
+    )
 
     edges = queries.get_external_call_edges(node_id)
     call_types = [e["call_type"] for e in edges]
@@ -495,8 +494,7 @@ def test_nonview_interface_is_not_staticcall(graph_and_queries):
     assert len(edges) >= 1
 
     call_types = [e["call_type"] for e in edges]
-    assert "interface" in call_types, \
-        f"Non-view interface call should be 'interface', got {call_types}"
+    assert "interface" in call_types, f"Non-view interface call should be 'interface', got {call_types}"
     assert "staticcall" not in call_types
 
     print("✓ PASS: non-view interface call is 'interface', not 'staticcall'")
@@ -512,10 +510,12 @@ def test_transfer_then_write_not_reentrant(graph_and_queries):
 
     data = graph.nodes[node_id]
     assert data.get("makes_external_call") is True
-    assert data.get("state_write_after_external_call") is True, \
+    assert data.get("state_write_after_external_call") is True, (
         "transferThenWrite has write after transfer (CEI violation)"
-    assert data.get("state_write_after_reentrant_call") is False, \
+    )
+    assert data.get("state_write_after_reentrant_call") is False, (
         "transfer (2300 gas) should NOT flag state_write_after_reentrant_call"
+    )
 
     print("✓ PASS: transferThenWrite is CEI violation but NOT reentrant-capable")
 
@@ -527,10 +527,10 @@ def test_send_then_write_not_reentrant(graph_and_queries):
 
     data = graph.nodes[node_id]
     assert data.get("makes_external_call") is True
-    assert data.get("state_write_after_external_call") is True, \
-        "sendThenWrite has write after send (CEI violation)"
-    assert data.get("state_write_after_reentrant_call") is False, \
+    assert data.get("state_write_after_external_call") is True, "sendThenWrite has write after send (CEI violation)"
+    assert data.get("state_write_after_reentrant_call") is False, (
         "send (2300 gas) should NOT flag state_write_after_reentrant_call"
+    )
 
     print("✓ PASS: sendThenWrite is CEI violation but NOT reentrant-capable")
 
@@ -553,8 +553,7 @@ def test_all_functions_have_metadata(graph_and_queries):
         if node_data.get("type") != "function":
             continue
         for field in required_fields:
-            assert field in node_data, \
-                f"Function {node_id} missing field: {field}"
+            assert field in node_data, f"Function {node_id} missing field: {field}"
 
     print("✓ PASS: All function nodes have external call metadata fields")
 
@@ -570,16 +569,17 @@ def test_query_external_call_functions(graph_and_queries):
     assert len(results) > 0, "Should find at least one external call function"
 
     result_ids = [r["function_id"] for r in results]
-    assert "ExternalCallTest::lowLevelCall" in result_ids, \
-        "lowLevelCall should be in external call functions"
-    assert "ExternalCallTest::noExternalCall" not in result_ids, \
+    assert "ExternalCallTest::lowLevelCall" in result_ids, "lowLevelCall should be in external call functions"
+    assert "ExternalCallTest::noExternalCall" not in result_ids, (
         "noExternalCall should NOT be in external call functions"
+    )
 
     # Filter by contract
     filtered = queries.get_external_call_functions(contract_name="ExternalCallTest")
     for r in filtered:
-        assert r["contract"] == "ExternalCallTest", \
+        assert r["contract"] == "ExternalCallTest", (
             f"Filtered result {r['function_id']} should be from ExternalCallTest"
+        )
 
     # Non-existent contract
     empty = queries.get_external_call_functions(contract_name="NonExistent")
@@ -587,8 +587,12 @@ def test_query_external_call_functions(graph_and_queries):
 
     # Verify required fields
     required_fields = [
-        "function_id", "name", "contract", "external_call_type",
-        "external_call_nodes", "state_write_after_external_call"
+        "function_id",
+        "name",
+        "contract",
+        "external_call_type",
+        "external_call_nodes",
+        "state_write_after_external_call",
     ]
     for r in results:
         for field in required_fields:
@@ -607,7 +611,7 @@ if __name__ == "__main__":
     print("=" * 60)
 
     # Build graph once
-    repo_path = os.path.join(os.getcwd(), 'tests', 'contracts')
+    repo_path = os.path.join(os.getcwd(), "tests", "contracts")
     engine = AnalysisEngine()
     slither_obj = engine.run_analysis(repo_path)
     assert slither_obj is not None, "Analysis failed"

@@ -14,6 +14,7 @@ from typing import Any, Literal
 @dataclass
 class AgentTask:
     """A tracked task (sub-agent, background shell, etc.)."""
+
     id: str
     subject: str
     status: Literal["pending", "running", "done", "failed", "cancelled"] = "pending"

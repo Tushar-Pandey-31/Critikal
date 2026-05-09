@@ -14,8 +14,7 @@ This module re-exports it so existing imports continue to work.
 import warnings as _warnings
 
 _warnings.warn(
-    "Importing GraphBuilder from src.graph_builder is deprecated. "
-    "Use 'from src.graph import GraphBuilder' instead.",
+    "Importing GraphBuilder from src.graph_builder is deprecated. Use 'from src.graph import GraphBuilder' instead.",
     DeprecationWarning,
     stacklevel=2,
 )

@@ -1,6 +1,7 @@
 """
 Tests for PipelineConfig.
 """
+
 import os
 from unittest.mock import patch
 
@@ -11,16 +12,30 @@ class TestPipelineConfig:
     def _fresh_config(self, env_overrides: dict):
         """Create a fresh config with specified env vars, clearing singleton cache."""
         import src.pipeline_config as pc
+
         pc._config = None  # reset singleton
         with patch.dict(os.environ, env_overrides, clear=False):
             # Remove any leftover env vars from previous tests
             for key in list(os.environ.keys()):
-                if key.startswith(("SLITHER_ENABLED", "SEMANTIC_DISCOVERY_ENABLED",
-                                   "ASSUMPTION_WORKER_ENABLED", "DEPTH_WORKERS_ENABLED",
-                                   "JURY_ENABLED", "GATE_ENABLED", "TESTWRITER_ENABLED",
-                                   "FUZZ_GENERATOR_ENABLED", "RAG_ENABLED",
-                                   "CHAIN_ANALYSIS_ENABLED", "ETHERSCAN_ENABLED",
-                                   "AUDIT_MODE")) and key not in env_overrides:
+                if (
+                    key.startswith(
+                        (
+                            "SLITHER_ENABLED",
+                            "SEMANTIC_DISCOVERY_ENABLED",
+                            "ASSUMPTION_WORKER_ENABLED",
+                            "DEPTH_WORKERS_ENABLED",
+                            "JURY_ENABLED",
+                            "GATE_ENABLED",
+                            "TESTWRITER_ENABLED",
+                            "FUZZ_GENERATOR_ENABLED",
+                            "RAG_ENABLED",
+                            "CHAIN_ANALYSIS_ENABLED",
+                            "ETHERSCAN_ENABLED",
+                            "AUDIT_MODE",
+                        )
+                    )
+                    and key not in env_overrides
+                ):
                     os.environ.pop(key, None)
             return pc.PipelineConfig.from_env()
 
@@ -61,10 +76,12 @@ class TestPipelineConfig:
 
     def test_individual_override_beats_preset(self):
         """Individual env vars override the mode preset."""
-        config = self._fresh_config({
-            "AUDIT_MODE": "fast",
-            "JURY_ENABLED": "true",
-        })
+        config = self._fresh_config(
+            {
+                "AUDIT_MODE": "fast",
+                "JURY_ENABLED": "true",
+            }
+        )
         assert config.audit_mode == "fast"
         assert config.jury_enabled is True  # overridden from fast's default False
         assert config.testwriter_enabled is False  # fast default preserved

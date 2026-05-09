@@ -30,7 +30,6 @@ class EnrichmentMixin:
                 if edge_data.get("relationship") == "WRITES"
             ]
 
-
             # Filter to only StateVariable nodes and deduplicate
             state_writes_set = set()
             for target, _ in write_edges:
@@ -176,12 +175,13 @@ class EnrichmentMixin:
         """
         # Collect all external entry nodes
         entry_nodes = [
-            node_id for node_id, data in self.graph.nodes(data=True)
+            node_id
+            for node_id, data in self.graph.nodes(data=True)
             if data.get("type") == "function" and data.get("is_external_entry", False)
         ]
 
         # For each function, track which entries reach it
-        reached_by = {}   # node_id -> set of entry node_ids
+        reached_by = {}  # node_id -> set of entry node_ids
 
         def _dfs_reachable(current, entry_id, visited):
             if current not in reached_by:

@@ -194,7 +194,7 @@ class AssumptionWorker(WorkerAgent):
             worker_type="assumption_violation",
             task_id=task.task_id,
             hypothesis=parsed.get("violation"),
-            evidence_node_ids=[],   # no graph nodes — assumption violations are source-derived
+            evidence_node_ids=[],  # no graph nodes — assumption violations are source-derived
             attack_path=attack_path,
             confidence=confidence,
             raw_output={
@@ -278,7 +278,7 @@ Functions this function calls internally:
 {self._format_list(callees) if callees else "None (leaf function)"}
 
 State variables written by this function:
-{', '.join(state_vars_written) if state_vars_written else "None detected"}
+{", ".join(state_vars_written) if state_vars_written else "None detected"}
 
 ## Your Task
 Apply the assumption-violation methodology to this function.
@@ -308,22 +308,19 @@ Return ONLY the JSON object.
                 )
                 content = response.content if hasattr(response, "content") else str(response)
                 if isinstance(content, list):
-                    content = "".join(
-                        c.get("text", "") if isinstance(c, dict) else str(c)
-                        for c in content
-                    )
+                    content = "".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in content)
 
                 # Token tracking (non-fatal)
                 try:
                     from src.utils.token_counter import get_token_counter
+
                     model_name = os.getenv("ASSUMPTION_MODEL_NAME", "grok-4-1-fast-reasoning")
-                    input_text = "\n".join(
-                        m.get("content", "") if isinstance(m, dict) else str(m)
-                        for m in messages
-                    )
+                    input_text = "\n".join(m.get("content", "") if isinstance(m, dict) else str(m) for m in messages)
                     get_token_counter().record(
-                        "AssumptionWorker", model_name,
-                        input_text, str(content),
+                        "AssumptionWorker",
+                        model_name,
+                        input_text,
+                        str(content),
                         getattr(response, "response_metadata", None),
                     )
                 except Exception:
@@ -342,7 +339,9 @@ Return ONLY the JSON object.
                 err_str = str(e)
                 is_transient = any(kw in err_str for kw in ["504", "Deadline", "DEADLINE_EXCEEDED", "503", "CANCELLED"])
                 wait = 2 ** (attempt - 1)
-                logger.warning(f"[AssumptionWorker] Attempt {attempt} {'transient' if is_transient else 'non-transient'} error: {err_str[:100]}")
+                logger.warning(
+                    f"[AssumptionWorker] Attempt {attempt} {'transient' if is_transient else 'non-transient'} error: {err_str[:100]}"
+                )
                 if attempt < self.MAX_ATTEMPTS:
                     await asyncio.sleep(wait)
                 continue
@@ -372,10 +371,22 @@ Return ONLY the JSON object.
     def _read_source_from_disk(self, contract_name: str) -> str:
         """Fallback: read source from disk when graph has no source data (semantic_only mode)."""
         import glob
+
         # Try to find repo_path from the graph's metadata or fall back to cwd
-        repo_path = getattr(self.graph, '_repo_path', None) or os.getcwd()
-        exclude_dirs = {"test", "tests", "mock", "mocks", "lib", "node_modules",
-                        "script", "scripts", "echidna", "fuzz", "fuzzing"}
+        repo_path = getattr(self.graph, "_repo_path", None) or os.getcwd()
+        exclude_dirs = {
+            "test",
+            "tests",
+            "mock",
+            "mocks",
+            "lib",
+            "node_modules",
+            "script",
+            "scripts",
+            "echidna",
+            "fuzz",
+            "fuzzing",
+        }
         sol_files = glob.glob(os.path.join(repo_path, "**", "*.sol"), recursive=True)
         for f in sol_files:
             parts = f.replace("\\", "/").split("/")

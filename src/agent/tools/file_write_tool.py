@@ -12,7 +12,6 @@ from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class FileWriteTool(Tool):
-
     def name(self) -> str:
         return "file_write"
 

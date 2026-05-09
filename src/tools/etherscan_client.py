@@ -20,12 +20,12 @@ class ContractInfo:
     contract_name: str | None
     compiler_version: str | None
     is_proxy: bool
-    implementation_address: str | None   # populated if is_proxy == True
+    implementation_address: str | None  # populated if is_proxy == True
     deployer_address: str | None
     deploy_block: int | None
-    deploy_timestamp: int | None         # unix timestamp
+    deploy_timestamp: int | None  # unix timestamp
     contract_age_days: int | None
-    data_source: str                     # "etherscan" | "stub"
+    data_source: str  # "etherscan" | "stub"
 
 
 @dataclass
@@ -34,7 +34,7 @@ class ExploitEvent:
     block_number: int
     timestamp: int
     value_lost_eth: float | None
-    description: str                     # Best-effort description from tx data
+    description: str  # Best-effort description from tx data
 
 
 @dataclass
@@ -44,7 +44,7 @@ class ExploitHistory:
     exploit_count: int
     exploits: list[ExploitEvent]
     largest_single_outflow_eth: float | None
-    data_source: str                     # "etherscan" | "stub"
+    data_source: str  # "etherscan" | "stub"
 
 
 @dataclass
@@ -54,8 +54,8 @@ class TransactionProfile:
     unique_callers: int | None
     avg_daily_tx_last_30d: float | None
     largest_single_withdrawal_eth: float | None
-    recent_large_withdrawals: bool       # Any tx > 100 ETH in last 30 days
-    flash_loan_interactions: bool        # Detected Aave/Balancer/dYdX interactions
+    recent_large_withdrawals: bool  # Any tx > 100 ETH in last 30 days
+    flash_loan_interactions: bool  # Detected Aave/Balancer/dYdX interactions
     data_source: str
 
 
@@ -73,7 +73,7 @@ class EtherscanClient:
     """
 
     BASE_URL = "https://api.etherscan.io/api"
-    CALLS_PER_SECOND = 4   # Stay under 5/s limit with margin
+    CALLS_PER_SECOND = 4  # Stay under 5/s limit with margin
 
     def __init__(self, api_key: str | None = None, stub: bool = False):
         self.api_key = api_key or os.getenv("ETHERSCAN_API_KEY")
@@ -82,8 +82,9 @@ class EtherscanClient:
 
         if self.stub_mode and not stub:
             # Auto-stub when no key — log this so devs know
-            print("[EtherscanClient] No API key found. Running in stub mode. "
-                  "Set ETHERSCAN_API_KEY in .env for live data.")
+            print(
+                "[EtherscanClient] No API key found. Running in stub mode. Set ETHERSCAN_API_KEY in .env for live data."
+            )
 
     # ------------------------------------------------------------------ #
     #  Public Methods                                                       #
@@ -137,22 +138,14 @@ class EtherscanClient:
 
     def _fetch_contract_info(self, address: str) -> ContractInfo:
         # Source code endpoint — gives us verification + compiler info
-        source_data = self._get({
-            "module": "contract",
-            "action": "getsourcecode",
-            "address": address
-        })
+        source_data = self._get({"module": "contract", "action": "getsourcecode", "address": address})
 
         result = source_data.get("result", [{}])[0]
         is_verified = bool(result.get("SourceCode"))
         is_proxy = result.get("Proxy") == "1"
 
         # Creation tx endpoint — gives us deployer + block
-        creation_data = self._get({
-            "module": "contract",
-            "action": "getcontractcreation",
-            "contractaddresses": address
-        })
+        creation_data = self._get({"module": "contract", "action": "getcontractcreation", "contractaddresses": address})
         creation_result = (creation_data.get("result") or [{}])[0]
         deploy_tx = creation_result.get("txHash")
         deployer = creation_result.get("contractCreator")
@@ -163,26 +156,17 @@ class EtherscanClient:
         contract_age_days = None
 
         if deploy_tx:
-            tx_data = self._get({
-                "module": "proxy",
-                "action": "eth_getTransactionByHash",
-                "txhash": deploy_tx
-            })
+            tx_data = self._get({"module": "proxy", "action": "eth_getTransactionByHash", "txhash": deploy_tx})
             deploy_block_hex = (tx_data.get("result") or {}).get("blockNumber")
             if deploy_block_hex:
                 deploy_block = int(deploy_block_hex, 16)
-                block_data = self._get({
-                    "module": "proxy",
-                    "action": "eth_getBlockByNumber",
-                    "tag": deploy_block_hex,
-                    "boolean": "false"
-                })
+                block_data = self._get(
+                    {"module": "proxy", "action": "eth_getBlockByNumber", "tag": deploy_block_hex, "boolean": "false"}
+                )
                 ts_hex = (block_data.get("result") or {}).get("timestamp")
                 if ts_hex:
                     deploy_timestamp = int(ts_hex, 16)
-                    contract_age_days = int(
-                        (time.time() - deploy_timestamp) / 86400
-                    )
+                    contract_age_days = int((time.time() - deploy_timestamp) / 86400)
 
         return ContractInfo(
             address=address,
@@ -195,7 +179,7 @@ class EtherscanClient:
             deploy_block=deploy_block,
             deploy_timestamp=deploy_timestamp,
             contract_age_days=contract_age_days,
-            data_source="etherscan"
+            data_source="etherscan",
         )
 
     def _fetch_exploit_history(self, address: str) -> ExploitHistory:
@@ -204,16 +188,18 @@ class EtherscanClient:
         Flag any tx where ETH outflow > 10% of contract balance at that time.
         This catches most drains without needing a separate exploit database.
         """
-        txlist_data = self._get({
-            "module": "account",
-            "action": "txlistinternal",
-            "address": address,
-            "startblock": 0,
-            "endblock": 99999999,
-            "sort": "desc",
-            "page": 1,
-            "offset": 1000     # Last 1000 internal txs
-        })
+        txlist_data = self._get(
+            {
+                "module": "account",
+                "action": "txlistinternal",
+                "address": address,
+                "startblock": 0,
+                "endblock": 99999999,
+                "sort": "desc",
+                "page": 1,
+                "offset": 1000,  # Last 1000 internal txs
+            }
+        )
 
         txs = txlist_data.get("result") or []
 
@@ -223,19 +209,18 @@ class EtherscanClient:
         for tx in txs:
             value_wei = int(tx.get("value", "0"))
             value_eth = value_wei / 1e18
-            if value_eth > 10:   # Flag anything moving > 10 ETH
-                large_outflows.append(ExploitEvent(
-                    tx_hash=tx.get("hash", ""),
-                    block_number=int(tx.get("blockNumber", 0)),
-                    timestamp=int(tx.get("timeStamp", 0)),
-                    value_lost_eth=value_eth,
-                    description=f"Large outflow: {value_eth:.2f} ETH"
-                ))
+            if value_eth > 10:  # Flag anything moving > 10 ETH
+                large_outflows.append(
+                    ExploitEvent(
+                        tx_hash=tx.get("hash", ""),
+                        block_number=int(tx.get("blockNumber", 0)),
+                        timestamp=int(tx.get("timeStamp", 0)),
+                        value_lost_eth=value_eth,
+                        description=f"Large outflow: {value_eth:.2f} ETH",
+                    )
+                )
 
-        largest = max(
-            (e.value_lost_eth for e in large_outflows),
-            default=None
-        )
+        largest = max((e.value_lost_eth for e in large_outflows), default=None)
 
         # Heuristic: if top outflow is > 50 ETH, flag as potential exploit
         exploits_detected = largest is not None and largest > 50
@@ -246,21 +231,23 @@ class EtherscanClient:
             exploit_count=len(large_outflows) if exploits_detected else 0,
             exploits=large_outflows[:5] if exploits_detected else [],  # Top 5
             largest_single_outflow_eth=largest,
-            data_source="etherscan"
+            data_source="etherscan",
         )
 
     def _fetch_transaction_profile(self, address: str) -> TransactionProfile:
         # Normal transactions for caller diversity
-        tx_data = self._get({
-            "module": "account",
-            "action": "txlist",
-            "address": address,
-            "startblock": 0,
-            "endblock": 99999999,
-            "sort": "desc",
-            "page": 1,
-            "offset": 500
-        })
+        tx_data = self._get(
+            {
+                "module": "account",
+                "action": "txlist",
+                "address": address,
+                "startblock": 0,
+                "endblock": 99999999,
+                "sort": "desc",
+                "page": 1,
+                "offset": 500,
+            }
+        )
         txs = tx_data.get("result") or []
 
         total = len(txs)
@@ -274,28 +261,25 @@ class EtherscanClient:
             "0x1e0447b19bb6ecfdae1e4ae1694b0c3659614e4e",  # dYdX
         }
         flash_detected = any(
-            tx.get("to", "").lower() in FLASH_LOAN_PROVIDERS or
-            tx.get("from", "").lower() in FLASH_LOAN_PROVIDERS
+            tx.get("to", "").lower() in FLASH_LOAN_PROVIDERS or tx.get("from", "").lower() in FLASH_LOAN_PROVIDERS
             for tx in txs
         )
 
         # Large withdrawal detection — last 30 days
         cutoff = int(time.time()) - (30 * 86400)
         recent_large = any(
-            int(tx.get("timeStamp", 0)) > cutoff and
-            int(tx.get("value", "0")) / 1e18 > 100
-            for tx in txs
+            int(tx.get("timeStamp", 0)) > cutoff and int(tx.get("value", "0")) / 1e18 > 100 for tx in txs
         )
 
         return TransactionProfile(
             address=address,
             total_transactions=total,
             unique_callers=unique_callers,
-            avg_daily_tx_last_30d=None,     # TODO: compute from block timestamps
+            avg_daily_tx_last_30d=None,  # TODO: compute from block timestamps
             largest_single_withdrawal_eth=None,
             recent_large_withdrawals=recent_large,
             flash_loan_interactions=flash_detected,
-            data_source="etherscan"
+            data_source="etherscan",
         )
 
     # ------------------------------------------------------------------ #
@@ -314,7 +298,7 @@ class EtherscanClient:
             deploy_block=None,
             deploy_timestamp=None,
             contract_age_days=None,
-            data_source="stub"
+            data_source="stub",
         )
 
     def _stub_exploit_history(self, address: str) -> ExploitHistory:
@@ -324,7 +308,7 @@ class EtherscanClient:
             exploit_count=0,
             exploits=[],
             largest_single_outflow_eth=None,
-            data_source="stub"
+            data_source="stub",
         )
 
     def _stub_transaction_profile(self, address: str) -> TransactionProfile:
@@ -336,5 +320,5 @@ class EtherscanClient:
             largest_single_withdrawal_eth=None,
             recent_large_withdrawals=False,
             flash_loan_interactions=False,
-            data_source="stub"
+            data_source="stub",
         )

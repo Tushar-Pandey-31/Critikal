@@ -18,18 +18,27 @@ from src.intelligence.threat_profiler import ThreatProfiler
 #  Fixtures
 # ═══════════════════════════════════════════════════════════
 
+
 def _build_vault_graph() -> nx.DiGraph:
     """Build a minimal vault-like knowledge graph for testing."""
     g = nx.DiGraph()
     # Contract node
     g.add_node("Vault", type="contract", name="Vault")
     # Vault-specific functions
-    for fn in ["deposit", "withdraw", "redeem", "convertToShares",
-                "convertToAssets", "totalAssets", "previewDeposit",
-                "previewRedeem", "maxDeposit", "maxWithdraw"]:
+    for fn in [
+        "deposit",
+        "withdraw",
+        "redeem",
+        "convertToShares",
+        "convertToAssets",
+        "totalAssets",
+        "previewDeposit",
+        "previewRedeem",
+        "maxDeposit",
+        "maxWithdraw",
+    ]:
         node_id = f"Vault::{fn}"
-        g.add_node(node_id, type="function", name=fn, contract="Vault",
-                   source_code=f"function {fn}() public {{ }}")
+        g.add_node(node_id, type="function", name=fn, contract="Vault", source_code=f"function {fn}() public {{ }}")
         g.add_edge("Vault", node_id, type="DEFINES")
     # State vars
     g.add_node("Vault::totalShares", type="state_variable", name="totalShares", contract="Vault")
@@ -41,18 +50,15 @@ def _build_lending_graph() -> nx.DiGraph:
     """Build a minimal lending-like knowledge graph for testing."""
     g = nx.DiGraph()
     g.add_node("LendingPool", type="contract", name="LendingPool")
-    for fn in ["borrow", "repay", "liquidate", "flashLoan",
-                "accrueInterest", "getAccountLiquidity"]:
+    for fn in ["borrow", "repay", "liquidate", "flashLoan", "accrueInterest", "getAccountLiquidity"]:
         node_id = f"LendingPool::{fn}"
-        g.add_node(node_id, type="function", name=fn, contract="LendingPool",
-                   source_code=f"function {fn}() external {{ }}")
+        g.add_node(
+            node_id, type="function", name=fn, contract="LendingPool", source_code=f"function {fn}() external {{ }}"
+        )
         g.add_edge("LendingPool", node_id, type="DEFINES")
-    g.add_node("LendingPool::totalBorrows", type="state_variable",
-               name="totalBorrows", contract="LendingPool")
-    g.add_node("LendingPool::borrowIndex", type="state_variable",
-               name="borrowIndex", contract="LendingPool")
-    g.add_node("LendingPool::healthFactor", type="state_variable",
-               name="healthFactor", contract="LendingPool")
+    g.add_node("LendingPool::totalBorrows", type="state_variable", name="totalBorrows", contract="LendingPool")
+    g.add_node("LendingPool::borrowIndex", type="state_variable", name="borrowIndex", contract="LendingPool")
+    g.add_node("LendingPool::healthFactor", type="state_variable", name="healthFactor", contract="LendingPool")
     return g
 
 
@@ -62,13 +68,12 @@ def _build_dex_graph() -> nx.DiGraph:
     g.add_node("UniswapPool", type="contract", name="UniswapPool")
     for fn in ["swap", "mint", "burn", "getReserves", "sync"]:
         node_id = f"UniswapPool::{fn}"
-        g.add_node(node_id, type="function", name=fn, contract="UniswapPool",
-                   source_code=f"function {fn}() external {{ }}")
+        g.add_node(
+            node_id, type="function", name=fn, contract="UniswapPool", source_code=f"function {fn}() external {{ }}"
+        )
         g.add_edge("UniswapPool", node_id, type="DEFINES")
-    g.add_node("UniswapPool::reserve0", type="state_variable",
-               name="reserve0", contract="UniswapPool")
-    g.add_node("UniswapPool::reserve1", type="state_variable",
-               name="reserve1", contract="UniswapPool")
+    g.add_node("UniswapPool::reserve0", type="state_variable", name="reserve0", contract="UniswapPool")
+    g.add_node("UniswapPool::reserve1", type="state_variable", name="reserve1", contract="UniswapPool")
     return g
 
 
@@ -79,6 +84,7 @@ def _build_empty_graph() -> nx.DiGraph:
 # ═══════════════════════════════════════════════════════════
 #  ThreatProfiler Tests
 # ═══════════════════════════════════════════════════════════
+
 
 class TestThreatProfiler:
     def test_classify_vault(self):
@@ -133,34 +139,42 @@ class TestThreatProfiler:
 
     def test_agent_routing_basic(self):
         profiler = ThreatProfiler()
-        agents = profiler.get_agent_routing("vault", {
-            "has_external_calls": False,
-            "has_math_operations": True,
-            "has_division": True,
-            "has_role_checks": False,
-            "matched_vector_count": 3,
-        })
+        agents = profiler.get_agent_routing(
+            "vault",
+            {
+                "has_external_calls": False,
+                "has_math_operations": True,
+                "has_division": True,
+                "has_role_checks": False,
+                "matched_vector_count": 3,
+            },
+        )
         assert "attack_hypothesis" in agents
         assert "math_precision" in agents
         assert "vector_scan" in agents
 
     def test_agent_routing_no_duplicates(self):
         profiler = ThreatProfiler()
-        agents = profiler.get_agent_routing("vault", {
-            "has_external_calls": True,
-            "has_math_operations": True,
-            "has_division": True,
-            "has_role_checks": True,
-            "is_initializer": True,
-            "matched_vector_count": 10,
-        })
+        agents = profiler.get_agent_routing(
+            "vault",
+            {
+                "has_external_calls": True,
+                "has_math_operations": True,
+                "has_division": True,
+                "has_role_checks": True,
+                "is_initializer": True,
+                "matched_vector_count": 10,
+            },
+        )
         assert len(agents) == len(set(agents))  # no duplicates
 
     def test_extract_hotspot_signals(self):
         profiler = ThreatProfiler()
         g = _build_vault_graph()
         # Add some signals to a node
-        g.nodes["Vault::deposit"]["source_code"] = "function deposit(uint256 amount) public { uint256 shares = amount / totalSupply; }"
+        g.nodes["Vault::deposit"]["source_code"] = (
+            "function deposit(uint256 amount) public { uint256 shares = amount / totalSupply; }"
+        )
         g.nodes["Vault::deposit"]["is_protected"] = False
         signals = profiler.extract_hotspot_signals(g, "Vault::deposit")
         assert "has_division" in signals
@@ -171,6 +185,7 @@ class TestThreatProfiler:
 # ═══════════════════════════════════════════════════════════
 #  AttackVectorDB Tests
 # ═══════════════════════════════════════════════════════════
+
 
 class TestAttackVectorDB:
     def test_load_vectors(self):

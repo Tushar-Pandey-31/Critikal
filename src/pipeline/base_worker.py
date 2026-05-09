@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 
 class WorkerTask(BaseModel):
     """Specification of a task for a worker to perform."""
+
     task_id: str
     task_type: str
     hotspot: Any | None = None  # Hotspot object
@@ -38,7 +39,7 @@ class WorkerOutput(BaseModel):
     confidence: int = Field(default=0)
     raw_output: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator('confidence')
+    @field_validator("confidence")
     @classmethod
     def confidence_in_range(cls, v):
         if not 0 <= v <= 100:
