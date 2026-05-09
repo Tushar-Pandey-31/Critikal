@@ -4,7 +4,7 @@ ExecutionTraceWorker — Forward execution trace agent.
 Maps execution flow across function boundaries to find bugs that exist
 in the INTERACTION between functions, not within any single function.
 
-Methodology (from Pashov's execution-trace-agent):
+Methodology:
 1. Build the call sequence graph: who calls whom, in what order
 2. Track state changes through the full sequence
 3. Find where assumptions made by function A are violated by function B

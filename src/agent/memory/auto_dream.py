@@ -1,7 +1,6 @@
 """
 AutoDream — post-session memory consolidation.
 
-Inspired by Claude Code's `services/autoDream/autoDream.ts`:
 - Scans all session JSONL files for an engagement
 - Uses a 4-phase consolidation prompt (Orient → Gather → Consolidate → Prune)
 - Outputs a structured markdown file: ~/.critikal/memory/<engagement_id>/consolidated.md
@@ -17,7 +16,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# ── Constants (inspired by claurst's autoDream/config.ts) ──
+# ── Constants ──
 LOCK_FILE = ".consolidate-lock"
 HOLDER_STALE_MS = 60 * 60  # 1 hour — stale lock threshold (seconds)
 CONSOLIDATED_FILE = "consolidated.md"
@@ -27,9 +26,9 @@ class ConsolidationLock:
     """
     File-based mutex lock for the consolidation process.
 
-    Inspired by claurst's autoDream/consolidationLock.ts:
-    - Lock file mtime = lastConsolidatedAt timestamp
-    - PID-based ownership — stale locks (PID dead or >1h) are overwritten
+    File-based mutex for the consolidation process.
+    Lock file mtime = lastConsolidatedAt timestamp.
+    PID-based ownership — stale locks (PID dead or >1h) are overwritten.
     """
 
     def __init__(self, memory_dir: Path):
@@ -103,7 +102,7 @@ class AutoDream:
     Reads all session memory entries for an engagement and uses an LLM
     to consolidate them into a structured knowledge document.
 
-    Inspired by claurst's 4-phase consolidation:
+    Runs a 4-phase consolidation:
       1. Orient  — read existing consolidated.md
       2. Gather  — read new session entries since last consolidation
       3. Consolidate — merge new learnings into structured document
@@ -211,8 +210,6 @@ class AutoDream:
     ) -> str:
         """
         Build the 4-phase consolidation prompt.
-
-        Inspired by claurst's autoDream/consolidationPrompt.ts.
         """
         entries_text = "\n".join(
             f"- [{e.get('type', '?')}] {e.get('description', '?')}: {e.get('content', '')[:300]}"

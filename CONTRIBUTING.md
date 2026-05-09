@@ -33,7 +33,7 @@ via the provided `Dockerfile`.
 ## Code layout (quick map)
 
 - `src/cli.py` — entry point dispatcher.
-- `src/agent/` — Claude Code-style agentic loop, tools, permissions,
+- `src/agent/` — agentic loop, tools, permissions,
   memory, cost tracking. **This is the product.**
 - `src/pipeline/workers/` — specialized worker agents invoked by pipeline
   tools (recon, jury, depth, test writer, …).

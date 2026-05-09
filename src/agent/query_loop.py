@@ -5,7 +5,7 @@ Sends messages to an LLM with tools, interprets tool_use responses,
 executes tools, feeds results back, and continues until end_turn or
 budget exhaustion.
 
-Inspired by Claude Code's query.ts:
+Features:
   - AsyncGenerator-style streaming (MESSAGE_CHUNK events)
   - Multi-layer error recovery (retry, fallback model, reactive compact)
   - Tool result budget enforcement
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL = "grok-4-1-fast-reasoning"
 DEFAULT_MAX_TURNS = 200
 
-# ── Recovery constants (from Claude Code spec) ──
+# ── Recovery constants ──
 MAX_RETRIES = 3
 RETRY_BASE_DELAY_S = 2.0  # exponential: 2s, 4s, 8s
 MAX_OUTPUT_TOKENS_RECOVERY_LIMIT = 3
@@ -611,7 +611,6 @@ class QueryLoop:
         """
         Enforce tool result size budget.
         Truncate oversized results to prevent context overflow.
-        Inspired by Claude Code's applyToolResultBudget().
         """
         budgeted = []
         for result in results:

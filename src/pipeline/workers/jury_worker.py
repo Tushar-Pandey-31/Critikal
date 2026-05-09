@@ -9,11 +9,10 @@ from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
-# ── Story 6.2: 4-Gate Pre-Filter ────────────────────────────────────
+# ── Story 6.2: 4-Gate Pre-Filter ──────────────────────────────────────
 #
 # Runs BEFORE the full jury debate. Uses a cheap/fast model to apply
-# 4 sequential gates adapted from pashov/skills judging.md.
-# Fail any gate → immediate verdict, no jury call = saves 3 LLM invocations.
+# 4 sequential gates. Fail any gate → immediate verdict, no jury call = saves 3 LLM invocations.
 
 @dataclass
 class GateResult:

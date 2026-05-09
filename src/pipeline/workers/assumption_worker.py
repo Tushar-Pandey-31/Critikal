@@ -8,8 +8,6 @@ graph structure and instructs it to enumerate and VIOLATE implicit assumptions.
 
 This is the closest thing to a true zero-day methodology: bugs with no name,
 found by systematically breaking what the code assumes to be true.
-
-Inspired by pashov/skills first-principles-agent.md.
 """
 
 import asyncio

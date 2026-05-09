@@ -1,6 +1,6 @@
 # Critikal Architecture
 
-Critikal is an autonomous security research agent — a Claude Code-style agentic loop
+Critikal is an autonomous security research agent — an agentic AI loop
 specialized for smart contract hacking. It uses a multi-turn LLM reasoning loop with
 29 tools to drive a full security research workflow: recon → attack surface mapping →
 hypothesis formation → validation → PoC exploit generation → audit report.
@@ -89,7 +89,7 @@ Key fields:
 - `cost_tracker` — running token/cost totals
 - `event_bus` — decouples loop from UI
 - `memory` — `SessionMemory` for this engagement
-- `read_file_state` — read-before-write enforcement (inspired by Claude Code)
+- `read_file_state` — read-before-write enforcement
 
 ### Tool ABC (`tool.py`)
 

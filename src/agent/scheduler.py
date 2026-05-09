@@ -1,8 +1,7 @@
 """
 CronScheduler — background monitoring and recurring audit scheduling.
 
-Inspired by Claude Code's KAIROS mode. Uses APScheduler for cron-style
-scheduling of background agent runs.
+Uses APScheduler for cron-style scheduling of background agent runs.
 
 Each scheduled task spawns a headless agent via HeadlessRunner in a
 background asyncio task. Results are appended to the engagement's
