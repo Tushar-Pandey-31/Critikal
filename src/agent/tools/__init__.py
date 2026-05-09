@@ -53,7 +53,7 @@ def get_pipeline_tools() -> list[Tool]:
 
 
 def get_generic_tools() -> list[Tool]:
-    """Generic file/shell/web tools — Claude Code-style agent capabilities."""
+    """Generic file/shell/web tools for the Critikal agent."""
     from src.agent.tools.bash_tool import BashTool
     from src.agent.tools.file_edit_tool import FileEditTool
     from src.agent.tools.file_read_tool import FileReadTool

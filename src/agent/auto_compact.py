@@ -1,7 +1,7 @@
 """
 AutoCompactor — context window management.
 
-Two trigger points, matching Claude Code's compaction design:
+Two trigger points:
 
   * micro-compact  at TRIGGER_FRACTION_PROACTIVE (75%) — runs in the
     background before the prompt is actually oversized, so normal turns
@@ -234,8 +234,8 @@ class AutoCompactor:
             return False
 
         # Rebuild message list in place. The synthetic user message
-        # mirrors Claude Code's <compact-summary> marker so downstream
-        # consumers can detect it.
+        # carries a <compact-summary> marker so downstream consumers
+        # can detect it.
         compact_msg = {
             "role": "user",
             "content": (

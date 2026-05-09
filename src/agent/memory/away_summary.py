@@ -1,10 +1,9 @@
 """
 Away Summary — catch-up summary when resuming a previous engagement.
 
-Inspired by Claude Code's `services/awaySummary.ts`:
-- Generated when the user resumes a session via --resume <engagement_id>
-- Reads session memory and consolidated docs to build a brief summary
-- Injected into the system prompt as context
+Generated when the user resumes a session via --resume <engagement_id>.
+Reads session memory and consolidated docs to build a brief summary
+and injects it into the system prompt as context.
 """
 
 import logging

@@ -1,10 +1,9 @@
 """
 HookRegistry — user-configured lifecycle hooks.
 
-Mirrors the Claude Code hooks model: the harness (not the model) runs
-shell commands at specific lifecycle points, so users can wire in
-automation without relying on prompt instructions the model might
-ignore.
+The harness (not the model) runs shell commands at specific lifecycle
+points, so users can wire in automation without relying on prompt
+instructions the model might ignore.
 
 Supported events:
   * SessionStart  — fired once when a session begins
@@ -17,7 +16,7 @@ Configuration (JSON), searched in this order:
   2. `<cwd>/.critikal/settings.json`
   3. `~/.critikal/settings.json`
 
-Shape (Claude Code-compatible subset):
+Shape:
 
     {
       "hooks": {

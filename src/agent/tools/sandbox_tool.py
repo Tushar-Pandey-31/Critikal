@@ -6,8 +6,8 @@ finding pipeline. Creates a temp Foundry project, optionally forks a live chain,
 writes the test contract, compiles, and runs it.
 
 Isolation: forge is wrapped with bwrap (Linux) / sandbox-exec (macOS) via
-SandboxManager, matching the Claude Code BashTool sandbox pattern. The temp
-directory is bind-mounted read-write; everything else is read-only.
+SandboxManager. The temp directory is bind-mounted read-write; everything else
+is read-only.
 
 dangerouslyDisableSandbox bypasses OS-level isolation (per-call override).
 

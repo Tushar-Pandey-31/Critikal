@@ -4,7 +4,7 @@ This file provides architectural context for AI coding assistants working with t
 
 ## What This Is
 
-Critikal is an autonomous security research agent — think Claude Code, but for hacking smart contracts. Given a repository URL it autonomously ingests the code, maps the attack surface, forms exploit hypotheses, validates them through a multi-stage pipeline (gates → jury → depth), and generates Foundry PoC tests. The output is a battle-tested audit report with proven exploits.
+Critikal is an autonomous security research agent for smart contract hacking. Given a repository URL it autonomously ingests the code, maps the attack surface, forms exploit hypotheses, validates them through a multi-stage pipeline (gates → jury → depth), and generates Foundry PoC tests. The output is a battle-tested audit report with proven exploits.
 
 ## Commands
 
@@ -74,7 +74,7 @@ All stage flags and model routing are centralized in `src/pipeline_config.py::Pi
 
 ### Core Agent System (`src/agent/`)
 
-The primary codebase. Implements a Claude Code-style agentic loop.
+The primary codebase. Implements a multi-turn LLM agentic loop.
 
 ```
 HeadlessRunner / CritikalApp (TUI)

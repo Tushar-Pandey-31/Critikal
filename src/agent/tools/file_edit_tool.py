@@ -81,7 +81,7 @@ class FileEditTool(Tool):
         if not p.is_file():
             return ToolResult.error(f"Not a file: {p}")
 
-        # Read-before-write enforcement (inspired by Claude Code)
+        # Read-before-write enforcement
         allowed, reason = ctx.check_file_write_allowed(str(p))
         if not allowed:
             return ToolResult.error(reason)

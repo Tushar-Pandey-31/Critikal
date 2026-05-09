@@ -5,7 +5,7 @@ Replaces LangGraph's AgentState TypedDict with a mutable object that
 tools read from and write to during a session. Holds the graph, findings,
 recon context, cost tracking, and all session state.
 
-Inspired by Claude Code's ToolUseContext:
+Includes:
   - readFileState cache for read-before-write enforcement
   - abort mechanism
   - agent identity tracking
@@ -65,7 +65,7 @@ class ToolContext:
     current_turn: int = 0
     file_history: list[tuple[str, str]] = field(default_factory=list)  # (path, action)
 
-    # ── Read-before-write enforcement (inspired by Claude Code) ──
+    # ── Read-before-write enforcement ──
     read_file_state: dict[str, FileReadState] = field(default_factory=dict)
 
     # ── Shell State (persistent across bash calls) ──
@@ -114,7 +114,6 @@ class ToolContext:
     def register_file_read(self, path: str, content: str, mtime: float | None = None):
         """
         Register a file read — required before FileEdit/FileWrite can modify it.
-        Inspired by Claude Code's readFileState cache.
         """
         import hashlib
         resolved = str(Path(path).resolve())

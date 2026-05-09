@@ -2,7 +2,6 @@
 CritikalApp — main Textual TUI application.
 
 The fullscreen interactive terminal UI for the Critikal agent.
-Inspired by Claude Code's Ink TUI — adapted for Python's Textual framework.
 
 Layout:
 ┌────────────────────────────────────────────────────────────────┐

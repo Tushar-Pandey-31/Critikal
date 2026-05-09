@@ -10,8 +10,7 @@ against a mainnet or funded testnet account.
 
 Sandbox: forge create and cast send are wrapped with SandboxManager
 (bwrap on Linux / sandbox-exec on macOS). dangerouslyDisableSandbox
-bypasses OS-level isolation per-call, matching the Claude Code BashTool
-sandbox pattern.
+bypasses OS-level isolation per-call.
 """
 
 import asyncio

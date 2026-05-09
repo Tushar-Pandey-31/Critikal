@@ -69,7 +69,7 @@ class FileWriteTool(Tool):
 
         existed = p.exists()
 
-        # Read-before-write enforcement (inspired by Claude Code)
+        # Read-before-write enforcement
         if existed:
             allowed, reason = ctx.check_file_write_allowed(str(p))
             if not allowed:

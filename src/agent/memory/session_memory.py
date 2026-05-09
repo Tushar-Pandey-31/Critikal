@@ -1,10 +1,9 @@
 """
 SessionMemory — extracts and persists key learnings during an agent session.
 
-Inspired by Claude Code's `services/SessionMemory/sessionMemory.ts`:
-- Stores memories as append-only JSONL at ~/.critikal/memory/<engagement_id>/session.jsonl
-- Extracts memories every N turns via a lightweight LLM sideQuery
-- Retrieves relevant memories for context injection via keyword matching
+Stores memories as append-only JSONL at ~/.critikal/memory/<engagement_id>/session.jsonl.
+Extracts memories every N turns via a lightweight LLM sideQuery.
+Retrieves relevant memories for context injection via keyword matching.
 """
 
 import json
@@ -47,7 +46,7 @@ class MemoryEntry:
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
 
-# ── Memory Type Constants (inspired by claurst's memoryTypes.ts) ──
+# ── Memory Type Constants ──
 MEMORY_TYPES = ("finding", "recon", "tactic", "config", "feedback", "reference")
 
 WHAT_NOT_TO_SAVE = [
@@ -305,7 +304,7 @@ OUTPUT (valid JSON array only, no markdown fences):"""
 
     def memory_freshness_note(self, entry: MemoryEntry) -> str:
         """
-        Generate a freshness caveat for a memory (inspired by claurst's memoryAge.ts).
+        Generate a freshness caveat for a memory.
 
         Memories older than 1 day get a staleness warning.
         """

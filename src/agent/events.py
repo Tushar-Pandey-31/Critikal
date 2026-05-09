@@ -28,7 +28,7 @@ class EventType(Enum):
     STATUS = "status"                       # Generic status message
     ERROR = "error"                         # Error occurred
 
-    # ── Lifecycle hooks (Claude Code-compatible names) ──
+    # ── Lifecycle hooks ──
     PRE_TOOL_USE = "PreToolUse"             # Fires before every tool execution
     POST_TOOL_USE = "PostToolUse"           # Fires after every tool execution
     SESSION_START = "SessionStart"          # Fires when the agent starts

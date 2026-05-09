@@ -1,7 +1,7 @@
 """
 SandboxManager — OS-level process isolation for shell and forge execution.
 
-Mirrors Claude Code's sandbox/sandbox-adapter.ts pattern:
+Entry point:
   SandboxManager.wrapWithSandbox(command, shell, options?) -> wrapped_command
 
 Linux:  bwrap (bubblewrap) — unshares PID/IPC/UTS namespaces, bind-mounts filesystem
@@ -9,7 +9,7 @@ macOS:  sandbox-exec — Apple's sandbox profile
 Other:  no-op (returns command unchanged)
 
 The BashTool and SandboxRunTool both use this. Per-call `dangerouslyDisableSandbox`
-overrides the global sandbox policy, matching the Claude Code BashTool interface.
+overrides the global sandbox policy.
 """
 
 import logging
