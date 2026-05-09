@@ -49,8 +49,6 @@ def _parse_contract_addresses(raw: str | None) -> dict[str, str]:
     return normalized
 
 
-
-
 def build_agent_workflow(coordinator_tools) -> StateGraph:
     """
     Builds the LangGraph workflow for the Coordinator + Worker architecture.
@@ -77,10 +75,11 @@ def build_agent_workflow(coordinator_tools) -> StateGraph:
 # ════════════════════════════════════════════════════════════
 
 
-
 async def async_main():
     parser = argparse.ArgumentParser(description="Critikal Lead Agent - End-to-End Ingestion")
-    parser.add_argument("--repo", type=str, help="Path to local folder or GitHub URL of the smart contract repo", required=True)
+    parser.add_argument(
+        "--repo", type=str, help="Path to local folder or GitHub URL of the smart contract repo", required=True
+    )
     parser.add_argument(
         "--contract-addresses",
         type=str,
@@ -114,10 +113,12 @@ async def async_main():
     # 1b. Auto-ingest RAG knowledge base if empty
     if args.auto_ingest:
         from src.knowledge.paths import CHROMA_DB_PATH
+
         _chroma_empty = True
         if CHROMA_DB_PATH.exists():
             try:
                 import chromadb
+
                 _client = chromadb.PersistentClient(path=str(CHROMA_DB_PATH))
                 _cols = _client.list_collections()
                 if _cols and any(c.count() > 0 for c in _cols):
@@ -127,6 +128,7 @@ async def async_main():
         if _chroma_empty:
             print("RAG knowledge base is empty — running ingest...")
             from src.knowledge.ingest import ingest_knowledge
+
             ingest_knowledge()
         else:
             print("RAG knowledge base already populated — skipping ingest.")
@@ -187,7 +189,7 @@ async def async_main():
     print("Building LangGraph Workflow...")
     workflow = build_agent_workflow(coordinator_tools)
     # checkpointer = get_checkpointer()
-    app = workflow.compile() # Disabled checkpointer to avoid NetworkX serialization issues
+    app = workflow.compile()  # Disabled checkpointer to avoid NetworkX serialization issues
 
     # Build initial message from graph data
     contracts = set()
@@ -200,12 +202,14 @@ async def async_main():
 
     contract_list = ", ".join(contracts) if contracts else "Unknown"
 
-    initial_message = HumanMessage(content=f"""Assess the risk landscape for: {contract_list}
+    initial_message = HumanMessage(
+        content=f"""Assess the risk landscape for: {contract_list}
 
 The Knowledge Graph contains {len(functions)} function nodes across {len(contracts)} contract(s).
 
 Use get_high_risk_hotspots() to identify the highest-priority targets, then formulate your analysis strategy.
-""")
+"""
+    )
 
     langgraph_config = {"configurable": {"thread_id": "live_run_1"}}
 
@@ -233,10 +237,10 @@ Use get_high_risk_hotspots() to identify the highest-priority targets, then form
     async for event in events:
         final_state = event
         if "messages" in event:
-             last_msg = event["messages"][-1]
-             print(f"Agent ({type(last_msg).__name__}): {last_msg.content[:100]}...")
-             if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
-                 print(f"  -> Tool Call: {last_msg.tool_calls}")
+            last_msg = event["messages"][-1]
+            print(f"Agent ({type(last_msg).__name__}): {last_msg.content[:100]}...")
+            if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
+                print(f"  -> Tool Call: {last_msg.tool_calls}")
 
     print("\n--- Analysis Complete ---")
     leads = []
@@ -289,8 +293,10 @@ Use get_high_risk_hotspots() to identify the highest-priority targets, then form
 
     print("Done.")
 
+
 def main():
     import warnings
+
     warnings.warn(
         "src.main is the legacy LangGraph pipeline and is deprecated. "
         "Use 'python -m src.cli --repo <url>' for the new agentic system. "
@@ -303,6 +309,7 @@ def main():
     print("   New agent: python -m src.cli --repo <url>")
     print("=" * 60)
     asyncio.run(async_main())
+
 
 if __name__ == "__main__":
     main()

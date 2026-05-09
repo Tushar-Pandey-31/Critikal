@@ -2,7 +2,7 @@ import os
 import sys
 
 # Add src to sys.path to ensure imports work if run from root
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from analysis_engine import AnalysisEngine
 
@@ -10,7 +10,7 @@ from analysis_engine import AnalysisEngine
 def test_analysis_engine():
     # Point to the specific file for testing on host without framework
     # In a real scenario with Foundry/Hardhat, a directory path is fine.
-    repo_path = os.path.join(os.getcwd(), 'tests', 'contracts', 'Hello.sol')
+    repo_path = os.path.join(os.getcwd(), "tests", "contracts", "Hello.sol")
     print(f"Testing AnalysisEngine on {repo_path}")
 
     engine = AnalysisEngine()
@@ -33,12 +33,13 @@ def test_analysis_engine():
             functions = [f.name for f in hello_contract[0].functions]
             print(f"Functions in Hello: {functions}")
             if "setGreeting" in functions and "getGreeting" in functions:
-                 print("PASS: Functions detected correctly.")
+                print("PASS: Functions detected correctly.")
             else:
-                 print("FAIL: Functions mismatch.")
+                print("FAIL: Functions mismatch.")
 
     else:
         print("FAIL: AnalysisEngine returned None.")
+
 
 if __name__ == "__main__":
     test_analysis_engine()

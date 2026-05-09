@@ -35,6 +35,7 @@ class PromptInput(TextArea):
 
     class Submitted(Message):
         """Emitted when the user submits input."""
+
         def __init__(self, value: str):
             super().__init__()
             self.value = value

@@ -2,7 +2,7 @@ import os
 import sys
 
 # Add src to sys.path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from analysis_engine import AnalysisEngine
 from src.graph import GraphBuilder
@@ -12,7 +12,7 @@ from utils.graph_queries import GraphQueries
 def test_storage_mutation_detection():
     """Test Story 2.2: Storage State Mutation Detection"""
     # Setup - analyze StateMutationTest contract
-    repo_path = os.path.join(os.getcwd(), 'tests', 'contracts')
+    repo_path = os.path.join(os.getcwd(), "tests", "contracts")
     print(f"\nAnalyzing contracts in {repo_path}...")
 
     engine = AnalysisEngine()
@@ -34,17 +34,16 @@ def test_storage_mutation_detection():
     assert graph.has_node(write_state_func), f"Node {write_state_func} not found"
 
     node_data = graph.nodes[write_state_func]
-    assert node_data.get("writes_state") == True, \
-        "writeState() should have writes_state=True"
-    assert node_data.get("num_state_writes", 0) >= 1, \
+    assert node_data.get("writes_state") == True, "writeState() should have writes_state=True"
+    assert node_data.get("num_state_writes", 0) >= 1, (
         f"writeState() should have num_state_writes >= 1, got {node_data.get('num_state_writes')}"
+    )
 
     state_vars_written = node_data.get("state_variables_written", [])
     assert len(state_vars_written) >= 1, "writeState() should write to at least 1 state variable"
 
     # Verify counter is in the written variables
-    assert any("counter" in var for var in state_vars_written), \
-        "counter should be in state_variables_written"
+    assert any("counter" in var for var in state_vars_written), "counter should be in state_variables_written"
 
     print(f"✓ PASS: {write_state_func}")
     print(f"  - writes_state: {node_data.get('writes_state')}")
@@ -57,17 +56,16 @@ def test_storage_mutation_detection():
     assert graph.has_node(write_mapping_func), f"Node {write_mapping_func} not found"
 
     node_data = graph.nodes[write_mapping_func]
-    assert node_data.get("writes_state") == True, \
-        "writeMapping() should have writes_state=True"
-    assert node_data.get("num_state_writes", 0) >= 1, \
+    assert node_data.get("writes_state") == True, "writeMapping() should have writes_state=True"
+    assert node_data.get("num_state_writes", 0) >= 1, (
         f"writeMapping() should have num_state_writes >= 1, got {node_data.get('num_state_writes')}"
+    )
 
     state_vars_written = node_data.get("state_variables_written", [])
     assert len(state_vars_written) >= 1, "writeMapping() should write to at least 1 state variable"
 
     # Verify balances is in the written variables
-    assert any("balances" in var for var in state_vars_written), \
-        "balances should be in state_variables_written"
+    assert any("balances" in var for var in state_vars_written), "balances should be in state_variables_written"
 
     print(f"✓ PASS: {write_mapping_func}")
     print(f"  - writes_state: {node_data.get('writes_state')}")
@@ -80,10 +78,10 @@ def test_storage_mutation_detection():
     assert graph.has_node(local_only_func), f"Node {local_only_func} not found"
 
     node_data = graph.nodes[local_only_func]
-    assert node_data.get("writes_state") == False, \
-        "localOnly() should have writes_state=False"
-    assert node_data.get("num_state_writes", 0) == 0, \
+    assert node_data.get("writes_state") == False, "localOnly() should have writes_state=False"
+    assert node_data.get("num_state_writes", 0) == 0, (
         f"localOnly() should have num_state_writes = 0, got {node_data.get('num_state_writes')}"
+    )
 
     state_vars_written = node_data.get("state_variables_written", [])
     assert len(state_vars_written) == 0, "localOnly() should not write to any state variables"
@@ -98,10 +96,10 @@ def test_storage_mutation_detection():
     assert graph.has_node(read_only_func), f"Node {read_only_func} not found"
 
     node_data = graph.nodes[read_only_func]
-    assert node_data.get("writes_state") == False, \
-        "readOnly() should have writes_state=False"
-    assert node_data.get("num_state_writes", 0) == 0, \
+    assert node_data.get("writes_state") == False, "readOnly() should have writes_state=False"
+    assert node_data.get("num_state_writes", 0) == 0, (
         f"readOnly() should have num_state_writes = 0, got {node_data.get('num_state_writes')}"
+    )
 
     state_vars_written = node_data.get("state_variables_written", [])
     assert len(state_vars_written) == 0, "readOnly() should not write to any state variables"
@@ -122,8 +120,9 @@ def test_storage_mutation_detection():
                 # Verify the variable node exists and is a StateVariable
                 assert graph.has_node(var_id), f"Variable node {var_id} should exist in graph"
                 var_node_data = graph.nodes[var_id]
-                assert var_node_data.get("node_type") == "StateVariable", \
+                assert var_node_data.get("node_type") == "StateVariable", (
                     f"Variable {var_id} should have node_type='StateVariable'"
+                )
 
     print("✓ PASS: All variable IDs follow correct format (ContractName::VariableName)")
 
@@ -134,8 +133,9 @@ def test_storage_mutation_detection():
             state_vars_written = node_data.get("state_variables_written", [])
             for var_id in state_vars_written:
                 var_node_data = graph.nodes.get(var_id, {})
-                assert var_node_data.get("node_type") != "LocalVariable", \
+                assert var_node_data.get("node_type") != "LocalVariable", (
                     f"LocalVariable {var_id} should not appear in state_variables_written"
+                )
 
     print("✓ PASS: No LocalVariable nodes in write lists")
 
@@ -144,7 +144,7 @@ def test_storage_mutation_detection():
     constructor_candidates = [
         "StateMutationTest::constructor",
         "StateMutationTest::slitherConstructorConstantVariables",
-        "StateMutationTest::slitherConstructorVariables"
+        "StateMutationTest::slitherConstructorVariables",
     ]
 
     constructor_found = False
@@ -172,7 +172,7 @@ def test_storage_mutation_detection():
 def test_get_state_mutators_query():
     """Test the get_state_mutators query API"""
     # Setup
-    repo_path = os.path.join(os.getcwd(), 'tests', 'contracts')
+    repo_path = os.path.join(os.getcwd(), "tests", "contracts")
 
     engine = AnalysisEngine()
     slither_obj = engine.run_analysis(repo_path)
@@ -195,17 +195,13 @@ def test_get_state_mutators_query():
         print(f"  - {mutator['function_id']} ({mutator['num_state_writes']} writes)")
 
     # Should have at least writeState and writeMapping from StateMutationTest
-    mutator_ids = [m['function_id'] for m in all_mutators]
-    assert "StateMutationTest::writeState" in mutator_ids, \
-        "writeState should be in state mutators"
-    assert "StateMutationTest::writeMapping" in mutator_ids, \
-        "writeMapping should be in state mutators"
+    mutator_ids = [m["function_id"] for m in all_mutators]
+    assert "StateMutationTest::writeState" in mutator_ids, "writeState should be in state mutators"
+    assert "StateMutationTest::writeMapping" in mutator_ids, "writeMapping should be in state mutators"
 
     # Should NOT include localOnly or readOnly
-    assert "StateMutationTest::localOnly" not in mutator_ids, \
-        "localOnly should NOT be in state mutators"
-    assert "StateMutationTest::readOnly" not in mutator_ids, \
-        "readOnly should NOT be in state mutators"
+    assert "StateMutationTest::localOnly" not in mutator_ids, "localOnly should NOT be in state mutators"
+    assert "StateMutationTest::readOnly" not in mutator_ids, "readOnly should NOT be in state mutators"
 
     print("✓ PASS: Query returns correct state mutators")
 
@@ -217,8 +213,9 @@ def test_get_state_mutators_query():
 
     # All returned mutators should be from StateMutationTest
     for mutator in filtered_mutators:
-        assert mutator['contract_name'] == "StateMutationTest", \
+        assert mutator["contract_name"] == "StateMutationTest", (
             f"Mutator {mutator['function_id']} should be from StateMutationTest"
+        )
 
     print("✓ PASS: Contract filtering works correctly")
 
@@ -231,7 +228,7 @@ def test_get_state_mutators_query():
         "num_state_writes",
         "state_variables_written",
         "visibility",
-        "modifiers"
+        "modifiers",
     ]
 
     for mutator in all_mutators:
@@ -252,7 +249,7 @@ def test_refinement_distinct_counting():
     """
     Refinement Test 1: Multiple writes to same variable should count as 1
     """
-    repo_path = os.path.join(os.getcwd(), 'tests', 'contracts')
+    repo_path = os.path.join(os.getcwd(), "tests", "contracts")
 
     engine = AnalysisEngine()
     slither_obj = engine.run_analysis(repo_path)
@@ -269,16 +266,16 @@ def test_refinement_distinct_counting():
         node_data = graph.nodes[multi_write_func]
 
         # Should write to counter multiple times but count as 1 distinct variable
-        assert node_data.get("writes_state") == True, \
-            "multipleWritesSameVar() should have writes_state=True"
-        assert node_data.get("num_state_writes") == 1, \
+        assert node_data.get("writes_state") == True, "multipleWritesSameVar() should have writes_state=True"
+        assert node_data.get("num_state_writes") == 1, (
             f"multipleWritesSameVar() should count 1 distinct variable, got {node_data.get('num_state_writes')}"
+        )
 
         state_vars_written = node_data.get("state_variables_written", [])
-        assert len(state_vars_written) == 1, \
+        assert len(state_vars_written) == 1, (
             f"Should have 1 distinct variable in state_variables_written, got {len(state_vars_written)}"
-        assert any("counter" in var for var in state_vars_written), \
-            "counter should be the only variable written"
+        )
+        assert any("counter" in var for var in state_vars_written), "counter should be the only variable written"
 
         print(f"✓ PASS: {multi_write_func}")
         print("  - Multiple writes to 'counter' counted as 1 distinct variable")
@@ -291,7 +288,7 @@ def test_refinement_storage_reference():
     """
     Refinement Test 2: Storage reference writes via struct should be detected
     """
-    repo_path = os.path.join(os.getcwd(), 'tests', 'contracts')
+    repo_path = os.path.join(os.getcwd(), "tests", "contracts")
 
     engine = AnalysisEngine()
     slither_obj = engine.run_analysis(repo_path)
@@ -308,18 +305,16 @@ def test_refinement_storage_reference():
         node_data = graph.nodes[storage_ref_func]
 
         # Should detect writes via storage reference
-        assert node_data.get("writes_state") == True, \
-            "writeViaStorageRef() should have writes_state=True"
-        assert node_data.get("num_state_writes") >= 1, \
+        assert node_data.get("writes_state") == True, "writeViaStorageRef() should have writes_state=True"
+        assert node_data.get("num_state_writes") >= 1, (
             f"writeViaStorageRef() should have num_state_writes >= 1, got {node_data.get('num_state_writes')}"
+        )
 
         state_vars_written = node_data.get("state_variables_written", [])
-        assert len(state_vars_written) >= 1, \
-            "writeViaStorageRef() should write to at least 1 state variable"
+        assert len(state_vars_written) >= 1, "writeViaStorageRef() should write to at least 1 state variable"
 
         # Verify users mapping is in the written variables
-        assert any("users" in var for var in state_vars_written), \
-            "users mapping should be in state_variables_written"
+        assert any("users" in var for var in state_vars_written), "users mapping should be in state_variables_written"
 
         print(f"✓ PASS: {storage_ref_func}")
         print("  - Storage reference writes detected")
@@ -333,7 +328,7 @@ def test_refinement_constructor_metadata():
     """
     Refinement Test 3: Explicit constructor metadata validation
     """
-    repo_path = os.path.join(os.getcwd(), 'tests', 'contracts')
+    repo_path = os.path.join(os.getcwd(), "tests", "contracts")
 
     engine = AnalysisEngine()
     slither_obj = engine.run_analysis(repo_path)
@@ -349,7 +344,7 @@ def test_refinement_constructor_metadata():
     constructor_candidates = [
         "StateMutationTest::constructor",
         "StateMutationTest::slitherConstructorConstantVariables",
-        "StateMutationTest::slitherConstructorVariables"
+        "StateMutationTest::slitherConstructorVariables",
     ]
 
     constructor_found = False
@@ -360,12 +355,11 @@ def test_refinement_constructor_metadata():
                 constructor_found = True
 
                 # Explicitly validate metadata fields exist
-                assert "writes_state" in node_data, \
-                    f"Constructor {candidate} missing writes_state field"
-                assert "num_state_writes" in node_data, \
-                    f"Constructor {candidate} missing num_state_writes field"
-                assert "state_variables_written" in node_data, \
+                assert "writes_state" in node_data, f"Constructor {candidate} missing writes_state field"
+                assert "num_state_writes" in node_data, f"Constructor {candidate} missing num_state_writes field"
+                assert "state_variables_written" in node_data, (
                     f"Constructor {candidate} missing state_variables_written field"
+                )
 
                 # The constructor writes counter = 0
                 writes_state = node_data.get("writes_state")
@@ -386,7 +380,7 @@ def test_refinement_cross_contract_isolation():
     """
     Refinement Test 4: Cross-contract calls should NOT propagate write metadata
     """
-    repo_path = os.path.join(os.getcwd(), 'tests', 'contracts')
+    repo_path = os.path.join(os.getcwd(), "tests", "contracts")
 
     engine = AnalysisEngine()
     slither_obj = engine.run_analysis(repo_path)
@@ -402,10 +396,8 @@ def test_refinement_cross_contract_isolation():
     b_write_func = "ContractB::write"
     if graph.has_node(b_write_func):
         node_data = graph.nodes[b_write_func]
-        assert node_data.get("writes_state") == True, \
-            "ContractB::write() should have writes_state=True"
-        assert node_data.get("num_state_writes") >= 1, \
-            "ContractB::write() should have num_state_writes >= 1"
+        assert node_data.get("writes_state") == True, "ContractB::write() should have writes_state=True"
+        assert node_data.get("num_state_writes") >= 1, "ContractB::write() should have num_state_writes >= 1"
         print("✓ PASS: ContractB::write() has writes_state=True")
     else:
         print("⚠ SKIP: ContractB::write not found")
@@ -414,10 +406,10 @@ def test_refinement_cross_contract_isolation():
     a_call_func = "ContractA::callWrite"
     if graph.has_node(a_call_func):
         node_data = graph.nodes[a_call_func]
-        assert node_data.get("writes_state") == False, \
+        assert node_data.get("writes_state") == False, (
             "ContractA::callWrite() should have writes_state=False (no cross-contract propagation)"
-        assert node_data.get("num_state_writes") == 0, \
-            "ContractA::callWrite() should have num_state_writes=0"
+        )
+        assert node_data.get("num_state_writes") == 0, "ContractA::callWrite() should have num_state_writes=0"
         print("✓ PASS: ContractA::callWrite() has writes_state=False (no propagation)")
     else:
         print("⚠ SKIP: ContractA::callWrite not found")

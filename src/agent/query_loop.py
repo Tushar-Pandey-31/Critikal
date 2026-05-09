@@ -102,11 +102,7 @@ class QueryLoop:
         self.messages: list[dict[str, Any]] = []
         self.compactor = AutoCompactor(self.model)
         self.permissions = permission_handler or PermissionHandler()
-        self.fallback_model = (
-            fallback_model
-            or os.getenv("AGENT_FALLBACK_MODEL")
-            or FALLBACK_MODELS.get(self.model)
-        )
+        self.fallback_model = fallback_model or os.getenv("AGENT_FALLBACK_MODEL") or FALLBACK_MODELS.get(self.model)
 
         # Publish the permission handler on the context so sub-agents
         # spawned via SpawnAgentTool inherit the parent's policy rather
@@ -128,6 +124,7 @@ class QueryLoop:
         model = model or self._current_model
         if model not in self._llm_cache:
             from src.llm.providers import get_worker_llm
+
             temperature = float(os.getenv("AGENT_TEMPERATURE", "0.0"))
             self._llm_cache[model] = get_worker_llm(
                 model_name=model,
@@ -208,24 +205,34 @@ class QueryLoop:
 
             # Emit the full assistant text (for non-streaming fallback)
             if assistant_text:
-                await self._emit(EventType.MESSAGE_COMPLETE, {
-                    "text": assistant_text, "turn": turn,
-                })
+                await self._emit(
+                    EventType.MESSAGE_COMPLETE,
+                    {
+                        "text": assistant_text,
+                        "turn": turn,
+                    },
+                )
 
             # If there are no tool calls, we're done
             if not tool_calls:
                 self.messages.append({"role": "assistant", "content": assistant_text})
-                await self._emit(EventType.TURN_COMPLETE, {
-                    "turn": turn, "text": assistant_text[:200],
-                })
+                await self._emit(
+                    EventType.TURN_COMPLETE,
+                    {
+                        "turn": turn,
+                        "text": assistant_text[:200],
+                    },
+                )
                 return assistant_text
 
             # 4. Execute tool calls
-            self.messages.append({
-                "role": "assistant",
-                "content": assistant_text,
-                "tool_calls": tool_calls,
-            })
+            self.messages.append(
+                {
+                    "role": "assistant",
+                    "content": assistant_text,
+                    "tool_calls": tool_calls,
+                }
+            )
 
             tool_results = await self._execute_tool_calls(tool_calls)
 
@@ -233,10 +240,12 @@ class QueryLoop:
             tool_results = self._apply_tool_result_budget(tool_results)
 
             # Append tool results as tool message
-            self.messages.append({
-                "role": "tool",
-                "content": tool_results,
-            })
+            self.messages.append(
+                {
+                    "role": "tool",
+                    "content": tool_results,
+                }
+            )
 
             # 5. Budget check
             if self.ctx.cost_tracker and self.ctx.cost_tracker.is_over_budget():
@@ -281,14 +290,14 @@ class QueryLoop:
 
                 # ── Rate limit → backoff and retry ──
                 if any(p in error_str for p in RATE_LIMIT_PATTERNS):
-                    delay = RETRY_BASE_DELAY_S * (2 ** attempt)
-                    logger.warning(
-                        f"Rate limit on attempt {attempt + 1}/{MAX_RETRIES}. "
-                        f"Retrying in {delay:.0f}s..."
+                    delay = RETRY_BASE_DELAY_S * (2**attempt)
+                    logger.warning(f"Rate limit on attempt {attempt + 1}/{MAX_RETRIES}. Retrying in {delay:.0f}s...")
+                    await self._emit(
+                        EventType.STATUS,
+                        {
+                            "message": f"Rate limited. Retrying in {delay:.0f}s...",
+                        },
                     )
-                    await self._emit(EventType.STATUS, {
-                        "message": f"Rate limited. Retrying in {delay:.0f}s...",
-                    })
                     await asyncio.sleep(delay)
                     continue
 
@@ -296,9 +305,12 @@ class QueryLoop:
                 if any(p in error_str for p in PROMPT_TOO_LONG_PATTERNS):
                     if not self._has_attempted_reactive_compact:
                         logger.warning("Prompt too long — attempting reactive compact...")
-                        await self._emit(EventType.STATUS, {
-                            "message": "Context too large. Compacting...",
-                        })
+                        await self._emit(
+                            EventType.STATUS,
+                            {
+                                "message": "Context too large. Compacting...",
+                            },
+                        )
                         self._has_attempted_reactive_compact = True
                         success = await self.compactor.compact(self.messages)
                         if success:
@@ -306,12 +318,13 @@ class QueryLoop:
                             continue
                     # Compact failed or already tried — try fallback model
                     if self.fallback_model and self._current_model != self.fallback_model:
-                        logger.warning(
-                            f"Switching to fallback model: {self.fallback_model}"
+                        logger.warning(f"Switching to fallback model: {self.fallback_model}")
+                        await self._emit(
+                            EventType.STATUS,
+                            {
+                                "message": f"Switching to {self.fallback_model}...",
+                            },
                         )
-                        await self._emit(EventType.STATUS, {
-                            "message": f"Switching to {self.fallback_model}...",
-                        })
                         self._current_model = self.fallback_model
                         continue
                     raise  # No recovery possible
@@ -330,27 +343,21 @@ class QueryLoop:
                 # ── Unknown error → try fallback model on last attempt ──
                 if attempt == MAX_RETRIES - 2 and self.fallback_model and self._current_model != self.fallback_model:
                     brief = _short_err(e)
-                    logger.warning(
-                        f"Error on attempt {attempt + 1}: {e}. "
-                        f"Switching to fallback: {self.fallback_model}"
-                    )
+                    logger.warning(f"Error on attempt {attempt + 1}: {e}. Switching to fallback: {self.fallback_model}")
                     # Surface the *reason* we're switching — otherwise
                     # users just see "Trying fallback..." with no context.
-                    await self._emit(EventType.STATUS, {
-                        "message": (
-                            f"{self._current_model} failed ({brief}). "
-                            f"Trying {self.fallback_model}..."
-                        ),
-                    })
+                    await self._emit(
+                        EventType.STATUS,
+                        {
+                            "message": (f"{self._current_model} failed ({brief}). Trying {self.fallback_model}..."),
+                        },
+                    )
                     self._current_model = self.fallback_model
                     continue
 
                 # ── Generic retry with backoff ──
-                delay = RETRY_BASE_DELAY_S * (2 ** attempt)
-                logger.warning(
-                    f"LLM error on attempt {attempt + 1}/{MAX_RETRIES}: {e}. "
-                    f"Retrying in {delay:.0f}s..."
-                )
+                delay = RETRY_BASE_DELAY_S * (2**attempt)
+                logger.warning(f"LLM error on attempt {attempt + 1}/{MAX_RETRIES}: {e}. Retrying in {delay:.0f}s...")
                 await asyncio.sleep(delay)
 
         raise last_error or RuntimeError("All retry attempts exhausted")
@@ -383,11 +390,13 @@ class QueryLoop:
                 if tool_calls:
                     lc_tool_calls = []
                     for tc in tool_calls:
-                        lc_tool_calls.append({
-                            "id": tc["id"],
-                            "name": tc["name"],
-                            "args": tc["args"],
-                        })
+                        lc_tool_calls.append(
+                            {
+                                "id": tc["id"],
+                                "name": tc["name"],
+                                "args": tc["args"],
+                            }
+                        )
                     ai_msg = AIMessage(
                         content=content or "",
                         tool_calls=lc_tool_calls,
@@ -399,10 +408,12 @@ class QueryLoop:
                 results = msg.get("content", [])
                 if isinstance(results, list):
                     for result in results:
-                        lc_messages.append(ToolMessage(
-                            content=result.get("content", ""),
-                            tool_call_id=result.get("tool_call_id", ""),
-                        ))
+                        lc_messages.append(
+                            ToolMessage(
+                                content=result.get("content", ""),
+                                tool_call_id=result.get("tool_call_id", ""),
+                            )
+                        )
                 else:
                     lc_messages.append(HumanMessage(content=str(results)))
 
@@ -444,16 +455,22 @@ class QueryLoop:
                                 thinking_delta += block.get("thinking", "") or block.get("text", "")
 
                 if thinking_delta:
-                    await self._emit(EventType.MESSAGE_CHUNK, {
-                        "text": thinking_delta,
-                        "kind": "thinking",
-                    })
+                    await self._emit(
+                        EventType.MESSAGE_CHUNK,
+                        {
+                            "text": thinking_delta,
+                            "kind": "thinking",
+                        },
+                    )
                 if text_delta:
                     streamed_text.append(text_delta)
-                    await self._emit(EventType.MESSAGE_CHUNK, {
-                        "text": text_delta,
-                        "kind": "text",
-                    })
+                    await self._emit(
+                        EventType.MESSAGE_CHUNK,
+                        {
+                            "text": text_delta,
+                            "kind": "text",
+                        },
+                    )
 
             if full_response is None:
                 raise RuntimeError("Empty stream response from LLM")
@@ -472,9 +489,12 @@ class QueryLoop:
                     usage.get("input_tokens", 0),
                     usage.get("output_tokens", 0),
                 )
-                await self._emit(EventType.COST_UPDATE, {
-                    "cost": self.ctx.cost_tracker.session_cost,
-                })
+                await self._emit(
+                    EventType.COST_UPDATE,
+                    {
+                        "cost": self.ctx.cost_tracker.session_cost,
+                    },
+                )
 
         return full_response
 
@@ -505,11 +525,13 @@ class QueryLoop:
         # Extract tool calls
         if hasattr(response, "tool_calls") and response.tool_calls:
             for tc in response.tool_calls:
-                tool_calls.append({
-                    "id": tc.get("id", f"call_{id(tc)}"),
-                    "name": tc["name"],
-                    "args": tc.get("args", {}),
-                })
+                tool_calls.append(
+                    {
+                        "id": tc.get("id", f"call_{id(tc)}"),
+                        "name": tc["name"],
+                        "args": tc.get("args", {}),
+                    }
+                )
 
         return text, tool_calls
 
@@ -524,19 +546,23 @@ class QueryLoop:
 
             tool = self.tools.get(tool_name)
             if not tool:
-                results.append({
-                    "tool_call_id": tool_id,
-                    "content": f"Error: unknown tool '{tool_name}'",
-                })
+                results.append(
+                    {
+                        "tool_call_id": tool_id,
+                        "content": f"Error: unknown tool '{tool_name}'",
+                    }
+                )
                 continue
 
             # Permission check
             allowed = await self.permissions.check(tool, args, self.ctx)
             if not allowed:
-                results.append({
-                    "tool_call_id": tool_id,
-                    "content": f"Permission denied for '{tool_name}' ({tool.permission_level().value}).",
-                })
+                results.append(
+                    {
+                        "tool_call_id": tool_id,
+                        "content": f"Permission denied for '{tool_name}' ({tool.permission_level().value}).",
+                    }
+                )
                 continue
 
             # PreToolUse hook — may block the call
@@ -548,22 +574,28 @@ class QueryLoop:
                     payload={"tool": tool_name, "args": args},
                 )
                 if hook_result.blocked:
-                    await self._emit(EventType.STATUS, {
-                        "message": f"PreToolUse hook blocked {tool_name}: {hook_result.reason[:200]}",
-                    })
-                    results.append({
-                        "tool_call_id": tool_id,
-                        "content": (
-                            f"[BLOCKED by PreToolUse hook] {hook_result.reason}"
-                        ),
-                    })
+                    await self._emit(
+                        EventType.STATUS,
+                        {
+                            "message": f"PreToolUse hook blocked {tool_name}: {hook_result.reason[:200]}",
+                        },
+                    )
+                    results.append(
+                        {
+                            "tool_call_id": tool_id,
+                            "content": (f"[BLOCKED by PreToolUse hook] {hook_result.reason}"),
+                        }
+                    )
                     continue
 
             # Emit tool start event
-            await self._emit(EventType.TOOL_START, {
-                "tool": tool_name,
-                "args_summary": _summarize_args(args),
-            })
+            await self._emit(
+                EventType.TOOL_START,
+                {
+                    "tool": tool_name,
+                    "args_summary": _summarize_args(args),
+                },
+            )
 
             # Execute
             start_time = time.monotonic()
@@ -576,12 +608,15 @@ class QueryLoop:
             elapsed = time.monotonic() - start_time
 
             # Emit tool complete event
-            await self._emit(EventType.TOOL_COMPLETE, {
-                "tool": tool_name,
-                "elapsed_s": round(elapsed, 2),
-                "is_error": result.is_error,
-                "output_preview": result.output[:200],
-            })
+            await self._emit(
+                EventType.TOOL_COMPLETE,
+                {
+                    "tool": tool_name,
+                    "elapsed_s": round(elapsed, 2),
+                    "is_error": result.is_error,
+                    "output_preview": result.output[:200],
+                },
+            )
 
             # PostToolUse hook — advisory; exit codes don't block
             if hooks is not None and hooks.has("PostToolUse"):
@@ -600,10 +635,12 @@ class QueryLoop:
             if result.is_error:
                 content = f"[ERROR] {content}"
 
-            results.append({
-                "tool_call_id": tool_id,
-                "content": content,
-            })
+            results.append(
+                {
+                    "tool_call_id": tool_id,
+                    "content": content,
+                }
+            )
 
         return results
 
@@ -617,14 +654,10 @@ class QueryLoop:
             content = result.get("content", "")
             if len(content) > TOOL_RESULT_BUDGET_CHARS:
                 # Keep head and tail for context
-                head = content[:TOOL_RESULT_BUDGET_CHARS // 2]
-                tail = content[-(TOOL_RESULT_BUDGET_CHARS // 4):]
+                head = content[: TOOL_RESULT_BUDGET_CHARS // 2]
+                tail = content[-(TOOL_RESULT_BUDGET_CHARS // 4) :]
                 truncated_chars = len(content) - len(head) - len(tail)
-                content = (
-                    f"{head}\n\n"
-                    f"... [truncated {truncated_chars:,} characters] ...\n\n"
-                    f"{tail}"
-                )
+                content = f"{head}\n\n... [truncated {truncated_chars:,} characters] ...\n\n{tail}"
                 result = {**result, "content": content}
             budgeted.append(result)
         return budgeted

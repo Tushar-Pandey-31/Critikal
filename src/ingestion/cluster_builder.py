@@ -124,10 +124,7 @@ class ClusterBuilder:
                     root_path=cluster_root,
                     sol_files=sorted(root_files),
                     pragma_versions=pragmas,
-                    import_graph={
-                        k: v for k, v in import_graph.items()
-                        if k in component
-                    },
+                    import_graph={k: v for k, v in import_graph.items() if k in component},
                     framework=framework,
                     solc_version=solc_version,
                 )
@@ -144,8 +141,7 @@ class ClusterBuilder:
                 final_clusters.append(cluster)
 
         logger.info(
-            f"ClusterBuilder: {len(final_clusters)} cluster(s) "
-            f"from {len(roots)} root(s), {len(all_sol_files)} files"
+            f"ClusterBuilder: {len(final_clusters)} cluster(s) from {len(roots)} root(s), {len(all_sol_files)} files"
         )
         return final_clusters
 
@@ -239,7 +235,7 @@ class ClusterBuilder:
         chunks: list[CompilationCluster] = []
 
         for i in range(0, len(files), max_size):
-            chunk_files = files[i:i + max_size]
+            chunk_files = files[i : i + max_size]
             chunk_pragmas: set[str] = set()
             for f in chunk_files:
                 p = SolcManager.detect_pragma(f)
@@ -264,8 +260,7 @@ class ClusterBuilder:
             chunks.append(sub)
 
         logger.info(
-            f"MemoryGuard split cluster {cluster.cluster_id} into "
-            f"{len(chunks)} chunk(s) (max {max_size} files each)"
+            f"MemoryGuard split cluster {cluster.cluster_id} into {len(chunks)} chunk(s) (max {max_size} files each)"
         )
         return chunks
 

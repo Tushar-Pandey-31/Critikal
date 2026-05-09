@@ -26,8 +26,7 @@ def build_system_prompt(tools: list[Tool], ctx: ToolContext) -> str:
 
     for t in tools:
         name = t.name()
-        if name in ("bash", "file_read", "file_write", "file_edit",
-                     "grep", "glob", "web_fetch", "web_search"):
+        if name in ("bash", "file_read", "file_write", "file_edit", "grep", "glob", "web_fetch", "web_search"):
             generic_tools.append(t)
         elif name in ("get_function_context", "find_state_mutators", "get_modifiers"):
             graph_tools.append(t)

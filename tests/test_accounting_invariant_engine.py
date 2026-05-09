@@ -219,7 +219,8 @@ class TestExploitTargetScoring:
             makes_external_call=True,
             reentrancy_risk=True,
             unchecked_external_return=True,
-            is_unprotected_mutator=True, has_taint_risk=True,
+            is_unprotected_mutator=True,
+            has_taint_risk=True,
             taint_sources=["calldata:param1", "tx.origin"],
             cross_function_taint_paths=[{"from": "a", "to": "b"}],
             tainted_state_writes=[{"sensitivity": ["ACCOUNTING_CRITICAL", "ACCESS_CRITICAL"]}],
@@ -270,7 +271,9 @@ class TestExploitTargetScoring:
             "_internalSink",
             is_external_entry=False,
             writes_state=True,
-            is_unprotected_mutator=True, makes_external_call=True, has_taint_risk=True,
+            is_unprotected_mutator=True,
+            makes_external_call=True,
+            has_taint_risk=True,
             taint_sources=["calldata:a", "calldata:b", "msg.value"],
             cross_function_taint_paths=[{"from": "entry", "to": "_internalSink"}],
             tainted_state_writes=[{"sensitivity": ["ACCOUNTING_CRITICAL", "ACCESS_CRITICAL"]}],
@@ -293,7 +296,9 @@ class TestExploitTargetScoring:
             "_internalSink",
             is_external_entry=False,
             writes_state=True,
-            is_unprotected_mutator=True, makes_external_call=True, has_taint_risk=True,
+            is_unprotected_mutator=True,
+            makes_external_call=True,
+            has_taint_risk=True,
             taint_sources=["calldata:a", "calldata:b", "msg.value"],
             cross_function_taint_paths=[{"from": "entry", "to": "_internalSink"}],
             tainted_state_writes=[{"sensitivity": ["ACCOUNTING_CRITICAL", "ACCESS_CRITICAL"]}],
@@ -338,7 +343,7 @@ class TestExploitTargetScoring:
             "viewPrice",
             is_external_entry=True,
             is_view_or_pure=True,  # Heavy penalty
-            is_protected=True,     # Heavy penalty
+            is_protected=True,  # Heavy penalty
             has_taint_risk=False,  # Heavy penalty
         )
         _run_ds4_ds5_ds6(g)
@@ -381,7 +386,8 @@ class TestQueries:
             reentrancy_risk=True,
             tainted_state_writes=[{"sensitivity": ["ACCESS_CRITICAL"]}],
             max_chain_length=3,
-            is_unprotected_mutator=True, has_taint_risk=True,
+            is_unprotected_mutator=True,
+            has_taint_risk=True,
         )
         _run_ds4_ds5_ds6(g)
 
@@ -428,16 +434,23 @@ class TestReadOnlyReentrancy:
         g = nx.DiGraph()
         _add_contract(g, "Vault")
         f = _add_func(
-            g, "Vault", "deposit",
+            g,
+            "Vault",
+            "deposit",
             writes_total_supply=True,
             makes_external_call=True,
         )
         # Add a staticcall external call edge
         target = "ExternalOracle::getPrice"
-        g.add_node(target, type="function", name="getPrice", contract="ExternalOracle",
-                   is_view_or_pure=True)
-        g.add_edge(f, target, relationship="EXTERNAL_CALL", call_type="staticcall",
-                   forwards_gas="full", target_expression="oracle.getPrice()")
+        g.add_node(target, type="function", name="getPrice", contract="ExternalOracle", is_view_or_pure=True)
+        g.add_edge(
+            f,
+            target,
+            relationship="EXTERNAL_CALL",
+            call_type="staticcall",
+            forwards_gas="full",
+            target_expression="oracle.getPrice()",
+        )
 
         self._run_with_read_only_detection(g)
         assert g.nodes[f]["read_only_reentrancy_risk"] is True
@@ -447,15 +460,23 @@ class TestReadOnlyReentrancy:
         g = nx.DiGraph()
         _add_contract(g, "Vault")
         f = _add_func(
-            g, "Vault", "withdraw",
+            g,
+            "Vault",
+            "withdraw",
             writes_total_supply=True,
             makes_external_call=True,
         )
         # Add a regular call edge (not staticcall)
         target = "ExternalToken::transfer"
         g.add_node(target, type="function", name="transfer", contract="ExternalToken")
-        g.add_edge(f, target, relationship="EXTERNAL_CALL", call_type="call",
-                   forwards_gas="full", target_expression="token.transfer()")
+        g.add_edge(
+            f,
+            target,
+            relationship="EXTERNAL_CALL",
+            call_type="call",
+            forwards_gas="full",
+            target_expression="token.transfer()",
+        )
 
         self._run_with_read_only_detection(g)
         assert g.nodes[f]["read_only_reentrancy_risk"] is False
@@ -465,15 +486,22 @@ class TestReadOnlyReentrancy:
         g = nx.DiGraph()
         _add_contract(g, "Vault")
         f = _add_func(
-            g, "Vault", "checkBalance",
+            g,
+            "Vault",
+            "checkBalance",
             makes_external_call=True,
             # No writes_total_supply, writes_total_assets, etc.
         )
         target = "ExternalOracle::getPrice"
-        g.add_node(target, type="function", name="getPrice", contract="ExternalOracle",
-                   is_view_or_pure=True)
-        g.add_edge(f, target, relationship="EXTERNAL_CALL", call_type="staticcall",
-                   forwards_gas="full", target_expression="oracle.getPrice()")
+        g.add_node(target, type="function", name="getPrice", contract="ExternalOracle", is_view_or_pure=True)
+        g.add_edge(
+            f,
+            target,
+            relationship="EXTERNAL_CALL",
+            call_type="staticcall",
+            forwards_gas="full",
+            target_expression="oracle.getPrice()",
+        )
 
         self._run_with_read_only_detection(g)
         assert g.nodes[f]["read_only_reentrancy_risk"] is False
@@ -483,15 +511,22 @@ class TestReadOnlyReentrancy:
         g = nx.DiGraph()
         _add_contract(g, "Vault")
         f = _add_func(
-            g, "Vault", "deposit",
+            g,
+            "Vault",
+            "deposit",
             writes_total_supply=True,
             makes_external_call=True,
         )
         target = "ExternalOracle::getPrice"
-        g.add_node(target, type="function", name="getPrice", contract="ExternalOracle",
-                   is_view_or_pure=True)
-        g.add_edge(f, target, relationship="EXTERNAL_CALL", call_type="staticcall",
-                   forwards_gas="full", target_expression="oracle.getPrice()")
+        g.add_node(target, type="function", name="getPrice", contract="ExternalOracle", is_view_or_pure=True)
+        g.add_edge(
+            f,
+            target,
+            relationship="EXTERNAL_CALL",
+            call_type="staticcall",
+            forwards_gas="full",
+            target_expression="oracle.getPrice()",
+        )
 
         self._run_with_read_only_detection(g)
         assert g.nodes[f]["read_only_reentrancy_risk"] is True
@@ -503,15 +538,22 @@ class TestReadOnlyReentrancy:
         g = nx.DiGraph()
         _add_contract(g, "Lending")
         f = _add_func(
-            g, "Lending", "accrue",
+            g,
+            "Lending",
+            "accrue",
             writes_total_assets=True,
             makes_external_call=True,
         )
         target = "ExternalOracle::getRate"
-        g.add_node(target, type="function", name="getRate", contract="ExternalOracle",
-                   is_view_or_pure=True)
-        g.add_edge(f, target, relationship="EXTERNAL_CALL", call_type="staticcall",
-                   forwards_gas="full", target_expression="oracle.getRate()")
+        g.add_node(target, type="function", name="getRate", contract="ExternalOracle", is_view_or_pure=True)
+        g.add_edge(
+            f,
+            target,
+            relationship="EXTERNAL_CALL",
+            call_type="staticcall",
+            forwards_gas="full",
+            target_expression="oracle.getRate()",
+        )
 
         self._run_with_read_only_detection(g)
         assert g.nodes[f]["read_only_reentrancy_risk"] is True
@@ -522,15 +564,22 @@ class TestReadOnlyReentrancy:
         _add_contract(g, "Pool")
         v = _add_var(g, "Pool", "totalLiquidity", ["ACCOUNTING_CRITICAL"])
         f = _add_func(
-            g, "Pool", "addLiquidity",
+            g,
+            "Pool",
+            "addLiquidity",
             makes_external_call=True,
         )
         _writes(g, f, v)
         target = "ExternalOracle::getReserves"
-        g.add_node(target, type="function", name="getReserves", contract="ExternalOracle",
-                   is_view_or_pure=True)
-        g.add_edge(f, target, relationship="EXTERNAL_CALL", call_type="staticcall",
-                   forwards_gas="full", target_expression="oracle.getReserves()")
+        g.add_node(target, type="function", name="getReserves", contract="ExternalOracle", is_view_or_pure=True)
+        g.add_edge(
+            f,
+            target,
+            relationship="EXTERNAL_CALL",
+            call_type="staticcall",
+            forwards_gas="full",
+            target_expression="oracle.getReserves()",
+        )
 
         self._run_with_read_only_detection(g)
         assert g.nodes[f]["read_only_reentrancy_risk"] is True
@@ -540,6 +589,7 @@ class TestReadOnlyReentrancy:
 # Helper for CALLS edges (needed for transitive invariant tests)
 # ================================================================
 
+
 def _calls(g: nx.DiGraph, caller_fid: str, callee_fid: str):
     g.add_edge(caller_fid, callee_fid, relationship="CALLS")
 
@@ -547,6 +597,7 @@ def _calls(g: nx.DiGraph, caller_fid: str, callee_fid: str):
 # ================================================================
 # Phase 1.1 Tests — Usage-Pattern Role Inference
 # ================================================================
+
 
 class TestUsagePatternRoleInference:
     """Tests for _infer_roles_from_usage_patterns()."""
@@ -568,7 +619,9 @@ class TestUsagePatternRoleInference:
         g = nx.DiGraph()
         _add_contract(g, "Token")
         v = _add_var(g, "Token", "userCount")  # Not a balance-like name
-        f = _add_func(g, "Token", "transfer", source_code="function transfer(address to) { userCount[msg.sender] -= amount;}")
+        f = _add_func(
+            g, "Token", "transfer", source_code="function transfer(address to) { userCount[msg.sender] -= amount;}"
+        )
         _writes(g, f, v)
         _run_ds4_ds5_ds6(g)
 
@@ -591,6 +644,7 @@ class TestUsagePatternRoleInference:
 # ================================================================
 # Phase 1.2 Tests — Cross-Function Invariant Violation Detection
 # ================================================================
+
 
 class TestInvariantViolationDetection:
     """Tests for _detect_invariant_violations()."""
@@ -620,15 +674,19 @@ class TestInvariantViolationDetection:
         balance_v = _add_var(g, "Vault", "balances")
 
         # Internal function that writes supply
-        internal = _add_func(g, "Vault", "_updateSupply",
-                             is_external_entry=False,
-                             source_code="function _updateSupply() {}")
+        internal = _add_func(
+            g, "Vault", "_updateSupply", is_external_entry=False, source_code="function _updateSupply() {}"
+        )
         _writes(g, internal, supply_v)
 
         # External function writes balance AND calls _updateSupply
-        f = _add_func(g, "Vault", "withdraw",
-                      source_code="function withdraw() {}",
-                      propagated_state_variables=["Vault::totalSupply"])
+        f = _add_func(
+            g,
+            "Vault",
+            "withdraw",
+            source_code="function withdraw() {}",
+            propagated_state_variables=["Vault::totalSupply"],
+        )
         _writes(g, f, balance_v)
         _calls(g, f, internal)
 
@@ -644,9 +702,13 @@ class TestInvariantViolationDetection:
         g = nx.DiGraph()
         _add_contract(g, "Token")
         v = _add_var(g, "Token", "totalSupply")
-        f = _add_func(g, "Token", "publicMint",
-                      source_code="function publicMint() { _mint(msg.sender, 1000); }",
-                      is_protected=False)
+        f = _add_func(
+            g,
+            "Token",
+            "publicMint",
+            source_code="function publicMint() { _mint(msg.sender, 1000); }",
+            is_protected=False,
+        )
         _writes(g, f, v)
 
         _run_ds4_ds5_ds6(g)
@@ -660,11 +722,17 @@ class TestInvariantViolationDetection:
         _add_contract(g, "Farm")
         balance_v = _add_var(g, "Farm", "userBalance")  # Name → BALANCE
         # INDEX variable: inferred via usage pattern (writes division + writes balance var)
-        index_v = _add_var(g, "Farm", "accRewardPerShare")  # Name has "reward" → none of the name patterns match, but let's tag it manually
+        index_v = _add_var(
+            g, "Farm", "accRewardPerShare"
+        )  # Name has "reward" → none of the name patterns match, but let's tag it manually
         g.nodes[index_v]["accounting_role"] = "INDEX"
 
-        f = _add_func(g, "Farm", "directDeposit",
-                      source_code="function directDeposit() { /* writes balance, does not read index */ }")
+        f = _add_func(
+            g,
+            "Farm",
+            "directDeposit",
+            source_code="function directDeposit() { /* writes balance, does not read index */ }",
+        )
         _writes(g, f, balance_v)
         # Notably does NOT read index_v
 
@@ -680,8 +748,7 @@ class TestInvariantViolationDetection:
         supply_v = _add_var(g, "Vault", "totalSupply")
         balance_v = _add_var(g, "Vault", "balances")
 
-        f = _add_func(g, "Vault", "directWithdraw",
-                      source_code="function directWithdraw() {}")
+        f = _add_func(g, "Vault", "directWithdraw", source_code="function directWithdraw() {}")
         _writes(g, f, balance_v)
 
         _run_ds4_ds5_ds6(g)
@@ -697,6 +764,7 @@ class TestInvariantViolationDetection:
 # Phase 2.1 Tests — Flash Loan Attack Surface Detection
 # ================================================================
 
+
 class TestFlashLoanAttackSurface:
     """Tests for _detect_flash_loan_attack_surface()."""
 
@@ -704,11 +772,15 @@ class TestFlashLoanAttackSurface:
         """Function with spot oracle + taint risk gets flagged (2+ factors required)."""
         g = nx.DiGraph()
         _add_contract(g, "Lending")
-        f = _add_func(g, "Lending", "liquidate",
-                      source_code="function liquidate(address user) { uint price = oracle.price(); if (health(user) < 1) { collateral -= debt; } }",
-                      uses_spot_price_oracle=True,
-                      uses_safe_oracle=False,
-                      has_taint_risk=True)
+        f = _add_func(
+            g,
+            "Lending",
+            "liquidate",
+            source_code="function liquidate(address user) { uint price = oracle.price(); if (health(user) < 1) { collateral -= debt; } }",
+            uses_spot_price_oracle=True,
+            uses_safe_oracle=False,
+            has_taint_risk=True,
+        )
 
         gb = _run_ds4_ds5_ds6(g)
         gb._detect_flash_loan_attack_surface()
@@ -722,10 +794,14 @@ class TestFlashLoanAttackSurface:
         """Function without oracle is not flagged even with other factors."""
         g = nx.DiGraph()
         _add_contract(g, "Vault")
-        f = _add_func(g, "Vault", "deposit",
-                      source_code="function deposit(uint amount) { balances[msg.sender] += amount; }",
-                      uses_spot_price_oracle=False,
-                      has_taint_risk=False)
+        f = _add_func(
+            g,
+            "Vault",
+            "deposit",
+            source_code="function deposit(uint amount) { balances[msg.sender] += amount; }",
+            uses_spot_price_oracle=False,
+            has_taint_risk=False,
+        )
 
         gb = _run_ds4_ds5_ds6(g)
         gb._detect_flash_loan_attack_surface()
@@ -737,13 +813,17 @@ class TestFlashLoanAttackSurface:
         """Verify flash_loan_score contributes to structural_score."""
         g = nx.DiGraph()
         _add_contract(g, "Lending")
-        f = _add_func(g, "Lending", "liquidate",
-                      source_code="function liquidate(address user) { uint price = oracle.price(); if (health(user) < 1) { collateral -= debt; } }",
-                      uses_spot_price_oracle=True,
-                      uses_safe_oracle=False,
-                      has_taint_risk=True,
-                      flash_loan_risk=True,
-                      flash_loan_score=70)
+        f = _add_func(
+            g,
+            "Lending",
+            "liquidate",
+            source_code="function liquidate(address user) { uint price = oracle.price(); if (health(user) < 1) { collateral -= debt; } }",
+            uses_spot_price_oracle=True,
+            uses_safe_oracle=False,
+            has_taint_risk=True,
+            flash_loan_risk=True,
+            flash_loan_score=70,
+        )
 
         _run_ds4_ds5_ds6(g)
 
@@ -751,4 +831,3 @@ class TestFlashLoanAttackSurface:
         risk_cats = g.nodes[f].get("risk_categories", [])
         assert structural > 0
         assert "flash_loan_amplifiable" in risk_cats
-

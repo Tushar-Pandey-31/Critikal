@@ -10,7 +10,6 @@ from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class HotspotTool(Tool):
-
     def name(self) -> str:
         return "find_hotspots"
 
@@ -83,8 +82,7 @@ class HotspotTool(Tool):
         summary_lines = [f"Found {len(hotspots)} hotspot(s):"]
         for h in hotspots[:10]:
             summary_lines.append(
-                f"  [{h.priority}] {h.contract}.{h.function} "
-                f"(score={h.risk_score}, categories={h.risk_categories})"
+                f"  [{h.priority}] {h.contract}.{h.function} (score={h.risk_score}, categories={h.risk_categories})"
             )
         if len(hotspots) > 10:
             summary_lines.append(f"  ... and {len(hotspots) - 10} more")

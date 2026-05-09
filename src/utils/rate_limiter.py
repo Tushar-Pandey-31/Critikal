@@ -35,108 +35,108 @@ _TIER = os.getenv("RATE_LIMIT_TIER", "free").lower()
 _MODEL_LIMITS: dict[str, dict[str, dict[str, int]]] = {
     # ── Gemini ──────────────────────────────────────────────
     "gemini-3.1-pro": {
-        "free":    {"rpm": 5,   "tpm": 250_000,   "rpd": 100},
+        "free": {"rpm": 5, "tpm": 250_000, "rpd": 100},
         "paid_t1": {"rpm": 150, "tpm": 1_000_000, "rpd": 1_500},
         "paid_t2": {"rpm": 500, "tpm": 2_000_000, "rpd": 10_000},
     },
     "gemini-3.1-flash-lite": {
-        "free":    {"rpm": 15,  "tpm": 250_000,   "rpd": 1_000},
+        "free": {"rpm": 15, "tpm": 250_000, "rpd": 1_000},
         "paid_t1": {"rpm": 300, "tpm": 1_000_000, "rpd": 1_500},
     },
     "gemini-3-flash": {
-        "free":    {"rpm": 10,  "tpm": 250_000,   "rpd": 500},
+        "free": {"rpm": 10, "tpm": 250_000, "rpd": 500},
         "paid_t1": {"rpm": 300, "tpm": 1_000_000, "rpd": 1_500},
     },
     "gemini-3-flash-preview": {
-        "free":    {"rpm": 10,  "tpm": 250_000,   "rpd": 250},
+        "free": {"rpm": 10, "tpm": 250_000, "rpd": 250},
         "paid_t1": {"rpm": 300, "tpm": 1_000_000, "rpd": 1_500},
         "paid_t2": {"rpm": 1500, "tpm": 2_000_000, "rpd": 10_000},
     },
     "gemini-3-flash-preview-lite": {
-        "free":    {"rpm": 15,  "tpm": 250_000,   "rpd": 1_000},
+        "free": {"rpm": 15, "tpm": 250_000, "rpd": 1_000},
         "paid_t1": {"rpm": 300, "tpm": 1_000_000, "rpd": 1_500},
     },
     "gemini-2.0-flash": {
-        "free":    {"rpm": 10,  "tpm": 250_000,   "rpd": 500},
+        "free": {"rpm": 10, "tpm": 250_000, "rpd": 500},
         "paid_t1": {"rpm": 300, "tpm": 1_000_000, "rpd": 1_500},
     },
     "gemini-1.5-flash": {
-        "free":    {"rpm": 15,  "tpm": 250_000,   "rpd": 500},
+        "free": {"rpm": 15, "tpm": 250_000, "rpd": 500},
         "paid_t1": {"rpm": 300, "tpm": 1_000_000, "rpd": 1_500},
     },
     "gemini-1.5-pro": {
-        "free":    {"rpm": 5,   "tpm": 250_000,   "rpd": 100},
+        "free": {"rpm": 5, "tpm": 250_000, "rpd": 100},
         "paid_t1": {"rpm": 150, "tpm": 1_000_000, "rpd": 1_500},
     },
     # ── OpenAI ──────────────────────────────────────────────
     "gpt-5.5": {
-        "free":    {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
-        "paid_t1": {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
+        "free": {"rpm": 500, "tpm": 30_000, "rpd": 10_000},
+        "paid_t1": {"rpm": 500, "tpm": 30_000, "rpd": 10_000},
     },
     "gpt-5.4-mini": {
-        "free":    {"rpm": 500, "tpm": 200_000, "rpd": 10_000},
+        "free": {"rpm": 500, "tpm": 200_000, "rpd": 10_000},
         "paid_t1": {"rpm": 500, "tpm": 200_000, "rpd": 10_000},
     },
     "gpt-5.4-nano": {
-        "free":    {"rpm": 500, "tpm": 200_000, "rpd": 10_000},
+        "free": {"rpm": 500, "tpm": 200_000, "rpd": 10_000},
         "paid_t1": {"rpm": 500, "tpm": 200_000, "rpd": 10_000},
     },
     "gpt-5.4": {
-        "free":    {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
-        "paid_t1": {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
+        "free": {"rpm": 500, "tpm": 30_000, "rpd": 10_000},
+        "paid_t1": {"rpm": 500, "tpm": 30_000, "rpd": 10_000},
     },
     "gpt-5.1": {
-        "free":    {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
-        "paid_t1": {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
+        "free": {"rpm": 500, "tpm": 30_000, "rpd": 10_000},
+        "paid_t1": {"rpm": 500, "tpm": 30_000, "rpd": 10_000},
     },
     "gpt-5": {
-        "free":    {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
-        "paid_t1": {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
+        "free": {"rpm": 500, "tpm": 30_000, "rpd": 10_000},
+        "paid_t1": {"rpm": 500, "tpm": 30_000, "rpd": 10_000},
     },
     "gpt-4o": {
-        "free":    {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
-        "paid_t1": {"rpm": 500, "tpm": 30_000,  "rpd": 10_000},
+        "free": {"rpm": 500, "tpm": 30_000, "rpd": 10_000},
+        "paid_t1": {"rpm": 500, "tpm": 30_000, "rpd": 10_000},
     },
     "gpt-4o-mini": {
-        "free":    {"rpm": 500, "tpm": 200_000, "rpd": 10_000},
+        "free": {"rpm": 500, "tpm": 200_000, "rpd": 10_000},
         "paid_t1": {"rpm": 500, "tpm": 200_000, "rpd": 10_000},
     },
     # ── xAI ─────────────────────────────────────────────────
     "grok-4-3": {
-        "free":    {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
+        "free": {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
         "paid_t1": {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
     },
     "grok-4-20": {
-        "free":    {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
+        "free": {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
         "paid_t1": {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
     },
     "grok-4-1-fast": {
-        "free":    {"rpm": 480, "tpm": 2_000_000, "rpd": 10_000},
+        "free": {"rpm": 480, "tpm": 2_000_000, "rpd": 10_000},
         "paid_t1": {"rpm": 480, "tpm": 2_000_000, "rpd": 10_000},
     },
     "grok-code-fast-1": {
-        "free":    {"rpm": 480, "tpm": 2_000_000, "rpd": 10_000},
+        "free": {"rpm": 480, "tpm": 2_000_000, "rpd": 10_000},
         "paid_t1": {"rpm": 480, "tpm": 2_000_000, "rpd": 10_000},
     },
     "grok-4": {
-        "free":    {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
+        "free": {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
         "paid_t1": {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
     },
     "grok-3": {
-        "free":    {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
+        "free": {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
         "paid_t1": {"rpm": 60, "tpm": 240_000, "rpd": 1_000},
     },
     # ── Anthropic ───────────────────────────────────────────
     "claude-sonnet-4": {
-        "free":    {"rpm": 50, "tpm": 40_000, "rpd": 1_000},
+        "free": {"rpm": 50, "tpm": 40_000, "rpd": 1_000},
         "paid_t1": {"rpm": 50, "tpm": 40_000, "rpd": 1_000},
     },
     "claude-sonnet": {
-        "free":    {"rpm": 50, "tpm": 40_000, "rpd": 1_000},
+        "free": {"rpm": 50, "tpm": 40_000, "rpd": 1_000},
         "paid_t1": {"rpm": 50, "tpm": 40_000, "rpd": 1_000},
     },
     "claude-haiku": {
-        "free":    {"rpm": 50, "tpm": 50_000, "rpd": 1_000},
+        "free": {"rpm": 50, "tpm": 50_000, "rpd": 1_000},
         "paid_t1": {"rpm": 50, "tpm": 50_000, "rpd": 1_000},
     },
 }
@@ -236,10 +236,7 @@ class GlobalRateLimiter:
                 # Window full — wait until the oldest entry expires
                 wait = window[0] - cutoff
                 if wait > 0:
-                    logger.info(
-                        f"[RateLimiter] RPM limit ({rpm}) hit for {model}. "
-                        f"Waiting {wait:.1f}s..."
-                    )
+                    logger.info(f"[RateLimiter] RPM limit ({rpm}) hit for {model}. Waiting {wait:.1f}s...")
                     await asyncio.sleep(wait + 0.05)
                     # Re-prune after sleeping
                     now = time.time()
@@ -275,10 +272,7 @@ class GlobalRateLimiter:
                 wait = 0.0
 
         if wait > 0:
-            logger.info(
-                f"[RateLimiter] RPM limit ({rpm}) hit for {model}. "
-                f"Waiting {wait:.1f}s..."
-            )
+            logger.info(f"[RateLimiter] RPM limit ({rpm}) hit for {model}. Waiting {wait:.1f}s...")
             time.sleep(wait + 0.05)
             # Re-acquire after sleeping
             with self._lock:
@@ -457,19 +451,13 @@ class RateLimitedLLM:
     def _is_rate_limit_error(e: Exception) -> bool:
         """Check if an exception is a 429 rate-limit error."""
         err_str = str(e).lower()
-        return any(
-            kw in err_str
-            for kw in ["429", "quota", "rate_limit", "rate limit", "resource_exhausted"]
-        )
+        return any(kw in err_str for kw in ["429", "quota", "rate_limit", "rate limit", "resource_exhausted"])
 
     @staticmethod
     def _is_auth_error(e: Exception) -> bool:
         """Check if an exception is a 401/402 auth or credit error."""
         err_str = str(e).lower()
-        return any(
-            kw in err_str
-            for kw in ["401", "402", "user not found", "unauthorized", "requires more credits"]
-        )
+        return any(kw in err_str for kw in ["401", "402", "user not found", "unauthorized", "requires more credits"])
 
     @staticmethod
     def _is_server_error(e: Exception) -> bool:
@@ -478,9 +466,14 @@ class RateLimitedLLM:
         return any(
             kw in err_str
             for kw in [
-                "500 internal", "502 bad gateway", "503 service",
-                "504 deadline", "504 gateway", "deadline exceeded",
-                "service unavailable", "internal server error",
+                "500 internal",
+                "502 bad gateway",
+                "503 service",
+                "504 deadline",
+                "504 gateway",
+                "deadline exceeded",
+                "service unavailable",
+                "internal server error",
             ]
         )
 

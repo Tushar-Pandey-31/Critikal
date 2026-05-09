@@ -108,9 +108,7 @@ class HookRegistry:
                     try:
                         pattern = re.compile(matcher_str)
                     except re.error as e:
-                        logger.warning(
-                            f"[hooks] invalid matcher {matcher_str!r} for {event_name}: {e}"
-                        )
+                        logger.warning(f"[hooks] invalid matcher {matcher_str!r} for {event_name}: {e}")
                         continue
                 for hook in entry.get("hooks", []) or []:
                     if hook.get("type") != "command":
@@ -194,9 +192,7 @@ class HookRegistry:
                 aggregated_stderr.append(stderr)
 
             if event == "PreToolUse" and proc.returncode not in (0, None):
-                reason = stderr.strip() or stdout.strip() or (
-                    f"PreToolUse hook exited {proc.returncode}"
-                )
+                reason = stderr.strip() or stdout.strip() or (f"PreToolUse hook exited {proc.returncode}")
                 return HookResult(
                     blocked=True,
                     reason=reason,

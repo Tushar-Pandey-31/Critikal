@@ -117,26 +117,31 @@ function previewFee(uint256 amount, uint256 rate) external view returns (uint256
 #  Helper
 # ════════════════════════════════════════════════════════════
 
+
 def _make_builder(functions: dict) -> tuple:
     builder = GraphBuilder()
     for node_id, props in functions.items():
         contract = node_id.split("::")[0]
         if not builder.graph.has_node(contract):
             builder.graph.add_node(contract, type="contract", name=contract, tier="CORE")
-        builder.graph.add_node(node_id, type="function", **{
-            "name": node_id.split("::")[-1],
-            "contract": contract,
-            "source_code": props.get("source_code", ""),
-            "is_external_entry": props.get("is_external_entry", True),
-            "writes_state": props.get("writes_state", False),
-            "risk_score": props.get("risk_score", 0),
-            "risk_categories": list(props.get("risk_categories", [])),
-            "state_variables_written": props.get("state_variables_written", []),
-            "is_view_or_pure": props.get("is_view_or_pure", False),
-            "is_constructor": False,
-            "visibility": props.get("visibility", "external"),
-            "stateMutability": props.get("stateMutability", "nonpayable"),
-        })
+        builder.graph.add_node(
+            node_id,
+            type="function",
+            **{
+                "name": node_id.split("::")[-1],
+                "contract": contract,
+                "source_code": props.get("source_code", ""),
+                "is_external_entry": props.get("is_external_entry", True),
+                "writes_state": props.get("writes_state", False),
+                "risk_score": props.get("risk_score", 0),
+                "risk_categories": list(props.get("risk_categories", [])),
+                "state_variables_written": props.get("state_variables_written", []),
+                "is_view_or_pure": props.get("is_view_or_pure", False),
+                "is_constructor": False,
+                "visibility": props.get("visibility", "external"),
+                "stateMutability": props.get("stateMutability", "nonpayable"),
+            },
+        )
         builder.graph.add_edge(contract, node_id, relationship="DEFINES")
     builder._detect_arithmetic_patterns()
     return builder, builder.graph, GraphQueries(builder.graph)
@@ -146,8 +151,8 @@ def _make_builder(functions: dict) -> tuple:
 #  Tests
 # ════════════════════════════════════════════════════════════
 
-class TestArithmeticPatterns:
 
+class TestArithmeticPatterns:
     def test_div_before_mul_detected(self):
         _, g, _ = _make_builder({"A::calculateFee": {"source_code": SRC_DIV_BEFORE_MUL}})
         assert g.nodes["A::calculateFee"]["division_before_multiplication"] is True
@@ -161,23 +166,17 @@ class TestArithmeticPatterns:
         assert g.nodes["A::constant"]["division_before_multiplication"] is False
 
     def test_unchecked_block_detected(self):
-        _, g, _ = _make_builder({
-            "A::increment": {"source_code": SRC_UNCHECKED_WRITE, "writes_state": True}
-        })
+        _, g, _ = _make_builder({"A::increment": {"source_code": SRC_UNCHECKED_WRITE, "writes_state": True}})
         assert g.nodes["A::increment"]["has_unchecked_arithmetic"] is True
 
     def test_unchecked_with_write(self):
-        _, g, _ = _make_builder({
-            "A::increment": {"source_code": SRC_UNCHECKED_WRITE, "writes_state": True}
-        })
+        _, g, _ = _make_builder({"A::increment": {"source_code": SRC_UNCHECKED_WRITE, "writes_state": True}})
         d = g.nodes["A::increment"]
         assert d["unchecked_with_state_write"] is True
         assert d["arithmetic_risk_score"] >= 50
 
     def test_unchecked_no_write(self):
-        _, g, _ = _make_builder({
-            "A::computeOnly": {"source_code": SRC_UNCHECKED_NO_WRITE, "writes_state": False}
-        })
+        _, g, _ = _make_builder({"A::computeOnly": {"source_code": SRC_UNCHECKED_NO_WRITE, "writes_state": False}})
         d = g.nodes["A::computeOnly"]
         assert d["has_unchecked_arithmetic"] is True
         assert d["unchecked_with_state_write"] is False
@@ -195,9 +194,7 @@ class TestArithmeticPatterns:
         assert g.nodes["A::convert"]["unsafe_type_cast"] is False
 
     def test_score_accumulates(self):
-        _, g, _ = _make_builder({
-            "A::dangerous": {"source_code": SRC_ALL_THREE, "writes_state": True}
-        })
+        _, g, _ = _make_builder({"A::dangerous": {"source_code": SRC_ALL_THREE, "writes_state": True}})
         assert g.nodes["A::dangerous"]["arithmetic_risk_score"] == 125
 
     def test_score_zero_clean_function(self):
@@ -205,9 +202,7 @@ class TestArithmeticPatterns:
         assert g.nodes["A::transfer"]["arithmetic_risk_score"] == 0
 
     def test_risk_categories_populated(self):
-        _, g, _ = _make_builder({
-            "A::dangerous": {"source_code": SRC_ALL_THREE, "writes_state": True}
-        })
+        _, g, _ = _make_builder({"A::dangerous": {"source_code": SRC_ALL_THREE, "writes_state": True}})
         cats = g.nodes["A::dangerous"]["risk_categories"]
         assert "unchecked_arithmetic" in cats
         assert "division_before_multiplication" in cats
@@ -218,19 +213,19 @@ class TestArithmeticPatterns:
         assert g.nodes["A::calcReward"]["division_before_multiplication"] is True
 
     def test_unchecked_nested(self):
-        _, g, _ = _make_builder({
-            "A::doubleUnchecked": {"source_code": SRC_UNCHECKED_NESTED, "writes_state": True}
-        })
+        _, g, _ = _make_builder({"A::doubleUnchecked": {"source_code": SRC_UNCHECKED_NESTED, "writes_state": True}})
         assert g.nodes["A::doubleUnchecked"]["has_unchecked_arithmetic"] is True
 
     def test_hotspot_from_arithmetic(self):
-        builder, g, queries = _make_builder({
-            "A::dangerous": {
-                "source_code": SRC_ALL_THREE,
-                "writes_state": True,
-                "risk_score": 0,
+        builder, g, queries = _make_builder(
+            {
+                "A::dangerous": {
+                    "source_code": SRC_ALL_THREE,
+                    "writes_state": True,
+                    "risk_score": 0,
+                }
             }
-        })
+        )
         g.nodes["A::dangerous"]["structural_score"] = 50
         g.nodes["A::dangerous"]["exploitability_score"] = 40
         g.nodes["A::dangerous"]["final_score"] = g.nodes["A::dangerous"]["risk_score"]
@@ -247,13 +242,15 @@ class TestArithmeticPatterns:
         assert d["arithmetic_risk_score"] == 0
 
     def test_view_function_arithmetic(self):
-        _, g, queries = _make_builder({
-            "A::previewFee": {
-                "source_code": SRC_VIEW_DIV_MUL,
-                "is_view_or_pure": True,
-                "stateMutability": "view",
+        _, g, queries = _make_builder(
+            {
+                "A::previewFee": {
+                    "source_code": SRC_VIEW_DIV_MUL,
+                    "is_view_or_pure": True,
+                    "stateMutability": "view",
+                }
             }
-        })
+        )
         assert g.nodes["A::previewFee"]["division_before_multiplication"] is True
         g.nodes["A::previewFee"]["structural_score"] = 50
         g.nodes["A::previewFee"]["exploitability_score"] = 40
@@ -263,7 +260,5 @@ class TestArithmeticPatterns:
 
     def test_pipeline_order(self):
         """Runs after _detect_oracle_patterns — writes_state available."""
-        _, g, _ = _make_builder({
-            "A::increment": {"source_code": SRC_UNCHECKED_WRITE, "writes_state": True}
-        })
+        _, g, _ = _make_builder({"A::increment": {"source_code": SRC_UNCHECKED_WRITE, "writes_state": True}})
         assert g.nodes["A::increment"]["unchecked_with_state_write"] is True

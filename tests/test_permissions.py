@@ -13,17 +13,27 @@ from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 def _make_tool(level: PermissionLevel) -> Tool:
     """Create a minimal tool with the given permission level."""
+
     class T(Tool):
-        def name(self): return f"tool_{level.value}"
-        def description(self): return f"Tool with {level.value} permission"
-        def permission_level(self): return level
-        def input_schema(self): return {"type": "object", "properties": {}}
-        async def execute(self, p, c): return ToolResult.success("ok")
+        def name(self):
+            return f"tool_{level.value}"
+
+        def description(self):
+            return f"Tool with {level.value} permission"
+
+        def permission_level(self):
+            return level
+
+        def input_schema(self):
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, p, c):
+            return ToolResult.success("ok")
+
     return T()
 
 
 class TestAutoApproveMatrix:
-
     @pytest.mark.asyncio
     async def test_yolo_approves_everything(self):
         handler = PermissionHandler()
@@ -78,7 +88,6 @@ class TestAutoApproveMatrix:
 
 
 class TestPromptCallback:
-
     @pytest.mark.asyncio
     async def test_callback_called_when_approval_needed(self):
         callback = AsyncMock(return_value=True)
@@ -117,7 +126,6 @@ class TestPromptCallback:
 
 
 class TestSessionApprovals:
-
     @pytest.mark.asyncio
     async def test_session_approval_bypasses_mode(self):
         handler = PermissionHandler()  # No callback

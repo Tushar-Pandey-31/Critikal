@@ -35,8 +35,8 @@ def graph_and_queries():
 #  Story 7.1 — Tier Classification Heuristics
 # ════════════════════════════════════════════════════════════
 
-class TestTierClassification:
 
+class TestTierClassification:
     def test_every_contract_has_tier(self, graph_and_queries):
         graph, _ = graph_and_queries
         for nid, ndata in graph.nodes(data=True):
@@ -107,8 +107,8 @@ class TestTierClassification:
 #  Story 7.1 — Query API
 # ════════════════════════════════════════════════════════════
 
-class TestTierQuery:
 
+class TestTierQuery:
     def test_get_contract_tiers_returns_all(self, graph_and_queries):
         _, queries = graph_and_queries
         tiers = queries.get_contract_tiers()
@@ -137,8 +137,8 @@ class TestTierQuery:
 #  Story 7.2 — Tier-Weighted Risk Scoring
 # ════════════════════════════════════════════════════════════
 
-class TestTierWeightedRisk:
 
+class TestTierWeightedRisk:
     def test_core_gets_impact_boost(self, graph_and_queries):
         """Functions in CORE contracts should have ≥20 impact_score
         (the tier bonus alone is 20)."""
@@ -153,9 +153,7 @@ class TestTierWeightedRisk:
             if ndata.get("is_view_or_pure") or ndata.get("is_constructor"):
                 continue
             impact = ndata.get("impact_score", 0)
-            assert impact >= 20, (
-                f"{nid} in CORE contract should have impact >= 20, got {impact}"
-            )
+            assert impact >= 20, f"{nid} in CORE contract should have impact >= 20, got {impact}"
 
     def test_factory_impact_reduced(self, graph_and_queries):
         """A FACTORY function with otherwise-moderate risk should have
@@ -180,8 +178,7 @@ class TestTierWeightedRisk:
 
         avg_factory = sum(factory_impacts) / len(factory_impacts)
         assert avg_factory < 25, (
-            f"Average FACTORY impact {avg_factory} should be suppressed "
-            f"(−25 adjustment should keep it low)"
+            f"Average FACTORY impact {avg_factory} should be suppressed (−25 adjustment should keep it low)"
         )
 
     def test_impact_never_negative(self, graph_and_queries):
@@ -190,9 +187,7 @@ class TestTierWeightedRisk:
         for nid, ndata in graph.nodes(data=True):
             if ndata.get("type") != "function":
                 continue
-            assert ndata.get("impact_score", 0) >= 0, (
-                f"{nid} has negative impact_score: {ndata.get('impact_score')}"
-            )
+            assert ndata.get("impact_score", 0) >= 0, f"{nid} has negative impact_score: {ndata.get('impact_score')}"
 
     def test_core_outranks_factory(self, graph_and_queries):
         """Given comparable structural risk, CORE functions should have
@@ -221,8 +216,7 @@ class TestTierWeightedRisk:
         max_core = max(core_scores)
         max_factory = max(factory_scores)
         assert max_core > max_factory, (
-            f"Highest CORE score ({max_core}) should exceed highest "
-            f"FACTORY score ({max_factory})"
+            f"Highest CORE score ({max_core}) should exceed highest FACTORY score ({max_factory})"
         )
 
 
@@ -230,8 +224,8 @@ class TestTierWeightedRisk:
 #  Backward Compatibility
 # ════════════════════════════════════════════════════════════
 
-class TestBackwardCompat:
 
+class TestBackwardCompat:
     def test_existing_contract_properties_intact(self, graph_and_queries):
         """is_upgradeable and name should still be present on contract nodes."""
         graph, _ = graph_and_queries

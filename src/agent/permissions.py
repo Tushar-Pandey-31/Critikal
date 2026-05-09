@@ -17,11 +17,14 @@ logger = logging.getLogger(__name__)
 # Permission levels that each mode auto-approves
 AUTO_APPROVE = {
     "ask": {PermissionLevel.NONE, PermissionLevel.READ_ONLY},
-    "auto": {PermissionLevel.NONE, PermissionLevel.READ_ONLY,
-             PermissionLevel.WRITE, PermissionLevel.EXECUTE},
-    "yolo": {PermissionLevel.NONE, PermissionLevel.READ_ONLY,
-             PermissionLevel.WRITE, PermissionLevel.EXECUTE,
-             PermissionLevel.DANGEROUS},
+    "auto": {PermissionLevel.NONE, PermissionLevel.READ_ONLY, PermissionLevel.WRITE, PermissionLevel.EXECUTE},
+    "yolo": {
+        PermissionLevel.NONE,
+        PermissionLevel.READ_ONLY,
+        PermissionLevel.WRITE,
+        PermissionLevel.EXECUTE,
+        PermissionLevel.DANGEROUS,
+    },
 }
 
 
@@ -59,19 +62,14 @@ class PermissionHandler:
         # Need user approval
         if self._prompt_callback:
             try:
-                allowed = await self._prompt_callback(
-                    tool.name(), params, level.value
-                )
+                allowed = await self._prompt_callback(tool.name(), params, level.value)
                 return allowed
             except Exception as e:
                 logger.error(f"Permission prompt failed: {e}")
                 return False
 
         # No callback available — deny
-        logger.warning(
-            f"Tool '{tool.name()}' ({level.value}) denied — "
-            f"no approval callback in mode '{mode}'."
-        )
+        logger.warning(f"Tool '{tool.name()}' ({level.value}) denied — no approval callback in mode '{mode}'.")
         return False
 
     def approve_for_session(self, tool_name: str):

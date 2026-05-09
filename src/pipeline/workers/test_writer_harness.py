@@ -29,11 +29,12 @@ logger = logging.getLogger(__name__)
 #  Data classes
 # ═══════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class ConstructorParam:
     name: str
-    type: str           # e.g. "address", "uint256", "bool", "bytes32"
-    components: list     # for tuple types
+    type: str  # e.g. "address", "uint256", "bool", "bytes32"
+    components: list  # for tuple types
 
     @property
     def is_address(self) -> bool:
@@ -59,7 +60,7 @@ class ConstructorParam:
 @dataclass
 class ConstructorInfo:
     params: list[ConstructorParam]
-    source: str             # "abi_artifact" | "graph" | "regex" | "none"
+    source: str  # "abi_artifact" | "graph" | "regex" | "none"
     is_payable: bool = False
     is_abstract: bool = False
     raw_signature: str = ""
@@ -68,16 +69,17 @@ class ConstructorInfo:
 @dataclass
 class HarnessResult:
     """Output of the harness builder."""
-    harness_code: str           # Complete ExploitTest.t.sol with placeholder
-    exploit_prompt: str         # Focused prompt for LLM (exploit body only)
-    compiled: bool              # Whether the harness compiled successfully
-    compile_error: str          # Error message if compilation failed
+
+    harness_code: str  # Complete ExploitTest.t.sol with placeholder
+    exploit_prompt: str  # Focused prompt for LLM (exploit body only)
+    compiled: bool  # Whether the harness compiled successfully
+    compile_error: str  # Error message if compilation failed
     constructor_info: ConstructorInfo
-    target_import: str          # e.g. 'import "src/Vault.sol";'
-    deploy_statement: str       # e.g. 'target = new Vault(address(mock), 100);'
-    available_state: dict       # Variables the LLM can use in test_exploit()
-    mock_code: str              # Mock contracts defined at file level
-    is_legacy: bool             # Whether bridge mode (deployCode) is used
+    target_import: str  # e.g. 'import "src/Vault.sol";'
+    deploy_statement: str  # e.g. 'target = new Vault(address(mock), 100);'
+    available_state: dict  # Variables the LLM can use in test_exploit()
+    mock_code: str  # Mock contracts defined at file level
+    is_legacy: bool  # Whether bridge mode (deployCode) is used
 
     # Placeholder marker in harness_code
     PLACEHOLDER = "// __EXPLOIT_BODY_PLACEHOLDER__"
@@ -95,6 +97,7 @@ class HarnessResult:
 # ═══════════════════════════════════════════════════════════════════
 #  Harness Builder
 # ═══════════════════════════════════════════════════════════════════
+
 
 class HarnessBuilder:
     """
@@ -143,34 +146,25 @@ class HarnessBuilder:
         target_pragma = "^0.8.0" if is_legacy else (pragma or "^0.8.17")
 
         # Step 1: Extract constructor info
-        ctor = self._extract_constructor_info(
-            contract_name, collected_sources, deploy_path
-        )
+        ctor = self._extract_constructor_info(contract_name, collected_sources, deploy_path)
         logger.info(
             f"[Harness] Constructor for {contract_name}: "
             f"{len(ctor.params)} params, source={ctor.source}, "
             f"abstract={ctor.is_abstract}"
         )
-        print(f"  [Harness] Constructor: {ctor.raw_signature or '()'} "
-              f"[{ctor.source}] abstract={ctor.is_abstract}")
+        print(f"  [Harness] Constructor: {ctor.raw_signature or '()'} [{ctor.source}] abstract={ctor.is_abstract}")
 
         # Step 2: Determine target import path
-        target_import = self._resolve_target_import(
-            contract_name, collected_sources, is_legacy
-        )
+        target_import = self._resolve_target_import(contract_name, collected_sources, is_legacy)
 
         # Step 3: Generate mocks for constructor dependencies
         mock_code, mock_vars = self._generate_mocks(ctor, contract_name)
 
         # Step 4: Generate deployment statement
-        deploy_stmt = self._generate_deploy_statement(
-            contract_name, ctor, mock_vars, is_legacy, deploy_path
-        )
+        deploy_stmt = self._generate_deploy_statement(contract_name, ctor, mock_vars, is_legacy, deploy_path)
 
         # Step 5: Build available state variables
-        available_state = self._build_available_state(
-            contract_name, ctor, mock_vars, is_legacy
-        )
+        available_state = self._build_available_state(contract_name, ctor, mock_vars, is_legacy)
 
         # Step 6: Generate harness code
         harness_code = self._render_harness(
@@ -200,8 +194,7 @@ class HarnessBuilder:
             if not compiled:
                 print("  [Harness] Initial compilation failed, attempting auto-fix...")
                 harness_code, compiled, compile_error = self._auto_fix_harness(
-                    harness_code, compile_error, contract_name, ctor,
-                    collected_sources, is_legacy, deploy_path
+                    harness_code, compile_error, contract_name, ctor, collected_sources, is_legacy, deploy_path
                 )
 
         return HarnessResult(
@@ -248,15 +241,9 @@ class HarnessBuilder:
             if ctor:
                 return ctor
             # Check if abstract
-            is_abstract = bool(re.search(
-                rf'\babstract\s+contract\s+{re.escape(contract_name)}\b',
-                target_source
-            ))
+            is_abstract = bool(re.search(rf"\babstract\s+contract\s+{re.escape(contract_name)}\b", target_source))
             if is_abstract:
-                return ConstructorInfo(
-                    params=[], source="regex", is_abstract=True,
-                    raw_signature="abstract"
-                )
+                return ConstructorInfo(params=[], source="regex", is_abstract=True, raw_signature="abstract")
 
         # Default: zero-arg constructor
         return ConstructorInfo(params=[], source="none")
@@ -287,14 +274,13 @@ class HarnessBuilder:
                 is_abstract = not bytecode or bytecode == "0x"
 
                 # Find constructor in ABI
-                ctor_entry = next(
-                    (e for e in abi if e.get("type") == "constructor"), None
-                )
+                ctor_entry = next((e for e in abi if e.get("type") == "constructor"), None)
 
                 if ctor_entry is None:
                     # No explicit constructor = zero-arg
                     return ConstructorInfo(
-                        params=[], source="abi_artifact",
+                        params=[],
+                        source="abi_artifact",
                         is_abstract=is_abstract,
                         is_payable=False,
                         raw_signature="constructor()",
@@ -302,19 +288,19 @@ class HarnessBuilder:
 
                 params = []
                 for inp in ctor_entry.get("inputs", []):
-                    params.append(ConstructorParam(
-                        name=inp.get("name", f"_arg{len(params)}"),
-                        type=inp.get("type", "address"),
-                        components=inp.get("components", []),
-                    ))
+                    params.append(
+                        ConstructorParam(
+                            name=inp.get("name", f"_arg{len(params)}"),
+                            type=inp.get("type", "address"),
+                            components=inp.get("components", []),
+                        )
+                    )
 
                 payable = ctor_entry.get("stateMutability") == "payable"
                 types_str = ",".join(p.type for p in params)
                 raw_sig = f"constructor({types_str})"
 
-                logger.info(
-                    f"[Harness] ABI artifact found: {rel_path} → {raw_sig}"
-                )
+                logger.info(f"[Harness] ABI artifact found: {rel_path} → {raw_sig}")
                 return ConstructorInfo(
                     params=params,
                     source="abi_artifact",
@@ -346,10 +332,12 @@ class HarnessBuilder:
             return None
 
         # Parse "constructor(address,uint256)" → params
-        match = re.search(r'constructor\(([^)]*)\)', sig)
+        match = re.search(r"constructor\(([^)]*)\)", sig)
         if not match:
             return ConstructorInfo(
-                params=[], source="graph", is_payable=is_payable,
+                params=[],
+                source="graph",
+                is_payable=is_payable,
                 raw_signature=sig,
             )
 
@@ -363,7 +351,9 @@ class HarnessBuilder:
             params.append(ConstructorParam(name=name, type=t, components=[]))
 
         return ConstructorInfo(
-            params=params, source="graph", is_payable=is_payable,
+            params=params,
+            source="graph",
+            is_payable=is_payable,
             raw_signature=sig,
         )
 
@@ -371,7 +361,7 @@ class HarnessBuilder:
         """Extract constructor from source code via regex."""
         # Match constructor(type1 name1, type2 name2, ...)
         match = re.search(
-            r'constructor\s*\(([^)]*)\)',
+            r"constructor\s*\(([^)]*)\)",
             source,
         )
         if not match:
@@ -380,7 +370,8 @@ class HarnessBuilder:
         params_str = match.group(1).strip()
         if not params_str:
             return ConstructorInfo(
-                params=[], source="regex",
+                params=[],
+                source="regex",
                 raw_signature="constructor()",
             )
 
@@ -397,25 +388,20 @@ class HarnessBuilder:
                     pname = parts[2] if len(parts) > 2 else f"_arg{len(params)}"
                 else:
                     pname = parts[-1]
-                params.append(ConstructorParam(
-                    name=pname, type=ptype, components=[]
-                ))
+                params.append(ConstructorParam(name=pname, type=ptype, components=[]))
             elif len(parts) == 1:
-                params.append(ConstructorParam(
-                    name=f"_arg{len(params)}", type=parts[0], components=[]
-                ))
+                params.append(ConstructorParam(name=f"_arg{len(params)}", type=parts[0], components=[]))
 
         types_str = ",".join(p.type for p in params)
         return ConstructorInfo(
-            params=params, source="regex",
+            params=params,
+            source="regex",
             raw_signature=f"constructor({types_str})",
         )
 
     # ─── Mock Generation ─────────────────────────────────────────────
 
-    def _generate_mocks(
-        self, ctor: ConstructorInfo, contract_name: str
-    ) -> tuple[str, dict[str, str]]:
+    def _generate_mocks(self, ctor: ConstructorInfo, contract_name: str) -> tuple[str, dict[str, str]]:
         """
         Generate minimal mock contracts for constructor dependencies.
 
@@ -478,8 +464,7 @@ class HarnessBuilder:
             if data.get("type") != "contract":
                 continue
             node_lower = node_id.lower()
-            if (name_lower in node_lower or node_lower in name_lower) and \
-               data.get("is_interface", False):
+            if (name_lower in node_lower or node_lower in name_lower) and data.get("is_interface", False):
                 candidates.append(node_id)
 
         if not candidates:
@@ -517,27 +502,22 @@ class HarnessBuilder:
             if args:
                 return (
                     f'address targetAddr = deployCode("{deploy_path}", '
-                    f'abi.encode({args}));\n'
-                    f'        target = targetAddr;'
+                    f"abi.encode({args}));\n"
+                    f"        target = targetAddr;"
                 )
-            return (
-                f'address targetAddr = deployCode("{deploy_path}");\n'
-                f'        target = targetAddr;'
-            )
+            return f'address targetAddr = deployCode("{deploy_path}");\n        target = targetAddr;'
         else:
             if ctor.is_abstract:
                 return (
                     f"// {contract_name} is abstract — cannot deploy directly.\n"
                     f"        // TODO: deploy a concrete subclass or use deployCode\n"
-                    f"        revert(\"abstract contract\");"
+                    f'        revert("abstract contract");'
                 )
             if args:
                 return f"{contract_name} targetInstance = new {contract_name}({args});\n        target = address(targetInstance);"
             return f"{contract_name} targetInstance = new {contract_name}();\n        target = address(targetInstance);"
 
-    def _build_constructor_args(
-        self, ctor: ConstructorInfo, mock_vars: dict[str, str]
-    ) -> str:
+    def _build_constructor_args(self, ctor: ConstructorInfo, mock_vars: dict[str, str]) -> str:
         """Build comma-separated constructor arguments."""
         if not ctor.params:
             return ""
@@ -567,7 +547,7 @@ class HarnessBuilder:
                 parts.append('""')
             elif p.is_bytes:
                 if p.type == "bytes32":
-                    parts.append('bytes32(0)')
+                    parts.append("bytes32(0)")
                 else:
                     parts.append('""')
             else:
@@ -591,7 +571,7 @@ class HarnessBuilder:
         """Render the complete ExploitTest.t.sol."""
         imports = 'import "forge-std/Test.sol";'
         if target_import and not is_legacy:
-            imports += f'\n{target_import}'
+            imports += f"\n{target_import}"
 
         # Mock variable declarations
         mock_decl_lines = ""
@@ -751,11 +731,7 @@ RULES:
         test_file = test_dir / "ExploitTest.t.sol"
         test_file.write_text(harness_code, encoding="utf-8")
 
-        result = self.sandbox.run(
-            "forge build --no-cache"
-            " --ignored-error-codes 8429"
-            " --ignored-error-codes 2424"
-        )
+        result = self.sandbox.run("forge build --no-cache --ignored-error-codes 8429 --ignored-error-codes 2424")
 
         if result.success:
             print("  [Harness] ✓ Harness compiled successfully")
@@ -804,10 +780,7 @@ RULES:
                     f"address targetAddr = {new_deploy}",
                 )
                 # Fix: remove the ";target = address(targetInstance);" line
-                harness_code = harness_code.replace(
-                    "target = address(targetInstance);",
-                    "target = targetAddr;"
-                )
+                harness_code = harness_code.replace("target = address(targetInstance);", "target = targetAddr;")
             fixes_applied += 1
 
         # Fix 2: Wrong number of constructor args → try zero-arg
@@ -815,8 +788,8 @@ RULES:
             print("  [Harness] Auto-fix: trying zero-arg constructor")
             # Replace constructor call with zero args
             harness_code = re.sub(
-                rf'new {re.escape(contract_name)}\([^)]+\)',
-                f'new {contract_name}()',
+                rf"new {re.escape(contract_name)}\([^)]+\)",
+                f"new {contract_name}()",
                 harness_code,
             )
             fixes_applied += 1
@@ -826,7 +799,7 @@ RULES:
             print("  [Harness] Auto-fix: abstract contract, switching to deployCode")
             dp = deploy_path or f"src/{contract_name}.sol:{contract_name}"
             harness_code = re.sub(
-                rf'new {re.escape(contract_name)}\([^)]*\)',
+                rf"new {re.escape(contract_name)}\([^)]*\)",
                 f'deployCode("{dp}")',
                 harness_code,
             )
@@ -842,7 +815,9 @@ RULES:
     # ─── Helpers ─────────────────────────────────────────────────────
 
     def _resolve_target_import(
-        self, contract_name: str, collected_sources: dict[str, str],
+        self,
+        contract_name: str,
+        collected_sources: dict[str, str],
         is_legacy: bool,
     ) -> str:
         """Determine the import statement for the target contract."""
@@ -854,12 +829,10 @@ RULES:
             return f'import "{path}";'
         return ""
 
-    def _find_target_source(
-        self, contract_name: str, collected_sources: dict[str, str]
-    ) -> str | None:
+    def _find_target_source(self, contract_name: str, collected_sources: dict[str, str]) -> str | None:
         """Find the source code of the target contract."""
         regex = re.compile(
-            rf'^(?:abstract\s+)?contract\s+{re.escape(contract_name)}[\s({{]',
+            rf"^(?:abstract\s+)?contract\s+{re.escape(contract_name)}[\s({{]",
             re.MULTILINE,
         )
         for path, code in collected_sources.items():
@@ -869,7 +842,7 @@ RULES:
 
     def _extract_param_names(self, source_code: str, count: int) -> list[str]:
         """Extract parameter names from constructor source code."""
-        match = re.search(r'constructor\s*\(([^)]*)\)', source_code)
+        match = re.search(r"constructor\s*\(([^)]*)\)", source_code)
         if not match:
             return []
         params_str = match.group(1)
@@ -884,8 +857,11 @@ RULES:
         return names
 
     def _build_available_state(
-        self, contract_name: str, ctor: ConstructorInfo,
-        mock_vars: dict[str, str], is_legacy: bool,
+        self,
+        contract_name: str,
+        ctor: ConstructorInfo,
+        mock_vars: dict[str, str],
+        is_legacy: bool,
     ) -> dict:
         """Build the available state dict for the LLM prompt."""
         variables = {

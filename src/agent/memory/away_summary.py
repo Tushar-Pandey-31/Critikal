@@ -44,9 +44,7 @@ async def generate_away_summary(engagement_id: str, memory_dir: Path | None = No
     if entries:
         # Last 10 entries as recent history
         recent = entries[-10:]
-        recent_text = "\n".join(
-            f"- [{e.type}] {e.description}" for e in recent
-        )
+        recent_text = "\n".join(f"- [{e.type}] {e.description}" for e in recent)
         context_parts.append(f"RECENT MEMORIES ({len(entries)} total):\n{recent_text}")
 
     context = "\n\n".join(context_parts)
@@ -54,10 +52,12 @@ async def generate_away_summary(engagement_id: str, memory_dir: Path | None = No
     # Generate summary via LLM
     try:
         from src.llm.providers import get_worker_llm
+
         model = os.getenv("MEMORY_EXTRACT_MODEL", "gpt-5.4-mini")
         llm = get_worker_llm(model_name=model, temperature=0.0)
 
         from langchain_core.messages import HumanMessage
+
         prompt = f"""\
 You are resuming a security research engagement. Based on the following
 context from previous sessions, write a brief catch-up summary (2-5 sentences)

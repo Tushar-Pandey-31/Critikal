@@ -82,10 +82,12 @@ def _load_security_docs() -> list[Document]:
     for filepath in DOCS_DIR.iterdir():
         if filepath.name in security_filenames:
             content = filepath.read_text(encoding="utf-8", errors="replace")
-            docs.append(Document(
-                page_content=content,
-                metadata={"source": str(filepath), "type": "security_doc"},
-            ))
+            docs.append(
+                Document(
+                    page_content=content,
+                    metadata={"source": str(filepath), "type": "security_doc"},
+                )
+            )
 
     return docs
 

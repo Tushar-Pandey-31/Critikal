@@ -26,6 +26,7 @@ import warnings
 # same environment without each entry point remembering to call it.
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass
@@ -50,7 +51,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run in headless mode with optional custom prompt",
     )
     parser.add_argument(
-        "--interactive", "-i",
+        "--interactive",
+        "-i",
         action="store_true",
         help="Force interactive TUI mode",
     )
@@ -120,7 +122,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Verbose logging",
     )
@@ -177,6 +180,7 @@ def main():
         if args.auto_ingest:
             sys.argv.append("--auto-ingest")
         from src.main import main as legacy_main
+
         legacy_main()
         return
 
@@ -229,6 +233,7 @@ def _run_tui(args):
     # Python logging writes to stderr by default, which corrupts the
     # Textual terminal. Redirect everything to a log file.
     import pathlib
+
     log_dir = pathlib.Path(os.path.expanduser("~/.critikal/logs"))
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "tui_session.log"
@@ -240,9 +245,7 @@ def _run_tui(args):
 
     # Add file handler only
     file_handler = logging.FileHandler(str(log_file), mode="a")
-    file_handler.setFormatter(
-        logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
-    )
+    file_handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s", datefmt="%H:%M:%S"))
     root_logger.addHandler(file_handler)
     root_logger.setLevel(logging.DEBUG if args.verbose else logging.INFO)
 
@@ -266,6 +269,7 @@ def _run_dream(args):
     if not engagement_id:
         # List available engagements
         from src.agent.memory.session_memory import MEMORY_BASE_DIR
+
         if MEMORY_BASE_DIR.exists():
             engagements = [d.name for d in MEMORY_BASE_DIR.iterdir() if d.is_dir()]
             if engagements:
@@ -284,6 +288,7 @@ def _run_dream(args):
 
     print(f"Running memory consolidation for engagement: {engagement_id}")
     from src.agent.memory.auto_dream import run_dream
+
     result = asyncio.run(run_dream(engagement_id))
     if result:
         print("✓ Consolidation complete")
@@ -294,6 +299,7 @@ def _run_dream(args):
 def _list_schedules():
     """List all scheduled tasks."""
     from src.agent.scheduler import CronScheduler
+
     scheduler = CronScheduler()
     print(scheduler.format_schedule_table())
 
@@ -301,6 +307,7 @@ def _list_schedules():
 def _remove_schedule(task_id: str):
     """Remove a scheduled task."""
     from src.agent.scheduler import CronScheduler
+
     scheduler = CronScheduler()
     if scheduler.remove_task(task_id):
         print(f"✓ Removed task {task_id}")

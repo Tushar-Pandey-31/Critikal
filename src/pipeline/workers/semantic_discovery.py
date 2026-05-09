@@ -190,17 +190,13 @@ class InvariantHunterWorker(WorkerAgent):
             )
             content = response.content if hasattr(response, "content") else str(response)
             if isinstance(content, list):
-                content = "".join(
-                    c.get("text", "") if isinstance(c, dict) else str(c) for c in content
-                )
+                content = "".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in content)
 
             # Track tokens
             try:
                 from src.utils.token_counter import get_token_counter
-                input_text = "\n".join(
-                    m.get("content", "") if isinstance(m, dict) else str(m)
-                    for m in messages
-                )
+
+                input_text = "\n".join(m.get("content", "") if isinstance(m, dict) else str(m) for m in messages)
                 get_token_counter().record(
                     "InvariantHunter",
                     self.model_name,
@@ -312,10 +308,22 @@ Analyze the above contracts. Derive invariants, check them, and report violation
 
 # ── Orchestrator ─────────────────────────────────────────────────
 
+
 def _collect_sol_files(repo_path: str, max_files: int = 50) -> list[str]:
     """Collect .sol files from a repo, excluding tests/mocks/libs."""
-    exclude_dirs = {"test", "tests", "mock", "mocks", "lib", "node_modules",
-                    "script", "scripts", "echidna", "fuzz", "fuzzing"}
+    exclude_dirs = {
+        "test",
+        "tests",
+        "mock",
+        "mocks",
+        "lib",
+        "node_modules",
+        "script",
+        "scripts",
+        "echidna",
+        "fuzz",
+        "fuzzing",
+    }
 
     sol_files = glob.glob(os.path.join(repo_path, "**", "*.sol"), recursive=True)
     filtered = []
@@ -418,11 +426,15 @@ async def run_semantic_discovery(
         all_tasks = [t for t in all_tasks if t[0] in selected]
 
     tasks = [
-        (display_name, worker, WorkerTask(
-            task_id=task_id,
-            task_type="semantic_discovery",
-            context=context,
-        ))
+        (
+            display_name,
+            worker,
+            WorkerTask(
+                task_id=task_id,
+                task_type="semantic_discovery",
+                context=context,
+            ),
+        )
         for _, display_name, worker, task_id in all_tasks
     ]
 

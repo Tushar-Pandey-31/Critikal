@@ -26,13 +26,13 @@ KEEP_TAIL = 50_000
 
 # Commands that are always blocked
 BLOCKED_PATTERNS = [
-    r"rm\s+-rf\s+/\s*$",           # rm -rf /
-    r"rm\s+-rf\s+/\*",             # rm -rf /*
-    r":\(\)\s*\{\s*:\|:\s*&\s*\}", # fork bomb
-    r"dd\s+if=.*of=/dev/sd",       # dd to raw device
-    r"mkfs\.",                      # format filesystem
-    r">\s*/dev/sd",                 # redirect to raw device
-    r"chmod\s+-R\s+777\s+/\s*$",   # chmod 777 /
+    r"rm\s+-rf\s+/\s*$",  # rm -rf /
+    r"rm\s+-rf\s+/\*",  # rm -rf /*
+    r":\(\)\s*\{\s*:\|:\s*&\s*\}",  # fork bomb
+    r"dd\s+if=.*of=/dev/sd",  # dd to raw device
+    r"mkfs\.",  # format filesystem
+    r">\s*/dev/sd",  # redirect to raw device
+    r"chmod\s+-R\s+777\s+/\s*$",  # chmod 777 /
 ]
 
 DEFAULT_TIMEOUT = 120  # seconds
@@ -51,7 +51,6 @@ def classify_command(command: str) -> str | None:
 
 
 class BashTool(Tool):
-
     def name(self) -> str:
         return "bash"
 
@@ -107,11 +106,7 @@ class BashTool(Tool):
             params = params["input"]  # Unwrap nested input
 
         command = (
-            params.get("command")
-            or params.get("cmd")
-            or params.get("shell_command")
-            or params.get("script")
-            or ""
+            params.get("command") or params.get("cmd") or params.get("shell_command") or params.get("script") or ""
         )
         if isinstance(command, dict):
             command = command.get("command", command.get("cmd", ""))
@@ -120,8 +115,7 @@ class BashTool(Tool):
         if not command:
             available_keys = list(params.keys())
             return ToolResult.error(
-                f"Missing 'command' parameter. Got keys: {available_keys}. "
-                f"Send {{'command': '<shell command>'}}"
+                f"Missing 'command' parameter. Got keys: {available_keys}. Send {{'command': '<shell command>'}}"
             )
 
         # Security check
@@ -135,6 +129,7 @@ class BashTool(Tool):
 
         # Wrap with OS-level sandbox (bwrap on Linux, sandbox-exec on macOS)
         from src.agent.sandbox import SandboxManager, SandboxOptions
+
         cwd_str = str(ctx.shell_cwd or ctx.working_dir)
         sandbox_opts = SandboxOptions(
             allow_network=True,
@@ -151,9 +146,7 @@ class BashTool(Tool):
 
         # Build sentinel-wrapped script to capture final cwd + env
         sentinel = f"__CRITIKAL_SENTINEL_{uuid.uuid4().hex[:8]}__"
-        wrapped = (
-            f"cd {shlex.quote(cwd)} 2>/dev/null\n"
-        )
+        wrapped = f"cd {shlex.quote(cwd)} 2>/dev/null\n"
         # Restore persisted env vars
         for k, v in ctx.shell_env.items():
             wrapped += f"export {k}={shlex.quote(v)}\n"
@@ -173,19 +166,17 @@ class BashTool(Tool):
 
         return await self._run_foreground(wrapped, timeout, sentinel, ctx)
 
-    async def _run_foreground(
-        self, script: str, timeout: int, sentinel: str, ctx: ToolContext
-    ) -> ToolResult:
+    async def _run_foreground(self, script: str, timeout: int, sentinel: str, ctx: ToolContext) -> ToolResult:
         try:
             proc = await asyncio.create_subprocess_exec(
-                "bash", "-c", script,
+                "bash",
+                "-c",
+                script,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 env={**os.environ, **ctx.shell_env},
             )
-            raw_out, _ = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
+            raw_out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except TimeoutError:
             try:
                 proc.kill()
@@ -243,15 +234,15 @@ class BashTool(Tool):
             exit_code=exit_code,
         )
 
-    async def _run_background(
-        self, script: str, timeout: int, ctx: ToolContext
-    ) -> ToolResult:
+    async def _run_background(self, script: str, timeout: int, ctx: ToolContext) -> ToolResult:
         task_id = f"bg_{uuid.uuid4().hex[:8]}"
 
         async def _bg_task():
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    "bash", "-c", script,
+                    "bash",
+                    "-c",
+                    script,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                     env={**os.environ, **ctx.shell_env},
@@ -286,8 +277,16 @@ class BashTool(Tool):
                 key, _, value = entry.partition("=")
                 key = key.strip()
                 # Only track user-set vars, skip system noise
-                if key and not key.startswith("_") and key not in (
-                    "SHLVL", "OLDPWD", "PWD", "HOSTNAME",
+                if (
+                    key
+                    and not key.startswith("_")
+                    and key
+                    not in (
+                        "SHLVL",
+                        "OLDPWD",
+                        "PWD",
+                        "HOSTNAME",
+                    )
                 ):
                     ctx.shell_env[key] = value
 

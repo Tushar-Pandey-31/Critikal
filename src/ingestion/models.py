@@ -13,46 +13,53 @@ from enum import Enum
 #  Repo Size Classification
 # ════════════════════════════════════════════════════════════
 
+
 class RepoSizeClass(Enum):
-    SMALL = "small"       # <50 .sol files
-    MEDIUM = "medium"     # 50–300
-    LARGE = "large"       # 300–1000
-    MASSIVE = "massive"   # >1000
+    SMALL = "small"  # <50 .sol files
+    MEDIUM = "medium"  # 50–300
+    LARGE = "large"  # 300–1000
+    MASSIVE = "massive"  # >1000
 
 
 # ════════════════════════════════════════════════════════════
 #  Strategy Resolver Models
 # ════════════════════════════════════════════════════════════
 
+
 @dataclass
 class ContractRoot:
     """A directory containing Solidity source files suitable for compilation."""
-    path: str                          # Absolute path
+
+    path: str  # Absolute path
     sol_count: int
-    depth: int                         # Relative to repo root
+    depth: int  # Relative to repo root
     framework_hint: str | None = None  # "foundry" | "hardhat" | "brownie" | None
-    score: float = 0.0                 # Computed priority score
+    score: float = 0.0  # Computed priority score
 
 
 # ════════════════════════════════════════════════════════════
 #  Framework Detection Models
 # ════════════════════════════════════════════════════════════
 
+
 @dataclass
 class FrameworkInstance:
     """A framework detected at a specific directory."""
-    framework: str   # "foundry" | "hardhat" | "brownie"
-    path: str        # Absolute path to the directory
-    config_file: str # The config file that triggered detection
+
+    framework: str  # "foundry" | "hardhat" | "brownie"
+    path: str  # Absolute path to the directory
+    config_file: str  # The config file that triggered detection
 
 
 # ════════════════════════════════════════════════════════════
 #  Import Resolver Models
 # ════════════════════════════════════════════════════════════
 
+
 @dataclass
 class ImportValidation:
     """Results of pre-Slither import graph validation."""
+
     valid: bool
     missing_files: list[str] = field(default_factory=list)
     circular_imports: list[list[str]] = field(default_factory=list)
@@ -64,6 +71,7 @@ class ImportValidation:
 #  Compilation Cluster Models
 # ════════════════════════════════════════════════════════════
 
+
 @dataclass
 class CompilationCluster:
     """
@@ -74,28 +82,31 @@ class CompilationCluster:
       - Shared base directories
       - Compatible pragma versions
     """
+
     cluster_id: str
-    root_path: str                               # Compilation root directory
+    root_path: str  # Compilation root directory
     sol_files: list[str] = field(default_factory=list)
     pragma_versions: set[str] = field(default_factory=set)
     import_graph: dict[str, list[str]] = field(default_factory=dict)
-    framework: str | None = None              # "foundry" | "hardhat" | "brownie" | None
-    solc_version: str | None = None           # Resolved target version
+    framework: str | None = None  # "foundry" | "hardhat" | "brownie" | None
+    solc_version: str | None = None  # Resolved target version
 
 
 # ════════════════════════════════════════════════════════════
 #  Compilation Result Models
 # ════════════════════════════════════════════════════════════
 
+
 @dataclass
 class ClusterResult:
     """Result of compiling a single cluster."""
+
     cluster_id: str
     success: bool
-    slither_obj: object = None   # Slither | None (avoid import cycle)
+    slither_obj: object = None  # Slither | None (avoid import cycle)
     contracts_parsed: int = 0
     error: str | None = None
-    fallback_level: int = 0      # 0=direct, 1=subdir, 2=SCC, 3=per-file
+    fallback_level: int = 0  # 0=direct, 1=subdir, 2=SCC, 3=per-file
 
 
 @dataclass
@@ -106,6 +117,7 @@ class IngestionReport:
     Returned alongside the combined Slither object so callers
     always get diagnostics even on partial success.
     """
+
     repo_type: str = "unknown"
     frameworks_detected: list[str] = field(default_factory=list)
     total_sol_files: int = 0

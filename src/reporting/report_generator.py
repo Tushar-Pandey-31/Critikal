@@ -30,8 +30,11 @@ class ReportGenerator:
         html_path = self.output_dir / "report.html"
         html_path.write_text(
             render_html_report(
-                self.repo_url, self.repo_name,
-                self.findings, self.leads, poc_files,
+                self.repo_url,
+                self.repo_name,
+                self.findings,
+                self.leads,
+                poc_files,
                 token_usage=self.token_usage,
             ),
             encoding="utf-8",
@@ -40,8 +43,10 @@ class ReportGenerator:
         md_path = self.output_dir / "report.md"
         md_path.write_text(
             render_markdown_report(
-                self.repo_url, self.repo_name,
-                self.findings, self.leads,
+                self.repo_url,
+                self.repo_name,
+                self.findings,
+                self.leads,
                 token_usage=self.token_usage,
                 jury_rejected=self.jury_rejected,
             ),
@@ -83,8 +88,9 @@ class ReportGenerator:
             # Fallback: broader match on contract+function name
             if not test_code:
                 for lead in self.leads:
-                    if (finding.affected_contract == lead.get("affected_contract")
-                            and finding.affected_function == lead.get("affected_function")):
+                    if finding.affected_contract == lead.get(
+                        "affected_contract"
+                    ) and finding.affected_function == lead.get("affected_function"):
                         test_code = lead.get("test_code")
                         exploit_success = bool(lead.get("exploit_success"))
                         break
@@ -97,21 +103,22 @@ class ReportGenerator:
                 exploit_success = True
 
             safe_name = (
-                f"ExploitTest_{finding.affected_contract}_{finding.affected_function}"
-                .replace("::", "_")
+                f"ExploitTest_{finding.affected_contract}_{finding.affected_function}".replace("::", "_")
                 .replace("/", "_")
                 .replace(" ", "_")
             )
             filename = f"{safe_name}.t.sol"
             filepath = exploits_dir / filename
             filepath.write_text(test_code, encoding="utf-8")
-            poc_files.append({
-                "filename": filename,
-                "path": str(filepath),
-                "proven": exploit_success,
-                "contract": finding.affected_contract,
-                "function": finding.affected_function,
-                "test_code": test_code,
-            })
+            poc_files.append(
+                {
+                    "filename": filename,
+                    "path": str(filepath),
+                    "proven": exploit_success,
+                    "contract": finding.affected_contract,
+                    "function": finding.affected_function,
+                    "test_code": test_code,
+                }
+            )
 
         return poc_files

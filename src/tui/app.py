@@ -42,6 +42,7 @@ from src.agent.tools import get_all_tools
 from src.tui.widgets.conversation_widget import ConversationWidget
 from src.tui.widgets.cost_bar import CostBar
 from src.tui.widgets.findings_widget import FindingsWidget
+from src.tui.widgets.model_picker import ModelPickerScreen
 from src.tui.widgets.prompt_input import PromptInput
 from src.tui.widgets.worker_widget import WorkerWidget
 
@@ -55,7 +56,7 @@ SLASH_COMMANDS = {
     "findings": "Toggle findings panel",
     "workers": "Toggle worker status panel",
     "status": "Show session status",
-    "model": "Switch model (e.g., /model grok-4-3 or /model gpt-5.5)",
+    "model": "Open model picker (or /model <name> for quick switch)",
     "export": "Export findings to file",
     "dream": "Run memory consolidation now",
     "quit": "Exit Critikal",
@@ -79,6 +80,7 @@ class CritikalApp(App):
         Binding("ctrl+q", "quit", "Quit", show=True),
         Binding("ctrl+f", "toggle_findings", "Findings", show=True),
         Binding("ctrl+w", "toggle_workers", "Workers", show=True),
+        Binding("ctrl+m", "open_model_picker", "Models", show=True),
     ]
 
     def __init__(
@@ -177,9 +179,7 @@ class CritikalApp(App):
         )
 
         # Start event consumer
-        self._event_consumer_task = asyncio.create_task(
-            self._consume_events()
-        )
+        self._event_consumer_task = asyncio.create_task(self._consume_events())
 
         # Update cost bar
         cost_bar = self.query_one("#cost-bar", CostBar)
@@ -409,12 +409,21 @@ class CritikalApp(App):
                 self.model = args.strip()
                 if self._loop:
                     self._loop.model = self.model
-                    self._loop._llm = None  # Force re-init
+                    self._loop._llm_cache.clear()  # Force re-init
+                    self._loop._current_model = self.model
                 conv.add_system_message(f"Model switched to: {self.model}")
                 cost_bar = self.query_one("#cost-bar", CostBar)
                 cost_bar.update_model(self.model)
+                # Update prompt hint
+                hint = self.query_one("#prompt-hint", Static)
+                hint.update(
+                    Text(
+                        f"  {self.model} · {self.engagement_id}",
+                        style="italic #5a5a5a",
+                    )
+                )
             else:
-                conv.add_system_message(f"Current model: {self.model}")
+                self._open_model_picker()
 
         elif cmd == "compact":
             if self._loop:
@@ -441,6 +450,7 @@ class CritikalApp(App):
             if self._ctx and self._ctx.findings:
                 export_path = Path(f"critikal_findings_{self.engagement_id}.json")
                 import json
+
                 with open(export_path, "w") as f:
                     findings_data = []
                     for finding in self._ctx.findings:
@@ -499,6 +509,47 @@ class CritikalApp(App):
         """Toggle the right panel (findings + workers)."""
         panel = self.query_one("#right-panel")
         panel.display = not panel.display
+
+    def action_open_model_picker(self):
+        """Open the model configuration picker (Ctrl+M)."""
+        self._open_model_picker()
+
+    def _open_model_picker(self):
+        """Push the ModelPickerScreen and handle dismiss."""
+        self.push_screen(ModelPickerScreen(), callback=self._on_model_picker_dismiss)
+
+    def _on_model_picker_dismiss(self, changes: dict[str, str] | None) -> None:
+        """Handle model picker results — apply changes and update UI."""
+        conv = self.query_one("#conversation", ConversationWidget)
+        if not changes:
+            conv.add_system_message("Model picker closed — no changes.")
+            return
+
+        # Apply changes and report
+        for role, model_id in changes.items():
+            conv.add_system_message(f"  ✓ {role} → {model_id}")
+
+        # If main agent model changed, update the loop
+        if "Main Agent" in changes:
+            new_model = changes["Main Agent"]
+            self.model = new_model
+            if self._loop:
+                self._loop.model = new_model
+                self._loop._current_model = new_model
+                self._loop._llm_cache.clear()  # Force re-init on next call
+
+            # Update status bar and prompt hint
+            cost_bar = self.query_one("#cost-bar", CostBar)
+            cost_bar.update_model(new_model)
+            hint = self.query_one("#prompt-hint", Static)
+            hint.update(
+                Text(
+                    f"  {new_model} · {self.engagement_id}",
+                    style="italic #5a5a5a",
+                )
+            )
+
+        conv.add_system_message(f"Applied {len(changes)} model change{'s' if len(changes) != 1 else ''}.")
 
     async def on_unmount(self):
         """Cleanup on exit."""

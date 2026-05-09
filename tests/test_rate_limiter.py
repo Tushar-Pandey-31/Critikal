@@ -16,6 +16,7 @@ class TestAPIKeyPool(unittest.TestCase):
     def setUp(self):
         # Reset the singleton between tests
         from src.utils.key_pool import APIKeyPool
+
         APIKeyPool._instance = None
         # The pool merges the singular fallback env var into the front of the
         # pool unconditionally, so clear it for tests that exercise pool-only
@@ -24,6 +25,7 @@ class TestAPIKeyPool(unittest.TestCase):
 
     def tearDown(self):
         from src.utils.key_pool import APIKeyPool
+
         APIKeyPool._instance = None
         if self._saved_single_key is not None:
             os.environ["GOOGLE_API_KEY"] = self._saved_single_key
@@ -31,6 +33,7 @@ class TestAPIKeyPool(unittest.TestCase):
     @patch.dict(os.environ, {"GOOGLE_API_KEYS": "key_aaa,key_bbb,key_ccc"}, clear=False)
     def test_round_robin_rotation(self):
         from src.utils.key_pool import get_key_pool
+
         pool = get_key_pool()
 
         k1 = pool.get_key("gemini")
@@ -46,6 +49,7 @@ class TestAPIKeyPool(unittest.TestCase):
     @patch.dict(os.environ, {"GOOGLE_API_KEYS": "key_aaa,key_bbb,key_ccc"}, clear=False)
     def test_cooldown_skips_key(self):
         from src.utils.key_pool import get_key_pool
+
         pool = get_key_pool()
 
         # Get first key, then cool it down
@@ -68,6 +72,7 @@ class TestAPIKeyPool(unittest.TestCase):
     @patch.dict(os.environ, {"GOOGLE_API_KEY": "single_key_123"}, clear=False)
     def test_fallback_to_single_key(self):
         from src.utils.key_pool import get_key_pool
+
         # Ensure pool env var is NOT set
         os.environ.pop("GOOGLE_API_KEYS", None)
         pool = get_key_pool()
@@ -78,6 +83,7 @@ class TestAPIKeyPool(unittest.TestCase):
     @patch.dict(os.environ, {"GOOGLE_API_KEYS": "key_aaa"}, clear=False)
     def test_pool_status(self):
         from src.utils.key_pool import get_key_pool
+
         pool = get_key_pool()
 
         pool.get_key("gemini")
@@ -90,6 +96,7 @@ class TestAPIKeyPool(unittest.TestCase):
     @patch.dict(os.environ, {}, clear=False)
     def test_no_keys_raises(self):
         from src.utils.key_pool import get_key_pool
+
         os.environ.pop("GOOGLE_API_KEYS", None)
         os.environ.pop("GOOGLE_API_KEY", None)
         pool = get_key_pool()
@@ -106,10 +113,12 @@ class TestGlobalRateLimiter(unittest.TestCase):
 
     def setUp(self):
         from src.utils.rate_limiter import GlobalRateLimiter
+
         GlobalRateLimiter._instance = None
 
     def tearDown(self):
         from src.utils.rate_limiter import GlobalRateLimiter
+
         GlobalRateLimiter._instance = None
 
     @patch.dict(os.environ, {"RATE_LIMIT_RPM_OVERRIDE": "5"}, clear=False)
@@ -117,6 +126,7 @@ class TestGlobalRateLimiter(unittest.TestCase):
         """Verify that acquire_sync hits the wait branch when RPM limit is reached."""
         from src.utils import rate_limiter as rl_mod
         from src.utils.rate_limiter import get_rate_limiter
+
         limiter = get_rate_limiter()
 
         # Fire 5 requests (the limit) — should be instant
@@ -138,6 +148,7 @@ class TestGlobalRateLimiter(unittest.TestCase):
         """Verify that async acquire hits the wait branch when RPM limit is reached."""
         from src.utils import rate_limiter as rl_mod
         from src.utils.rate_limiter import get_rate_limiter
+
         limiter = get_rate_limiter()
 
         slept = []
@@ -158,6 +169,7 @@ class TestGlobalRateLimiter(unittest.TestCase):
     def test_resolve_limits_gemini_flash(self):
         """Verify model limit resolution for known models."""
         from src.utils.rate_limiter import _resolve_limits
+
         with patch.dict(os.environ, {"RATE_LIMIT_TIER": "free"}, clear=False):
             # Clear the override if set
             os.environ.pop("RATE_LIMIT_RPM_OVERRIDE", None)
@@ -168,6 +180,7 @@ class TestGlobalRateLimiter(unittest.TestCase):
     def test_resolve_limits_unknown_model(self):
         """Unknown models should get fallback limits."""
         from src.utils.rate_limiter import _resolve_limits
+
         os.environ.pop("RATE_LIMIT_RPM_OVERRIDE", None)
         limits = _resolve_limits("some-unknown-model-xyz")
         self.assertEqual(limits["rpm"], 10)  # fallback
@@ -175,6 +188,7 @@ class TestGlobalRateLimiter(unittest.TestCase):
     def test_status(self):
         """Verify get_status returns correct data."""
         from src.utils.rate_limiter import get_rate_limiter
+
         os.environ.pop("RATE_LIMIT_RPM_OVERRIDE", None)
         limiter = get_rate_limiter()
         limiter.acquire_sync("gemini-3-flash-preview", "testkey")
@@ -192,6 +206,7 @@ class TestRateLimitedLLM(unittest.TestCase):
     def setUp(self):
         from src.utils.key_pool import APIKeyPool
         from src.utils.rate_limiter import GlobalRateLimiter
+
         GlobalRateLimiter._instance = None
         APIKeyPool._instance = None
         # CI sets GOOGLE_API_KEY=test-key; the pool merges it as the priority
@@ -201,6 +216,7 @@ class TestRateLimitedLLM(unittest.TestCase):
     def tearDown(self):
         from src.utils.key_pool import APIKeyPool
         from src.utils.rate_limiter import GlobalRateLimiter
+
         GlobalRateLimiter._instance = None
         APIKeyPool._instance = None
         if self._saved_single_key is not None:
@@ -247,10 +263,14 @@ class TestRateLimitedLLM(unittest.TestCase):
         result = asyncio.run(wrapper.ainvoke("test prompt"))
         self.assertEqual(result, "async_response")
 
-    @patch.dict(os.environ, {
-        "RATE_LIMIT_RPM_OVERRIDE": "100",
-        "GOOGLE_API_KEYS": "key_111,key_222",
-    }, clear=False)
+    @patch.dict(
+        os.environ,
+        {
+            "RATE_LIMIT_RPM_OVERRIDE": "100",
+            "GOOGLE_API_KEYS": "key_111,key_222",
+        },
+        clear=False,
+    )
     def test_429_triggers_key_rotation(self):
         """Verify that a 429 error triggers key cooldown and retry."""
         from src.utils.key_pool import get_key_pool

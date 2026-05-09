@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 
 class DepthAnalysisTool(Tool):
-
     def name(self) -> str:
         return "run_depth_analysis"
 
@@ -75,7 +74,8 @@ class DepthAnalysisTool(Tool):
             target = [ctx.findings[i] for i in indices if i < len(ctx.findings)]
         else:
             target = [
-                f for f in ctx.findings
+                f
+                for f in ctx.findings
                 if getattr(f, "jury_decision", None) in ("CONTESTED", "PARTIAL", None)
                 and getattr(f, "gate_verdict", None) != "GATE_REFUTED"
             ]
@@ -107,7 +107,8 @@ class DepthAnalysisTool(Tool):
                     )
                     if result and result.refined_confidence > getattr(finding, "confidence", 0):
                         finding.contribute_score(
-                            "depth_worker", 10,
+                            "depth_worker",
+                            10,
                             f"Depth {worker_type}: confidence raised to {result.refined_confidence}",
                         )
                         improved += 1
@@ -120,9 +121,7 @@ class DepthAnalysisTool(Tool):
         await asyncio.gather(*[_depth(f) for f in target])
 
         return ToolResult.success(
-            f"Depth analysis complete.\n"
-            f"Analyzed: {len(target)}\n"
-            f"Confidence improved: {improved}",
+            f"Depth analysis complete.\nAnalyzed: {len(target)}\nConfidence improved: {improved}",
             analyzed=len(target),
             improved=improved,
         )

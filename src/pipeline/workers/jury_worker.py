@@ -14,11 +14,12 @@ logger = logging.getLogger(__name__)
 # Runs BEFORE the full jury debate. Uses a cheap/fast model to apply
 # 4 sequential gates. Fail any gate → immediate verdict, no jury call = saves 3 LLM invocations.
 
+
 @dataclass
 class GateResult:
-    verdict: str      # PASS | GATE_REFUTED | GATE_DEMOTED
-    gate: int         # 1-4: which gate triggered the verdict (0 = all passed)
-    quote: str        # exact code line that triggered verdict (or "" if PASS)
+    verdict: str  # PASS | GATE_REFUTED | GATE_DEMOTED
+    gate: int  # 1-4: which gate triggered the verdict (0 = all passed)
+    quote: str  # exact code line that triggered verdict (or "" if PASS)
 
 
 _GATE_SYSTEM_PROMPT = """\
@@ -102,6 +103,7 @@ async def gate_evaluate(finding: Any, source_code: str, llm_client: Any) -> Gate
     kill_signal_text = ""
     try:
         from src.pipeline.workers.kill_signals import check_kill_signals
+
         kill_results = check_kill_signals(
             vulnerability_class=finding.vulnerability_class or "",
             source_code=source_code or "",
@@ -143,20 +145,18 @@ Apply the 4-gate protocol. Return JSON only."""
         )
         content = response.content if hasattr(response, "content") else str(response)
         if isinstance(content, list):
-            content = "".join(
-                c.get("text", "") if isinstance(c, dict) else str(c) for c in content
-            )
+            content = "".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in content)
 
         # Token tracking (non-fatal)
         try:
             from src.utils.token_counter import get_token_counter
-            input_text = "\n".join(
-                m.get("content", "") if isinstance(m, dict) else str(m)
-                for m in messages
-            )
+
+            input_text = "\n".join(m.get("content", "") if isinstance(m, dict) else str(m) for m in messages)
             get_token_counter().record(
-                "GateEvaluate", _GATE_MODEL,
-                input_text, str(content),
+                "GateEvaluate",
+                _GATE_MODEL,
+                input_text,
+                str(content),
                 getattr(response, "response_metadata", None),
             )
         except Exception:
@@ -182,12 +182,13 @@ Apply the 4-gate protocol. Return JSON only."""
         logger.warning(f"[Gate] Timeout evaluating {getattr(finding, 'hotspot_node_id', '?')} — failing open (PASS)")
         return GateResult(verdict="PASS", gate=0, quote="timeout")
     except Exception as e:
-        logger.warning(f"[Gate] Error evaluating {getattr(finding, 'hotspot_node_id', '?')}: {str(e)[:100]} — failing open")
+        logger.warning(
+            f"[Gate] Error evaluating {getattr(finding, 'hotspot_node_id', '?')}: {str(e)[:100]} — failing open"
+        )
         return GateResult(verdict="PASS", gate=0, quote=f"error: {str(e)[:50]}")
 
 
 # ── Verdict types ────────────────────────────────────────────────────
-
 
 
 JuryVerdict = Literal["CONFIRM", "REJECT", "UNCERTAIN"]
@@ -405,6 +406,7 @@ Return ONLY valid JSON, no markdown, no preamble:
 
 # ── Juror Worker ─────────────────────────────────────────────────────
 
+
 class JurorWorker:
     """
     Single juror — reviews a finding from one adversarial angle.
@@ -437,17 +439,13 @@ class JurorWorker:
             )
             content = response.content if hasattr(response, "content") else str(response)
             if isinstance(content, list):
-                content = "".join(
-                    [c.get("text", "") if isinstance(c, dict) else str(c) for c in content]
-                )
+                content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
 
             # Track token usage
             try:
                 from src.utils.token_counter import get_token_counter
-                input_text = "\n".join(
-                    m.get("content", "") if isinstance(m, dict) else str(m)
-                    for m in messages
-                )
+
+                input_text = "\n".join(m.get("content", "") if isinstance(m, dict) else str(m) for m in messages)
                 get_token_counter().record(
                     f"Jury_{self.juror_id}",
                     self.model_name,
@@ -578,6 +576,7 @@ class JurorWorker:
 
 # ── Judge Worker ─────────────────────────────────────────────────────
 
+
 class JudgeWorker:
     """
     Judge — receives all 3 juror verdicts, arbitrates, writes TestWriter Brief.
@@ -606,17 +605,13 @@ class JudgeWorker:
             )
             content = response.content if hasattr(response, "content") else str(response)
             if isinstance(content, list):
-                content = "".join(
-                    [c.get("text", "") if isinstance(c, dict) else str(c) for c in content]
-                )
+                content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
 
             # Track token usage
             try:
                 from src.utils.token_counter import get_token_counter
-                input_text = "\n".join(
-                    m.get("content", "") if isinstance(m, dict) else str(m)
-                    for m in messages
-                )
+
+                input_text = "\n".join(m.get("content", "") if isinstance(m, dict) else str(m) for m in messages)
                 get_token_counter().record(
                     "Jury_Judge",
                     self.model_name,
@@ -721,9 +716,7 @@ class JudgeWorker:
         else:
             decision = "ESCALATE"
 
-        vote_str = " | ".join(
-            f"{j.juror_id}={j.verdict}({j.confidence})" for j in juror_outputs
-        )
+        vote_str = " | ".join(f"{j.juror_id}={j.verdict}({j.confidence})" for j in juror_outputs)
 
         return JudgeOutput(
             decision=decision,
@@ -734,6 +727,7 @@ class JudgeWorker:
 
 
 # ── Jury Coordinator ─────────────────────────────────────────────────
+
 
 class JuryCoordinator:
     """
@@ -791,14 +785,16 @@ class JuryCoordinator:
             if isinstance(output, Exception):
                 juror_id = ["skeptic", "attacker", "auditor"][i]
                 logger.warning(f"[Jury] {juror_id} raised exception: {output}")
-                clean_outputs.append(JurorOutput(
-                    juror_id=juror_id,
-                    model="unknown",
-                    verdict="UNCERTAIN",
-                    confidence=0,
-                    reasoning=f"Exception: {str(output)[:100]}",
-                    key_concern="Juror failed with exception",
-                ))
+                clean_outputs.append(
+                    JurorOutput(
+                        juror_id=juror_id,
+                        model="unknown",
+                        verdict="UNCERTAIN",
+                        confidence=0,
+                        reasoning=f"Exception: {str(output)[:100]}",
+                        key_concern="Juror failed with exception",
+                    )
+                )
             else:
                 clean_outputs.append(output)
 

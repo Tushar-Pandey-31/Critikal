@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 
 class GateFilterTool(Tool):
-
     def name(self) -> str:
         return "run_gate_filter"
 
@@ -63,9 +62,7 @@ class GateFilterTool(Tool):
 
         indices = params.get("finding_indices")
         findings_to_gate = (
-            [ctx.findings[i] for i in indices if i < len(ctx.findings)]
-            if indices
-            else list(ctx.findings)
+            [ctx.findings[i] for i in indices if i < len(ctx.findings)] if indices else list(ctx.findings)
         )
 
         if not findings_to_gate:

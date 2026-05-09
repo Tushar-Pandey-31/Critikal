@@ -34,6 +34,7 @@ _PROFILES_PATH = _DATA_DIR / "threat_profiles.yaml"
 #  Data Models
 # ════════════════════════════════════════════════════════════
 
+
 @dataclass
 class Adversary:
     name: str
@@ -43,7 +44,7 @@ class Adversary:
 
 @dataclass
 class TemporalThreat:
-    phase: str         # deployment | steady_state | market_stress | governance | deprecation
+    phase: str  # deployment | steady_state | market_stress | governance | deprecation
     threats: list[str] = field(default_factory=list)
 
 
@@ -97,114 +98,224 @@ class ThreatProfile:
 DETECTION_SIGNALS: dict[str, dict[str, list[str]]] = {
     "lending": {
         "function_sigs": [
-            "borrow", "repay", "liquidate", "liquidateCall",
-            "flashLoan", "getAccountLiquidity", "getHypotheticalAccountLiquidity",
-            "accrueInterest", "seize", "enterMarkets", "exitMarket",
+            "borrow",
+            "repay",
+            "liquidate",
+            "liquidateCall",
+            "flashLoan",
+            "getAccountLiquidity",
+            "getHypotheticalAccountLiquidity",
+            "accrueInterest",
+            "seize",
+            "enterMarkets",
+            "exitMarket",
         ],
         "state_vars": [
-            "totalBorrows", "totalReserves", "borrowIndex", "borrowRate",
-            "collateralFactor", "liquidationIncentive", "healthFactor",
-            "accountBorrows", "supplyRate", "reserveFactor",
+            "totalBorrows",
+            "totalReserves",
+            "borrowIndex",
+            "borrowRate",
+            "collateralFactor",
+            "liquidationIncentive",
+            "healthFactor",
+            "accountBorrows",
+            "supplyRate",
+            "reserveFactor",
         ],
         "patterns": [
-            "LTV", "healthFactor", "accountLiquidity",
+            "LTV",
+            "healthFactor",
+            "accountLiquidity",
         ],
     },
     "dex_amm": {
         "function_sigs": [
-            "swap", "addLiquidity", "removeLiquidity",
-            "mint", "burn", "getAmountOut", "getAmountIn",
-            "getReserves", "skim", "sync",
+            "swap",
+            "addLiquidity",
+            "removeLiquidity",
+            "mint",
+            "burn",
+            "getAmountOut",
+            "getAmountIn",
+            "getReserves",
+            "skim",
+            "sync",
         ],
         "state_vars": [
-            "reserve0", "reserve1", "sqrtPriceX96", "liquidity",
-            "feeGrowthGlobal", "tick", "tickSpacing", "fee",
-            "kLast", "totalLiquidity",
+            "reserve0",
+            "reserve1",
+            "sqrtPriceX96",
+            "liquidity",
+            "feeGrowthGlobal",
+            "tick",
+            "tickSpacing",
+            "fee",
+            "kLast",
+            "totalLiquidity",
         ],
         "patterns": [
-            "MINIMUM_LIQUIDITY", "priceCumulativeLast", "observation",
+            "MINIMUM_LIQUIDITY",
+            "priceCumulativeLast",
+            "observation",
         ],
     },
     "vault": {
         "function_sigs": [
-            "deposit", "withdraw", "redeem", "convertToShares",
-            "convertToAssets", "totalAssets", "previewDeposit",
-            "previewMint", "previewRedeem", "previewWithdraw",
-            "maxDeposit", "maxMint", "maxWithdraw", "maxRedeem",
+            "deposit",
+            "withdraw",
+            "redeem",
+            "convertToShares",
+            "convertToAssets",
+            "totalAssets",
+            "previewDeposit",
+            "previewMint",
+            "previewRedeem",
+            "previewWithdraw",
+            "maxDeposit",
+            "maxMint",
+            "maxWithdraw",
+            "maxRedeem",
         ],
         "state_vars": [
-            "totalAssets", "totalShares", "asset", "sharePrice",
-            "lastHarvestTimestamp", "performanceFee", "managementFee",
+            "totalAssets",
+            "totalShares",
+            "asset",
+            "sharePrice",
+            "lastHarvestTimestamp",
+            "performanceFee",
+            "managementFee",
         ],
         "patterns": [
-            "ERC4626", "_decimalsOffset", "totalSupply",
+            "ERC4626",
+            "_decimalsOffset",
+            "totalSupply",
         ],
     },
     "stablecoin": {
         "function_sigs": [
-            "mint", "burn", "peg", "rebase", "debase",
-            "collateralize", "decollateralize",
+            "mint",
+            "burn",
+            "peg",
+            "rebase",
+            "debase",
+            "collateralize",
+            "decollateralize",
         ],
         "state_vars": [
-            "targetPrice", "pegPrice", "collateralRatio",
-            "debtCeiling", "globalDebt", "stabilityFee",
+            "targetPrice",
+            "pegPrice",
+            "collateralRatio",
+            "debtCeiling",
+            "globalDebt",
+            "stabilityFee",
         ],
         "patterns": [
-            "CDPManager", "Vat", "stabilityPool",
+            "CDPManager",
+            "Vat",
+            "stabilityPool",
         ],
     },
     "bridge": {
         "function_sigs": [
-            "sendMessage", "receiveMessage", "relayMessage",
-            "verifyProof", "finalizeDeposit", "finalizeWithdrawal",
-            "processMessage", "retryMessage",
+            "sendMessage",
+            "receiveMessage",
+            "relayMessage",
+            "verifyProof",
+            "finalizeDeposit",
+            "finalizeWithdrawal",
+            "processMessage",
+            "retryMessage",
         ],
         "state_vars": [
-            "nonce", "messageHash", "processedMessages",
-            "relayer", "sequencer", "l1Bridge", "l2Bridge",
+            "nonce",
+            "messageHash",
+            "processedMessages",
+            "relayer",
+            "sequencer",
+            "l1Bridge",
+            "l2Bridge",
         ],
         "patterns": [
-            "crossChain", "L1", "L2", "rollup",
+            "crossChain",
+            "L1",
+            "L2",
+            "rollup",
         ],
     },
     "governance": {
         "function_sigs": [
-            "propose", "castVote", "castVoteBySig", "queue",
-            "execute", "cancel", "getVotes", "delegate",
+            "propose",
+            "castVote",
+            "castVoteBySig",
+            "queue",
+            "execute",
+            "cancel",
+            "getVotes",
+            "delegate",
         ],
         "state_vars": [
-            "votingDelay", "votingPeriod", "proposalThreshold",
-            "quorumNumerator", "timelock", "proposals",
+            "votingDelay",
+            "votingPeriod",
+            "proposalThreshold",
+            "quorumNumerator",
+            "timelock",
+            "proposals",
         ],
         "patterns": [
-            "GovernorBravo", "TimelockController", "proposal",
+            "GovernorBravo",
+            "TimelockController",
+            "proposal",
         ],
     },
     "perpetuals": {
         "function_sigs": [
-            "openPosition", "closePosition", "increasePosition",
-            "decreasePosition", "liquidatePosition", "settleFunding",
-            "setPrice", "updateCumulativeFundingRate",
+            "openPosition",
+            "closePosition",
+            "increasePosition",
+            "decreasePosition",
+            "liquidatePosition",
+            "settleFunding",
+            "setPrice",
+            "updateCumulativeFundingRate",
         ],
         "state_vars": [
-            "fundingRate", "openInterest", "maxLeverage",
-            "maintenanceMargin", "positionSize", "entryPrice",
+            "fundingRate",
+            "openInterest",
+            "maxLeverage",
+            "maintenanceMargin",
+            "positionSize",
+            "entryPrice",
         ],
         "patterns": [
-            "perp", "funding", "margin", "leverage",
+            "perp",
+            "funding",
+            "margin",
+            "leverage",
         ],
     },
     "liquid_staking": {
         "function_sigs": [
-            "stake", "unstake", "requestWithdrawal", "claimWithdrawal",
-            "rebase", "distributeRewards", "reportBeacon",
+            "stake",
+            "unstake",
+            "requestWithdrawal",
+            "claimWithdrawal",
+            "rebase",
+            "distributeRewards",
+            "reportBeacon",
         ],
         "state_vars": [
-            "totalPooledEther", "totalShares", "beaconBalance",
-            "withdrawalQueue", "rewardsPerShare", "validatorCount",
+            "totalPooledEther",
+            "totalShares",
+            "beaconBalance",
+            "withdrawalQueue",
+            "rewardsPerShare",
+            "validatorCount",
         ],
         "patterns": [
-            "stETH", "rETH", "beacon", "validator",
+            "stETH",
+            "rETH",
+            "beacon",
+            "validator",
         ],
     },
 }
@@ -216,6 +327,7 @@ _MIN_SIGNAL_THRESHOLD = 3
 # ════════════════════════════════════════════════════════════
 #  ThreatProfiler
 # ════════════════════════════════════════════════════════════
+
 
 class ThreatProfiler:
     """
@@ -279,7 +391,8 @@ class ThreatProfiler:
 
             # Check function signature matches
             sig_matches = [
-                s for s in signals.get("function_sigs", [])
+                s
+                for s in signals.get("function_sigs", [])
                 if s in function_names or any(s.lower() in fn.lower() for fn in function_names)
             ]
             matched += len(sig_matches)
@@ -287,31 +400,31 @@ class ThreatProfiler:
 
             # Check state variable matches
             var_matches = [
-                s for s in signals.get("state_vars", [])
+                s
+                for s in signals.get("state_vars", [])
                 if s in state_var_names or any(s.lower() in vn.lower() for vn in state_var_names)
             ]
             matched += len(var_matches)
             total += len(signals.get("state_vars", []))
 
             # Check code pattern matches
-            pattern_matches = [
-                p for p in signals.get("patterns", [])
-                if p.lower() in source_code_concat.lower()
-            ]
+            pattern_matches = [p for p in signals.get("patterns", []) if p.lower() in source_code_concat.lower()]
             matched += len(pattern_matches)
             total += len(signals.get("patterns", []))
 
             if matched >= _MIN_SIGNAL_THRESHOLD and total > 0:
                 confidence = min(1.0, matched / (total * 0.5))  # generous — 50% match = full confidence
-                results.append({
-                    "type": proto_type,
-                    "confidence": round(confidence, 2),
-                    "matched_signals": matched,
-                    "total_signals": total,
-                    "matched_functions": sig_matches,
-                    "matched_vars": var_matches,
-                    "matched_patterns": pattern_matches,
-                })
+                results.append(
+                    {
+                        "type": proto_type,
+                        "confidence": round(confidence, 2),
+                        "matched_signals": matched,
+                        "total_signals": total,
+                        "matched_functions": sig_matches,
+                        "matched_vars": var_matches,
+                        "matched_patterns": pattern_matches,
+                    }
+                )
 
         # Sort by confidence (highest first)
         results.sort(key=lambda r: (-r["confidence"], -r["matched_signals"]))
@@ -335,11 +448,13 @@ class ThreatProfiler:
         # Parse adversaries
         adversaries = []
         for adv_dict in raw.get("adversaries", []):
-            adversaries.append(Adversary(
-                name=adv_dict.get("name", "Unknown"),
-                capability=adv_dict.get("capability", ""),
-                priority=adv_dict.get("priority", 99),
-            ))
+            adversaries.append(
+                Adversary(
+                    name=adv_dict.get("name", "Unknown"),
+                    capability=adv_dict.get("capability", ""),
+                    priority=adv_dict.get("priority", 99),
+                )
+            )
 
         # Parse invariants
         invariants = raw.get("invariants", [])
@@ -451,8 +566,7 @@ class ThreatProfiler:
         # Math operations — check source code for division/multiplication patterns
         source = data.get("source_code", "")
         signals["has_math_operations"] = bool(
-            "/" in source or "%" in source or "**" in source
-            or "mulDiv" in source or "FullMath" in source
+            "/" in source or "%" in source or "**" in source or "mulDiv" in source or "FullMath" in source
         )
         signals["has_division"] = "/" in source and "//" not in source  # exclude comments
 

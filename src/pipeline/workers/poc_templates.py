@@ -26,7 +26,6 @@ def _sol_header(pragma: str = "^0.8.20") -> str:
     return f'// SPDX-License-Identifier: MIT\npragma solidity {pragma};\n\nimport "forge-std/Test.sol";\n'
 
 
-
 # ────────────────────────────────────────────────────────────────────────────
 #  Template Registry
 # ────────────────────────────────────────────────────────────────────────────
@@ -87,8 +86,11 @@ def get_template_for_vuln(vuln_class: str) -> Callable | None:
 #  Individual Templates
 # ────────────────────────────────────────────────────────────────────────────
 
+
 def reentrancy_poc(
-    finding: object, contract_path: str, contract_name: str,
+    finding: object,
+    contract_path: str,
+    contract_name: str,
     pragma: str = "^0.8.20",
 ) -> str:
     func = getattr(finding, "affected_function", "withdraw")
@@ -139,7 +141,9 @@ contract ReentrancyTest is Test {{
 
 
 def access_control_poc(
-    finding: object, contract_path: str, contract_name: str,
+    finding: object,
+    contract_path: str,
+    contract_name: str,
     pragma: str = "^0.8.20",
 ) -> str:
     func = getattr(finding, "affected_function", "setOwner")
@@ -167,7 +171,9 @@ def access_control_poc(
 
 
 def tx_origin_poc(
-    finding: object, contract_path: str, contract_name: str,
+    finding: object,
+    contract_path: str,
+    contract_name: str,
     pragma: str = "^0.8.20",
 ) -> str:
     func = getattr(finding, "affected_function", "transfer")
@@ -207,7 +213,9 @@ contract TxOriginTest is Test {{
 
 
 def oracle_manipulation_poc(
-    finding: object, contract_path: str, contract_name: str,
+    finding: object,
+    contract_path: str,
+    contract_name: str,
     pragma: str = "^0.8.20",
 ) -> str:
     return (
@@ -240,7 +248,9 @@ def oracle_manipulation_poc(
 
 
 def integer_overflow_poc(
-    finding: object, contract_path: str, contract_name: str,
+    finding: object,
+    contract_path: str,
+    contract_name: str,
     pragma: str = "^0.8.20",
 ) -> str:
     func = getattr(finding, "affected_function", "add")
@@ -272,7 +282,9 @@ def integer_overflow_poc(
 
 
 def vault_inflation_poc(
-    finding: object, contract_path: str, contract_name: str,
+    finding: object,
+    contract_path: str,
+    contract_name: str,
     pragma: str = "^0.8.20",
 ) -> str:
     return (
@@ -314,7 +326,9 @@ def vault_inflation_poc(
 
 
 def delegatecall_poc(
-    finding: object, contract_path: str, contract_name: str,
+    finding: object,
+    contract_path: str,
+    contract_name: str,
     pragma: str = "^0.8.20",
 ) -> str:
     return (
@@ -347,7 +361,9 @@ contract DelegatecallTest is Test {{
 
 
 def signature_replay_poc(
-    finding: object, contract_path: str, contract_name: str,
+    finding: object,
+    contract_path: str,
+    contract_name: str,
     pragma: str = "^0.8.20",
 ) -> str:
     return (
@@ -380,7 +396,9 @@ def signature_replay_poc(
 
 
 def selfdestruct_poc(
-    finding: object, contract_path: str, contract_name: str,
+    finding: object,
+    contract_path: str,
+    contract_name: str,
     pragma: str = "^0.8.20",
 ) -> str:
     return (
@@ -411,7 +429,9 @@ contract SelfdestructTest is Test {{
 
 
 def stale_oracle_poc(
-    finding: object, contract_path: str, contract_name: str,
+    finding: object,
+    contract_path: str,
+    contract_name: str,
     pragma: str = "^0.8.20",
 ) -> str:
     return (
@@ -446,7 +466,9 @@ contract StaleOracleTest is Test {{
 
 
 def fee_on_transfer_poc(
-    finding: object, contract_path: str, contract_name: str,
+    finding: object,
+    contract_path: str,
+    contract_name: str,
     pragma: str = "^0.8.20",
 ) -> str:
     return (
@@ -491,7 +513,9 @@ contract FeeOnTransferTest is Test {{
 
 
 def dos_loop_poc(
-    finding: object, contract_path: str, contract_name: str,
+    finding: object,
+    contract_path: str,
+    contract_name: str,
     pragma: str = "^0.8.20",
 ) -> str:
     func = getattr(finding, "affected_function", "processAll")

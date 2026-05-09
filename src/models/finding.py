@@ -12,14 +12,14 @@ from src.pipeline.base_worker import WorkerOutput
 logger = logging.getLogger(__name__)
 
 EVIDENCE_TAG_WEIGHTS = {
-    "[POC-PASS]": 1.0,          # forge test exits 0
-    "[POC-FAIL]": 0.4,          # PoC compiled but didn't pass
-    "[PROD-ONCHAIN]": 1.0,      # verified on mainnet
-    "[GRAPH-SIGNAL]": 0.7,      # deterministic Slither-derived
-    "[CODE]": 0.8,              # specific code line reference
-    "[RAG-MATCH]": 0.6,         # RAG/Solodit precedent found
-    "[INFERRED]": 0.3,          # LLM reasoning without code ref
-    "[LLM-ONLY]": 0.2,          # no code reference or assumption-worker
+    "[POC-PASS]": 1.0,  # forge test exits 0
+    "[POC-FAIL]": 0.4,  # PoC compiled but didn't pass
+    "[PROD-ONCHAIN]": 1.0,  # verified on mainnet
+    "[GRAPH-SIGNAL]": 0.7,  # deterministic Slither-derived
+    "[CODE]": 0.8,  # specific code line reference
+    "[RAG-MATCH]": 0.6,  # RAG/Solodit precedent found
+    "[INFERRED]": 0.3,  # LLM reasoning without code ref
+    "[LLM-ONLY]": 0.2,  # no code reference or assumption-worker
 }
 
 
@@ -37,6 +37,7 @@ class FindingVerdict(str, Enum):
     CONTESTED:  Evidence is mixed or incomplete — needs depth pass or human review.
     REFUTED:    Proven non-exploitable with production-quality evidence.
     """
+
     CONFIRMED = "CONFIRMED"
     PARTIAL = "PARTIAL"
     CONTESTED = "CONTESTED"
@@ -83,20 +84,19 @@ class Finding:
     depth_verdicts: list[dict] = field(default_factory=list)  # [{agent, verdict, reasoning}]
 
     # ── v2: Confidence decomposition ──────────────────────────────
-    confidence_evidence: int = 0     # 0-100: strength of code/PoC evidence
-    confidence_consensus: int = 0    # 0-100: how many agents agree
-    confidence_rag_match: int = 0    # 0-100: historical precedent match
+    confidence_evidence: int = 0  # 0-100: strength of code/PoC evidence
+    confidence_consensus: int = 0  # 0-100: how many agents agree
+    confidence_rag_match: int = 0  # 0-100: historical precedent match
 
     # ── v2: Report fields ─────────────────────────────────────────
-    report_id: str = ""           # C-01, H-01, etc. (assigned at report time)
-    root_cause_group: str = ""    # for consolidation: same root_cause_group → merged
+    report_id: str = ""  # C-01, H-01, etc. (assigned at report time)
+    root_cause_group: str = ""  # for consolidation: same root_cause_group → merged
     rag_matches: list[dict] = field(default_factory=list)  # [{source, snippet}]
 
     # ── v2: Chain analysis fields ─────────────────────────────────
-    chain_ids: list[str] = field(default_factory=list)      # CH-01, CH-02 if part of a chain
-    chain_role: str = ""                                     # "enabler" or "blocked" or ""
-    chain_severity_upgrade: str = ""                         # "MEDIUM → HIGH" etc.
-
+    chain_ids: list[str] = field(default_factory=list)  # CH-01, CH-02 if part of a chain
+    chain_role: str = ""  # "enabler" or "blocked" or ""
+    chain_severity_upgrade: str = ""  # "MEDIUM → HIGH" etc.
 
     jury_decision: str = ""
     jury_vote_summary: str = ""
@@ -110,16 +110,16 @@ class Finding:
     # ── Story 6.2: Gate evaluation fields ─────────────────────────
     # Applied BEFORE the full jury debate. Cheap model, 4 sequential gates.
     # gate_verdict: PASS (all 4 gates cleared) | GATE_REFUTED | GATE_DEMOTED
-    gate_verdict: str = ""           # "" = not yet gate-evaluated
-    gate_failed: int = 0             # 1-4: which gate killed/demoted this finding
-    gate_quote: str = ""             # exact code line that triggered the gate verdict
+    gate_verdict: str = ""  # "" = not yet gate-evaluated
+    gate_failed: int = 0  # 1-4: which gate killed/demoted this finding
+    gate_quote: str = ""  # exact code line that triggered the gate verdict
 
     # ── Smart filtering: evidence accumulation ─────────────────────────
     # Replaces binary hard-drop gates with running accumulated evidence score.
     # Each pipeline stage calls contribute_score() to add/subtract evidence.
     # Final promotion to TestWriter requires plausibility_score >= PROMOTE_THRESHOLD.
     plausibility_score: int = 0
-    plausibility_log: list[dict] = field(default_factory=list)   # [{stage, delta, reason}]
+    plausibility_log: list[dict] = field(default_factory=list)  # [{stage, delta, reason}]
 
     # Speculative findings: confidence at creation was in the 30-49 range.
     # These appear in the report's SPECULATIVE section, not Confirmed.
@@ -134,16 +134,15 @@ class Finding:
             reason: Optional human-readable explanation for the log
         """
         self.plausibility_score += delta
-        self.plausibility_log.append({
-            "stage": stage,
-            "delta": delta,
-            "after": self.plausibility_score,
-            "reason": reason,
-        })
-        logger.debug(
-            f"[Plausibility] {self.id[:8]} {stage:12s} {delta:+d} "
-            f"→ {self.plausibility_score} ({reason})"
+        self.plausibility_log.append(
+            {
+                "stage": stage,
+                "delta": delta,
+                "after": self.plausibility_score,
+                "reason": reason,
+            }
         )
+        logger.debug(f"[Plausibility] {self.id[:8]} {stage:12s} {delta:+d} → {self.plausibility_score} ({reason})")
 
     def to_dict(self) -> dict[str, Any]:
         """Serializable dict view — used by report/export paths.
@@ -169,8 +168,7 @@ class Finding:
         evidence_score = max(tag_weights) if tag_weights else 0.2
         consensus_score = self.confidence_consensus / 100
         llm_score = self.confidence_evidence / 100
-        composite = (evidence_score * 0.40 + consensus_score * 0.30 +
-                     llm_score * 0.30)
+        composite = evidence_score * 0.40 + consensus_score * 0.30 + llm_score * 0.30
         return min(100, round(composite * 100))
 
     @classmethod
@@ -296,5 +294,4 @@ class Finding:
         else:
             delta = 5
             self.is_speculative = True
-        self.contribute_score("semantic_seed", delta,
-            f"semantic origin confidence={self.confidence}")
+        self.contribute_score("semantic_seed", delta, f"semantic origin confidence={self.confidence}")

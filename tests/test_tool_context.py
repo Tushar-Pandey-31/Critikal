@@ -9,7 +9,6 @@ from src.agent.context import ToolContext
 
 
 class TestToolContextInit:
-
     def test_default_construction(self):
         ctx = ToolContext()
         assert ctx.session_id  # auto-generated
@@ -34,19 +33,20 @@ class TestToolContextInit:
 
 
 class TestHasGraph:
-
     def test_no_graph_returns_false(self):
         ctx = ToolContext()
         assert ctx.has_graph() is False
 
     def test_empty_graph_returns_false(self):
         import networkx as nx
+
         ctx = ToolContext()
         ctx.graph = nx.DiGraph()
         assert ctx.has_graph() is False  # Empty graph = no nodes
 
     def test_populated_graph_returns_true(self):
         import networkx as nx
+
         ctx = ToolContext()
         ctx.graph = nx.DiGraph()
         ctx.graph.add_node("Contract::transfer")
@@ -54,7 +54,6 @@ class TestHasGraph:
 
 
 class TestAddFinding:
-
     def test_add_finding_appends(self):
         ctx = ToolContext()
         ctx.add_finding({"vuln": "reentrancy", "confidence": 80})
@@ -71,6 +70,7 @@ class TestAddFinding:
     def test_add_finding_with_event_bus(self):
         """add_finding should not raise even with an event bus attached."""
         from src.agent.events import EventBus
+
         ctx = ToolContext()
         ctx.event_bus = EventBus()
         ctx.add_finding({"vuln": "test"})
@@ -78,7 +78,6 @@ class TestAddFinding:
 
 
 class TestFileReadWrite:
-
     def test_register_and_check_read(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".sol", delete=False) as f:
             f.write("// SPDX-License-Identifier: MIT\n")
@@ -137,7 +136,6 @@ class TestFileReadWrite:
 
 
 class TestEnsureConfig:
-
     def test_lazy_config_load(self):
         ctx = ToolContext()
         assert ctx.config is None

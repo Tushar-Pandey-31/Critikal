@@ -10,7 +10,6 @@ from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class ReportTool(Tool):
-
     def name(self) -> str:
         return "generate_report"
 
@@ -52,10 +51,7 @@ class ReportTool(Tool):
             else:
                 leads.append(str(f))
 
-        jury_rejected = [
-            f for f in ctx.findings
-            if getattr(f, "jury_decision", None) == "REFUTED"
-        ]
+        jury_rejected = [f for f in ctx.findings if getattr(f, "jury_decision", None) == "REFUTED"]
 
         try:
             generator = ReportGenerator(

@@ -32,17 +32,19 @@ _VECTORS_PATH = _DATA_DIR / "vectors.yaml"
 #  Data Model
 # ════════════════════════════════════════════════════════════
 
+
 @dataclass
 class AttackVector:
     """A single curated attack vector with detection and FP guard."""
-    id: str                              # "V001"
-    title: str                           # "ERC4626 Share Inflation"
-    root_cause: str                      # Why this bug exists
-    detection_pattern: str               # What to look for in code
-    false_positive_guard: str            # When this is NOT a bug
-    applicable_protocols: list[str]      # ["vault", "lending"]
-    severity_range: str                  # "HIGH-CRITICAL"
-    category: str = ""                   # "arithmetic", "access_control", etc.
+
+    id: str  # "V001"
+    title: str  # "ERC4626 Share Inflation"
+    root_cause: str  # Why this bug exists
+    detection_pattern: str  # What to look for in code
+    false_positive_guard: str  # When this is NOT a bug
+    applicable_protocols: list[str]  # ["vault", "lending"]
+    severity_range: str  # "HIGH-CRITICAL"
+    category: str = ""  # "arithmetic", "access_control", etc.
     references: list[str] = field(default_factory=list)
 
     def format_compact(self) -> str:
@@ -58,6 +60,7 @@ class AttackVector:
 # ════════════════════════════════════════════════════════════
 #  Attack Vector Database
 # ════════════════════════════════════════════════════════════
+
 
 class AttackVectorDB:
     """
@@ -169,9 +172,7 @@ class AttackVectorDB:
         }
         matched.sort(key=lambda v: severity_order.get(v.severity_range, 99))
 
-        logger.info(
-            f"Matched {len(matched)} vectors for protocol types {protocol_types}"
-        )
+        logger.info(f"Matched {len(matched)} vectors for protocol types {protocol_types}")
         return matched
 
     def match_vectors_for_hotspot(
@@ -288,6 +289,7 @@ class AttackVectorDB:
 #  Helpers
 # ════════════════════════════════════════════════════════════
 
+
 def _extract_detection_keywords(detection_pattern: str) -> list[str]:
     """
     Extract searchable keywords from a detection pattern string.
@@ -298,19 +300,52 @@ def _extract_detection_keywords(detection_pattern: str) -> list[str]:
     keywords: list[str] = []
 
     # Extract function-like names: word followed by ()
-    func_matches = re.findall(r'\b(\w+)\(\)', detection_pattern)
+    func_matches = re.findall(r"\b(\w+)\(\)", detection_pattern)
     keywords.extend(func_matches)
 
     # Extract camelCase/PascalCase identifiers (likely contract/function names)
-    ident_matches = re.findall(r'\b([a-zA-Z_]\w{3,})\b', detection_pattern)
+    ident_matches = re.findall(r"\b([a-zA-Z_]\w{3,})\b", detection_pattern)
     # Filter out common English words
     stopwords = {
-        "look", "find", "check", "that", "this", "with", "from", "without",
-        "used", "uses", "using", "where", "when", "what", "function",
-        "contract", "variable", "state", "internal", "external", "public",
-        "private", "modifier", "require", "assert", "return", "call",
-        "transfer", "should", "must", "does", "have", "been", "will",
-        "before", "after", "during", "between", "within",
+        "look",
+        "find",
+        "check",
+        "that",
+        "this",
+        "with",
+        "from",
+        "without",
+        "used",
+        "uses",
+        "using",
+        "where",
+        "when",
+        "what",
+        "function",
+        "contract",
+        "variable",
+        "state",
+        "internal",
+        "external",
+        "public",
+        "private",
+        "modifier",
+        "require",
+        "assert",
+        "return",
+        "call",
+        "transfer",
+        "should",
+        "must",
+        "does",
+        "have",
+        "been",
+        "will",
+        "before",
+        "after",
+        "during",
+        "between",
+        "within",
     }
     for ident in ident_matches:
         if ident.lower() not in stopwords and len(ident) >= 4:

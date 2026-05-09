@@ -24,6 +24,7 @@ from utils.graph_queries import GraphQueries
 #  Shared Fixture
 # ════════════════════════════════════════════════════════════
 
+
 @pytest.fixture(scope="module")
 def graph_and_queries():
     repo_path = os.path.join(os.getcwd(), "tests", "contracts")
@@ -41,31 +42,23 @@ def graph_and_queries():
 #  Story 6.1 — StateTransition Node Basics
 # ════════════════════════════════════════════════════════════
 
+
 class TestStateTransitionNodes:
     """Verify that StateTransition nodes are created with correct topology."""
 
     def test_state_transition_nodes_exist(self, graph_and_queries):
         graph, _ = graph_and_queries
-        st_nodes = [
-            (nid, d) for nid, d in graph.nodes(data=True)
-            if d.get("type") == "state_transition"
-        ]
+        st_nodes = [(nid, d) for nid, d in graph.nodes(data=True) if d.get("type") == "state_transition"]
         assert len(st_nodes) > 0, "Expected at least one StateTransition node"
 
     def test_performs_edges_exist(self, graph_and_queries):
         graph, _ = graph_and_queries
-        performs_edges = [
-            (u, v) for u, v, d in graph.edges(data=True)
-            if d.get("relationship") == "PERFORMS"
-        ]
+        performs_edges = [(u, v) for u, v, d in graph.edges(data=True) if d.get("relationship") == "PERFORMS"]
         assert len(performs_edges) > 0, "Expected at least one PERFORMS edge"
 
     def test_affects_edges_exist(self, graph_and_queries):
         graph, _ = graph_and_queries
-        affects_edges = [
-            (u, v) for u, v, d in graph.edges(data=True)
-            if d.get("relationship") == "AFFECTS"
-        ]
+        affects_edges = [(u, v) for u, v, d in graph.edges(data=True) if d.get("relationship") == "AFFECTS"]
         assert len(affects_edges) > 0, "Expected at least one AFFECTS edge"
 
     def test_topology_function_performs_st_affects_var(self, graph_and_queries):
@@ -78,36 +71,23 @@ class TestStateTransitionNodes:
                 continue
 
             performs_sources = [
-                u for u in graph.predecessors(nid)
-                if graph.get_edge_data(u, nid).get("relationship") == "PERFORMS"
+                u for u in graph.predecessors(nid) if graph.get_edge_data(u, nid).get("relationship") == "PERFORMS"
             ]
-            assert len(performs_sources) == 1, (
-                f"{nid}: expected 1 PERFORMS predecessor, got {len(performs_sources)}"
-            )
+            assert len(performs_sources) == 1, f"{nid}: expected 1 PERFORMS predecessor, got {len(performs_sources)}"
             src_type = graph.nodes[performs_sources[0]].get("type")
-            assert src_type == "function", (
-                f"{nid}: PERFORMS source should be function, got {src_type}"
-            )
+            assert src_type == "function", f"{nid}: PERFORMS source should be function, got {src_type}"
 
             affects_targets = [
-                v for v in graph.successors(nid)
-                if graph.get_edge_data(nid, v).get("relationship") == "AFFECTS"
+                v for v in graph.successors(nid) if graph.get_edge_data(nid, v).get("relationship") == "AFFECTS"
             ]
-            assert len(affects_targets) == 1, (
-                f"{nid}: expected 1 AFFECTS target, got {len(affects_targets)}"
-            )
+            assert len(affects_targets) == 1, f"{nid}: expected 1 AFFECTS target, got {len(affects_targets)}"
             tgt_type = graph.nodes[affects_targets[0]].get("node_type")
-            assert tgt_type == "StateVariable", (
-                f"{nid}: AFFECTS target should be StateVariable, got {tgt_type}"
-            )
+            assert tgt_type == "StateVariable", f"{nid}: AFFECTS target should be StateVariable, got {tgt_type}"
 
     def test_writes_edges_still_exist(self, graph_and_queries):
         """Backward compat: WRITES edges are preserved alongside new model."""
         graph, _ = graph_and_queries
-        writes_edges = [
-            (u, v) for u, v, d in graph.edges(data=True)
-            if d.get("relationship") == "WRITES"
-        ]
+        writes_edges = [(u, v) for u, v, d in graph.edges(data=True) if d.get("relationship") == "WRITES"]
         assert len(writes_edges) > 0, "WRITES edges should still be present"
 
 
@@ -115,66 +95,52 @@ class TestStateTransitionNodes:
 #  Story 6.1 — Operation Classification
 # ════════════════════════════════════════════════════════════
 
-class TestOperationClassification:
 
+class TestOperationClassification:
     def test_assign_operation(self, graph_and_queries):
         _, queries = graph_and_queries
-        transitions = queries.get_state_transitions(
-            function_id="StateTransitionTest::setCounter"
-        )
+        transitions = queries.get_state_transitions(function_id="StateTransitionTest::setCounter")
         assert len(transitions) > 0, "setCounter should produce transitions"
         ops = {t["operation"] for t in transitions}
         assert "assign" in ops, f"setCounter should have 'assign' operation, got {ops}"
 
     def test_add_operation(self, graph_and_queries):
         _, queries = graph_and_queries
-        transitions = queries.get_state_transitions(
-            function_id="StateTransitionTest::incrementCounter"
-        )
+        transitions = queries.get_state_transitions(function_id="StateTransitionTest::incrementCounter")
         assert len(transitions) > 0, "incrementCounter should produce transitions"
         ops = {t["operation"] for t in transitions}
         assert "add" in ops, f"incrementCounter should have 'add' operation, got {ops}"
 
     def test_sub_operation(self, graph_and_queries):
         _, queries = graph_and_queries
-        transitions = queries.get_state_transitions(
-            function_id="StateTransitionTest::decrementCounter"
-        )
+        transitions = queries.get_state_transitions(function_id="StateTransitionTest::decrementCounter")
         assert len(transitions) > 0, "decrementCounter should produce transitions"
         ops = {t["operation"] for t in transitions}
         assert "sub" in ops, f"decrementCounter should have 'sub' operation, got {ops}"
 
     def test_push_operation(self, graph_and_queries):
         _, queries = graph_and_queries
-        transitions = queries.get_state_transitions(
-            function_id="StateTransitionTest::pushData"
-        )
+        transitions = queries.get_state_transitions(function_id="StateTransitionTest::pushData")
         assert len(transitions) > 0, "pushData should produce transitions"
         ops = {t["operation"] for t in transitions}
         assert "push" in ops, f"pushData should have 'push' operation, got {ops}"
 
     def test_pop_operation(self, graph_and_queries):
         _, queries = graph_and_queries
-        transitions = queries.get_state_transitions(
-            function_id="StateTransitionTest::popData"
-        )
+        transitions = queries.get_state_transitions(function_id="StateTransitionTest::popData")
         assert len(transitions) > 0, "popData should produce transitions"
         ops = {t["operation"] for t in transitions}
         assert "pop" in ops, f"popData should have 'pop' operation, got {ops}"
 
     def test_mapping_write_detected(self, graph_and_queries):
         _, queries = graph_and_queries
-        transitions = queries.get_state_transitions(
-            function_id="StateTransitionTest::deposit"
-        )
+        transitions = queries.get_state_transitions(function_id="StateTransitionTest::deposit")
         mapping_transitions = [t for t in transitions if t["is_mapping"]]
         assert len(mapping_transitions) > 0, "deposit should write to a mapping"
 
     def test_read_only_no_transitions(self, graph_and_queries):
         _, queries = graph_and_queries
-        transitions = queries.get_state_transitions(
-            function_id="StateTransitionTest::readOnly"
-        )
+        transitions = queries.get_state_transitions(function_id="StateTransitionTest::readOnly")
         assert len(transitions) == 0, "readOnly should produce zero transitions"
 
 
@@ -182,14 +148,21 @@ class TestOperationClassification:
 #  Story 6.1 — StateTransition Properties
 # ════════════════════════════════════════════════════════════
 
-class TestStateTransitionProperties:
 
+class TestStateTransitionProperties:
     def test_required_properties_present(self, graph_and_queries):
         graph, _ = graph_and_queries
         required = {
-            "type", "node_type", "function", "variable", "operation",
-            "is_array_length", "is_mapping", "is_owner_assignment",
-            "attacker_controlled_input", "affects_privileged_var",
+            "type",
+            "node_type",
+            "function",
+            "variable",
+            "operation",
+            "is_array_length",
+            "is_mapping",
+            "is_owner_assignment",
+            "attacker_controlled_input",
+            "affects_privileged_var",
         }
         for nid, ndata in graph.nodes(data=True):
             if ndata.get("type") != "state_transition":
@@ -200,48 +173,34 @@ class TestStateTransitionProperties:
     def test_attacker_controlled_on_public_param(self, graph_and_queries):
         """setCounter(uint256 _val) is public with a parameter in the write."""
         _, queries = graph_and_queries
-        transitions = queries.get_state_transitions(
-            function_id="StateTransitionTest::setCounter"
-        )
+        transitions = queries.get_state_transitions(function_id="StateTransitionTest::setCounter")
         controlled = [t for t in transitions if t["attacker_controlled_input"]]
-        assert len(controlled) > 0, (
-            "setCounter should flag attacker_controlled_input (public + param)"
-        )
+        assert len(controlled) > 0, "setCounter should flag attacker_controlled_input (public + param)"
 
     def test_owner_assignment_flag(self, graph_and_queries):
         """setOwner writes to 'owner', should flag is_owner_assignment."""
         _, queries = graph_and_queries
-        transitions = queries.get_state_transitions(
-            function_id="StateTransitionTest::setOwner"
-        )
+        transitions = queries.get_state_transitions(function_id="StateTransitionTest::setOwner")
         owner_transitions = [t for t in transitions if t["is_owner_assignment"]]
-        assert len(owner_transitions) > 0, (
-            "setOwner should flag is_owner_assignment"
-        )
+        assert len(owner_transitions) > 0, "setOwner should flag is_owner_assignment"
 
     def test_complex_write_multiple_transitions(self, graph_and_queries):
         """complexWrite writes counter + balances → two distinct transitions."""
         _, queries = graph_and_queries
-        transitions = queries.get_state_transitions(
-            function_id="StateTransitionTest::complexWrite"
-        )
+        transitions = queries.get_state_transitions(function_id="StateTransitionTest::complexWrite")
         variables = {t["variable"] for t in transitions}
-        assert len(variables) >= 2, (
-            f"complexWrite should affect ≥2 variables, got {variables}"
-        )
+        assert len(variables) >= 2, f"complexWrite should affect ≥2 variables, got {variables}"
 
 
 # ════════════════════════════════════════════════════════════
 #  Story 6.1 — Query API
 # ════════════════════════════════════════════════════════════
 
-class TestStateTransitionQueries:
 
+class TestStateTransitionQueries:
     def test_filter_by_contract(self, graph_and_queries):
         _, queries = graph_and_queries
-        transitions = queries.get_state_transitions(
-            contract_name="StateTransitionTest"
-        )
+        transitions = queries.get_state_transitions(contract_name="StateTransitionTest")
         assert len(transitions) > 0
         for t in transitions:
             func_id = t["function"]
@@ -255,9 +214,7 @@ class TestStateTransitionQueries:
 
     def test_filter_by_variable(self, graph_and_queries):
         _, queries = graph_and_queries
-        transitions = queries.get_state_transitions(
-            variable_id="StateTransitionTest::counter"
-        )
+        transitions = queries.get_state_transitions(variable_id="StateTransitionTest::counter")
         for t in transitions:
             assert t["variable"] == "StateTransitionTest::counter"
 
@@ -266,8 +223,8 @@ class TestStateTransitionQueries:
 #  Story 6.2 — Array Length Mutation Detection
 # ════════════════════════════════════════════════════════════
 
-class TestArrayLengthMutation:
 
+class TestArrayLengthMutation:
     def test_pop_flags_array_length_mutation(self, graph_and_queries):
         graph, queries = graph_and_queries
         func_id = "StateTransitionTest::popData"
@@ -284,19 +241,13 @@ class TestArrayLengthMutation:
         if not graph.has_node(func_id):
             pytest.skip("pushData node not found")
         node_data = graph.nodes[func_id]
-        assert not node_data.get("has_array_length_mutation"), (
-            "pushData should NOT be flagged as array_length_mutation"
-        )
+        assert not node_data.get("has_array_length_mutation"), "pushData should NOT be flagged as array_length_mutation"
 
     def test_array_length_mutations_query(self, graph_and_queries):
         _, queries = graph_and_queries
-        mutations = queries.get_array_length_mutations(
-            contract_name="StateTransitionTest"
-        )
+        mutations = queries.get_array_length_mutations(contract_name="StateTransitionTest")
         func_ids = [m["function_id"] for m in mutations]
-        assert "StateTransitionTest::popData" in func_ids, (
-            "popData should appear in array_length_mutations query"
-        )
+        assert "StateTransitionTest::popData" in func_ids, "popData should appear in array_length_mutations query"
 
     def test_array_length_mutation_in_risk_categories(self, graph_and_queries):
         graph, _ = graph_and_queries
@@ -313,8 +264,8 @@ class TestArrayLengthMutation:
 #  Story 6.3 — Delegatecall Storage Collision Detection
 # ════════════════════════════════════════════════════════════
 
-class TestDelegatecallStorageRisk:
 
+class TestDelegatecallStorageRisk:
     def test_unsafe_delegatecall_flagged(self, graph_and_queries):
         """unsafeDelegatecall: attacker-controlled target + state write after."""
         graph, _ = graph_and_queries
@@ -355,15 +306,12 @@ class TestDelegatecallStorageRisk:
             pytest.skip("unsafeDelegatecall node not found")
         categories = graph.nodes[func_id].get("risk_categories", [])
         assert "delegatecall_storage_risk" in categories, (
-            f"unsafeDelegatecall risk_categories should contain "
-            f"'delegatecall_storage_risk', got {categories}"
+            f"unsafeDelegatecall risk_categories should contain 'delegatecall_storage_risk', got {categories}"
         )
 
     def test_delegatecall_storage_risks_query(self, graph_and_queries):
         _, queries = graph_and_queries
-        risks = queries.get_delegatecall_storage_risks(
-            contract_name="StateTransitionTest"
-        )
+        risks = queries.get_delegatecall_storage_risks(contract_name="StateTransitionTest")
         func_ids = [r["function_id"] for r in risks]
         assert "StateTransitionTest::unsafeDelegatecall" in func_ids
 
@@ -379,6 +327,7 @@ class TestDelegatecallStorageRisk:
 # ════════════════════════════════════════════════════════════
 #  Cross-cutting: Existing Tests Must Not Regress
 # ════════════════════════════════════════════════════════════
+
 
 class TestBackwardCompatibility:
     """WRITES-based metadata must remain correct after Epic 6 changes."""

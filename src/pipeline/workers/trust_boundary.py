@@ -133,8 +133,10 @@ class TrustBoundaryAnalyzer(WorkerAgent):
 
         if not sol_files:
             return WorkerOutput(
-                worker_type=self.get_worker_type(), task_id=task.task_id,
-                hypothesis="No source files provided.", confidence=0,
+                worker_type=self.get_worker_type(),
+                task_id=task.task_id,
+                hypothesis="No source files provided.",
+                confidence=0,
             )
 
         source_text = self._read_source_files(sol_files, max_chars=max_chars)
@@ -142,18 +144,20 @@ class TrustBoundaryAnalyzer(WorkerAgent):
 
         messages = [
             {"role": "system", "content": TRUST_BOUNDARY_SYSTEM_PROMPT},
-            {"role": "user", "content": f"## Protocol Context\nProtocol type: {protocol_type}\n\n## Source Code\n```solidity\n{source_text}\n```\n\nAnalyze trust boundaries, access control, proxy patterns, and privilege escalation vectors. Return JSON."},
+            {
+                "role": "user",
+                "content": f"## Protocol Context\nProtocol type: {protocol_type}\n\n## Source Code\n```solidity\n{source_text}\n```\n\nAnalyze trust boundaries, access control, proxy patterns, and privilege escalation vectors. Return JSON.",
+            },
         ]
 
         try:
             response = await asyncio.wait_for(
-                self.llm.ainvoke(messages), timeout=TRUST_LLM_TIMEOUT,
+                self.llm.ainvoke(messages),
+                timeout=TRUST_LLM_TIMEOUT,
             )
             content = response.content if hasattr(response, "content") else str(response)
             if isinstance(content, list):
-                content = "".join(
-                    c.get("text", "") if isinstance(c, dict) else str(c) for c in content
-                )
+                content = "".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in content)
             return self._parse_response(content, task.task_id)
         except TimeoutError:
             logger.warning("[TrustBoundary] LLM timed out")
@@ -193,14 +197,17 @@ class TrustBoundaryAnalyzer(WorkerAgent):
 
             if not findings_list:
                 return WorkerOutput(
-                    worker_type=self.get_worker_type(), task_id=task_id,
-                    hypothesis="No trust boundary violations found.", confidence=0,
+                    worker_type=self.get_worker_type(),
+                    task_id=task_id,
+                    hypothesis="No trust boundary violations found.",
+                    confidence=0,
                     raw_output=parsed,
                 )
 
             best = max(findings_list, key=lambda f: f.get("confidence", 0))
             return WorkerOutput(
-                worker_type=self.get_worker_type(), task_id=task_id,
+                worker_type=self.get_worker_type(),
+                task_id=task_id,
                 hypothesis=best.get("hypothesis", ""),
                 confidence=min(100, max(0, int(best.get("confidence", 50)))),
                 attack_path=best.get("attack_path", []),

@@ -12,7 +12,6 @@ from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class FileEditTool(Tool):
-
     def name(self) -> str:
         return "file_edit"
 
@@ -94,8 +93,7 @@ class FileEditTool(Tool):
         count = content.count(old_string)
         if count == 0:
             return ToolResult.error(
-                f"old_string not found in {p}. "
-                "Make sure you're using the exact text from the file."
+                f"old_string not found in {p}. Make sure you're using the exact text from the file."
             )
         if count > 1 and not replace_all:
             return ToolResult.error(
@@ -115,6 +113,4 @@ class FileEditTool(Tool):
 
         replacements = count if replace_all else 1
         ctx.record_file_access(str(p), "edit")
-        return ToolResult.success(
-            f"Edited {p}: {replacements} replacement(s) made."
-        )
+        return ToolResult.success(f"Edited {p}: {replacements} replacement(s) made.")

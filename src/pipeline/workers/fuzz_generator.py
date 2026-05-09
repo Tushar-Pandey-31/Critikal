@@ -2,6 +2,7 @@
 Fuzz Generator Worker — Constructs property-based invariant tests
 using Foundry for highly critical findings.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -13,6 +14,7 @@ from src.pipeline.base_worker import WorkerAgent, WorkerOutput, WorkerTask
 from src.pipeline.workers.test_writer_sandbox import SandboxManager
 
 logger = logging.getLogger(__name__)
+
 
 class FuzzGeneratorWorker(WorkerAgent):
     """
@@ -33,7 +35,9 @@ class FuzzGeneratorWorker(WorkerAgent):
     async def run(self, task: WorkerTask) -> WorkerOutput:
         finding: Finding | None = task.context.get("finding")
         if not finding:
-            return WorkerOutput(worker_type=self.get_worker_type(), confidence=0, raw_output={"error": "Missing finding in context"})
+            return WorkerOutput(
+                worker_type=self.get_worker_type(), confidence=0, raw_output={"error": "Missing finding in context"}
+            )
 
         poc_code = task.context.get("poc_code", "")
         repo_path = task.context.get("repo_path")
@@ -57,8 +61,7 @@ class FuzzGeneratorWorker(WorkerAgent):
 
             try:
                 response = await asyncio.wait_for(
-                    asyncio.to_thread(self.llm_client.invoke, prompt),
-                    timeout=self.LLM_TIMEOUT
+                    asyncio.to_thread(self.llm_client.invoke, prompt), timeout=self.LLM_TIMEOUT
                 )
                 content = response.content if hasattr(response, "content") else str(response)
 
@@ -94,8 +97,8 @@ class FuzzGeneratorWorker(WorkerAgent):
                             "compiled": True,
                             "violation_found": False,
                             "attempts": attempts,
-                            "logs": test_res.logs
-                        }
+                            "logs": test_res.logs,
+                        },
                     )
                 else:
                     print("  [Fuzzer] INVARIANT BROKEN! Fuzzing successful.")
@@ -113,20 +116,19 @@ class FuzzGeneratorWorker(WorkerAgent):
                             "compiled": True,
                             "violation_found": True,
                             "attempts": attempts,
-                            "logs": test_res.logs
-                        }
+                            "logs": test_res.logs,
+                        },
                     )
 
             except Exception as e:
                 logger.error(f"[Fuzzer] LLM or execution error: {e}")
                 error_history.append(f"Exception: {e}")
 
-
         # If we exit the loop, we failed to fuzz
         print(f"  [Fuzzer] Failed to generate working fuzz test after {self.MAX_ATTEMPTS} attempts.")
         return WorkerOutput(
             worker_type=self.get_worker_type(),
-            confidence=finding.confidence, # Unchanged
+            confidence=finding.confidence,  # Unchanged
             hypothesis=finding.hypothesis,
             evidence_node_ids=[e.node_id for e in finding.evidence_nodes],
             attack_path=finding.attack_path,
@@ -135,8 +137,8 @@ class FuzzGeneratorWorker(WorkerAgent):
                 "compiled": False,
                 "violation_found": False,
                 "attempts": attempts,
-                "logs": last_error
-            }
+                "logs": last_error,
+            },
         )
 
     def _build_prompt(self, finding: Finding, poc_code: str, sources: dict[str, str], errors: list[str]) -> list[dict]:
@@ -172,10 +174,7 @@ class FuzzGeneratorWorker(WorkerAgent):
 
         user_msg += "Write a complete Foundry test contract named `FuzzTest` inheriting from `Test` with an `invariant_...` or `testFuzz_...` function."
 
-        return [
-            {"role": "system", "content": sys_msg},
-            {"role": "user", "content": user_msg}
-        ]
+        return [{"role": "system", "content": sys_msg}, {"role": "user", "content": user_msg}]
 
     def _extract_code(self, text: str) -> str:
         match = re.search(r"```(?:solidity|sol)(.*?)```", text, re.DOTALL | re.IGNORECASE)
@@ -191,6 +190,7 @@ class FuzzGeneratorWorker(WorkerAgent):
             return {}
 
         from pathlib import Path
+
         src = {}
         target_name = finding.affected_contract
 

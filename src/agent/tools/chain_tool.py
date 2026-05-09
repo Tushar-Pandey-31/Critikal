@@ -11,7 +11,6 @@ from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 
 class ChainAnalysisTool(Tool):
-
     def name(self) -> str:
         return "run_chain_analysis"
 
@@ -49,14 +48,12 @@ class ChainAnalysisTool(Tool):
 
         chain_count = len(chains) if chains else 0
         upgraded = 0
-        for chain in (chains or []):
+        for chain in chains or []:
             if getattr(chain, "severity_upgraded", False):
                 upgraded += 1
 
         return ToolResult.success(
-            f"Chain analysis complete.\n"
-            f"Chains discovered: {chain_count}\n"
-            f"Severity upgrades: {upgraded}",
+            f"Chain analysis complete.\nChains discovered: {chain_count}\nSeverity upgrades: {upgraded}",
             chains=chain_count,
             upgrades=upgraded,
         )

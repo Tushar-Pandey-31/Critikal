@@ -118,11 +118,13 @@ class GraphQueries:
         if node_data.get("type") != "function":
             return {"error": "Node is not a function"}
         callers = [
-            n for n in self.graph.predecessors(normalized)
+            n
+            for n in self.graph.predecessors(normalized)
             if self.graph.get_edge_data(n, normalized).get("relationship") == "CALLS"
         ]
         callees = [
-            n for n in self.graph.successors(normalized)
+            n
+            for n in self.graph.successors(normalized)
             if self.graph.get_edge_data(normalized, n).get("relationship") == "CALLS"
         ]
         source_code = node_data.get("source_code", "")
@@ -131,7 +133,7 @@ class GraphQueries:
             "source_code": source_code,
             "code": source_code,
             "callers": callers,
-            "callees": callees
+            "callees": callees,
         }
 
     def find_state_mutators(self, variable_name: str) -> list[str]:
@@ -139,7 +141,8 @@ class GraphQueries:
         if not self.graph.has_node(normalized):
             return []
         return [
-            n for n in self.graph.predecessors(normalized)
+            n
+            for n in self.graph.predecessors(normalized)
             if self.graph.get_edge_data(n, normalized).get("relationship") == "WRITES"
         ]
 
@@ -158,14 +161,16 @@ class GraphQueries:
             if node_data.get("type") == "function" and node_data.get("is_external_entry"):
                 if contract_name and node_data.get("contract") != contract_name:
                     continue
-                entry_points.append({
-                    "node_id": node_id,
-                    "name": node_data.get("name"),
-                    "contract": node_data.get("contract"),
-                    "visibility": node_data.get("visibility"),
-                    "is_payable": node_data.get("is_payable", False),
-                    "modifiers": node_data.get("modifiers", [])
-                })
+                entry_points.append(
+                    {
+                        "node_id": node_id,
+                        "name": node_data.get("name"),
+                        "contract": node_data.get("contract"),
+                        "visibility": node_data.get("visibility"),
+                        "is_payable": node_data.get("is_payable", False),
+                        "modifiers": node_data.get("modifiers", []),
+                    }
+                )
         return entry_points
 
     def get_state_mutators(self, contract_name: str | None = None) -> list[dict[str, Any]]:
@@ -174,15 +179,17 @@ class GraphQueries:
             if node_data.get("type") == "function" and node_data.get("writes_state"):
                 if contract_name and node_data.get("contract") != contract_name:
                     continue
-                mutators.append({
-                    "function_id": node_id,
-                    "name": node_data.get("name"),
-                    "contract_name": node_data.get("contract"),
-                    "num_state_writes": node_data.get("num_state_writes", 0),
-                    "state_variables_written": node_data.get("state_variables_written", []),
-                    "visibility": node_data.get("visibility"),
-                    "modifiers": node_data.get("modifiers", [])
-                })
+                mutators.append(
+                    {
+                        "function_id": node_id,
+                        "name": node_data.get("name"),
+                        "contract_name": node_data.get("contract"),
+                        "num_state_writes": node_data.get("num_state_writes", 0),
+                        "state_variables_written": node_data.get("state_variables_written", []),
+                        "visibility": node_data.get("visibility"),
+                        "modifiers": node_data.get("modifiers", []),
+                    }
+                )
         return mutators
 
     def get_internal_calls(self, function_id: str) -> list[str]:
@@ -197,7 +204,8 @@ class GraphQueries:
         if not self.graph.has_node(function_id):
             return []
         return [
-            n for n in self.graph.predecessors(function_id)
+            n
+            for n in self.graph.predecessors(function_id)
             if self.graph.get_edge_data(n, function_id).get("relationship") in ("CALLS", "CROSS_CONTRACT_CALL")
         ]
 
@@ -209,24 +217,22 @@ class GraphQueries:
                 continue
             if contract_name and node_data.get("contract") != contract_name:
                 continue
-            nodes.append({
-                "id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "is_external_entry": node_data.get("is_external_entry", False),
-                "is_leaf_function": node_data.get("is_leaf_function", False),
-                "num_internal_calls": node_data.get("num_internal_calls", 0)
-            })
+            nodes.append(
+                {
+                    "id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "is_external_entry": node_data.get("is_external_entry", False),
+                    "is_leaf_function": node_data.get("is_leaf_function", False),
+                    "num_internal_calls": node_data.get("num_internal_calls", 0),
+                }
+            )
         node_ids = {n["id"] for n in nodes}
         for source, target, edge_data in self.graph.edges(data=True):
             if edge_data.get("relationship") != "CALLS":
                 continue
             if source in node_ids and target in node_ids:
-                edges.append({
-                    "source": source,
-                    "target": target,
-                    "call_type": edge_data.get("call_type", "internal")
-                })
+                edges.append({"source": source, "target": target, "call_type": edge_data.get("call_type", "internal")})
         return {"nodes": nodes, "edges": edges}
 
     def get_modifier_details(self, modifier_name: str, contract_name: str | None = None) -> dict[str, Any]:
@@ -244,7 +250,7 @@ class GraphQueries:
                 "conditions": node_data.get("conditions", []),
                 "accesses_state_variables": node_data.get("accesses_state_variables", []),
                 "is_access_control": node_data.get("is_access_control", False),
-                "access_control_pattern": node_data.get("access_control_pattern", "none")
+                "access_control_pattern": node_data.get("access_control_pattern", "none"),
             }
         return {"error": f"Modifier '{modifier_name}' not found"}
 
@@ -255,19 +261,21 @@ class GraphQueries:
                 continue
             if contract_name and node_data.get("contract") != contract_name:
                 continue
-            results.append({
-                "function_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "visibility": node_data.get("visibility"),
-                "modifiers": node_data.get("modifiers", []),
-                "has_access_control": node_data.get("has_access_control", False),
-                "access_control_modifiers": node_data.get("access_control_modifiers", []),
-                "has_inline_access_check": node_data.get("has_inline_access_check", False),
-                "is_protected": node_data.get("is_protected", False),
-                "writes_state": node_data.get("writes_state", False),
-                "is_external_entry": node_data.get("is_external_entry", False)
-            })
+            results.append(
+                {
+                    "function_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "visibility": node_data.get("visibility"),
+                    "modifiers": node_data.get("modifiers", []),
+                    "has_access_control": node_data.get("has_access_control", False),
+                    "access_control_modifiers": node_data.get("access_control_modifiers", []),
+                    "has_inline_access_check": node_data.get("has_inline_access_check", False),
+                    "is_protected": node_data.get("is_protected", False),
+                    "writes_state": node_data.get("writes_state", False),
+                    "is_external_entry": node_data.get("is_external_entry", False),
+                }
+            )
         return results
 
     def get_privileged_roles(self, contract_name: str | None = None) -> list[dict[str, Any]]:
@@ -290,15 +298,17 @@ class GraphQueries:
                 continue
             if contract_name and node_data.get("contract") != contract_name:
                 continue
-            results.append({
-                "function_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "state_variables_written": node_data.get("state_variables_written", []),
-                "risk_level": node_data.get("unprotected_risk_level", "MEDIUM"),
-                "visibility": node_data.get("visibility"),
-                "is_payable": node_data.get("is_payable", False)
-            })
+            results.append(
+                {
+                    "function_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "state_variables_written": node_data.get("state_variables_written", []),
+                    "risk_level": node_data.get("unprotected_risk_level", "MEDIUM"),
+                    "visibility": node_data.get("visibility"),
+                    "is_payable": node_data.get("is_payable", False),
+                }
+            )
         return results
 
     def get_external_call_functions(self, contract_name: str | None = None) -> list[dict[str, Any]]:
@@ -310,17 +320,19 @@ class GraphQueries:
                 continue
             if contract_name and node_data.get("contract") != contract_name:
                 continue
-            results.append({
-                "function_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "external_call_type": node_data.get("external_call_type", []),
-                "external_call_nodes": node_data.get("external_call_nodes", []),
-                "state_write_after_external_call": node_data.get("state_write_after_external_call", False),
-                "state_write_after_reentrant_call": node_data.get("state_write_after_reentrant_call", False),
-                "visibility": node_data.get("visibility"),
-                "is_payable": node_data.get("is_payable", False),
-            })
+            results.append(
+                {
+                    "function_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "external_call_type": node_data.get("external_call_type", []),
+                    "external_call_nodes": node_data.get("external_call_nodes", []),
+                    "state_write_after_external_call": node_data.get("state_write_after_external_call", False),
+                    "state_write_after_reentrant_call": node_data.get("state_write_after_reentrant_call", False),
+                    "visibility": node_data.get("visibility"),
+                    "is_payable": node_data.get("is_payable", False),
+                }
+            )
         return results
 
     def get_external_call_edges(self, function_id: str) -> list[dict[str, Any]]:
@@ -331,13 +343,15 @@ class GraphQueries:
         for _, target, data in self.graph.out_edges(function_id, data=True):
             if data.get("relationship") != "EXTERNAL_CALL":
                 continue
-            edges.append({
-                "target": target,
-                "call_type": data.get("call_type", "unknown"),
-                "forwards_gas": data.get("forwards_gas", "unknown"),
-                "target_expression": data.get("target_expression", ""),
-                "return_value_checked": data.get("return_value_checked", False),
-            })
+            edges.append(
+                {
+                    "target": target,
+                    "call_type": data.get("call_type", "unknown"),
+                    "forwards_gas": data.get("forwards_gas", "unknown"),
+                    "target_expression": data.get("target_expression", ""),
+                    "return_value_checked": data.get("return_value_checked", False),
+                }
+            )
         return edges
 
     def get_reentrancy_risks(self, contract_name: str | None = None) -> list[dict[str, Any]]:
@@ -349,17 +363,19 @@ class GraphQueries:
                 continue
             if contract_name and node_data.get("contract") != contract_name:
                 continue
-            results.append({
-                "function_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "reentrancy_risk_score": node_data.get("reentrancy_risk_score", 0),
-                "external_call_type": node_data.get("external_call_type", []),
-                "propagated_state_variables": node_data.get("propagated_state_variables", []),
-                "visibility": node_data.get("visibility"),
-                "is_payable": node_data.get("is_payable", False),
-                "read_only_reentrancy_risk": node_data.get("read_only_reentrancy_risk", False),
-            })
+            results.append(
+                {
+                    "function_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "reentrancy_risk_score": node_data.get("reentrancy_risk_score", 0),
+                    "external_call_type": node_data.get("external_call_type", []),
+                    "propagated_state_variables": node_data.get("propagated_state_variables", []),
+                    "visibility": node_data.get("visibility"),
+                    "is_payable": node_data.get("is_payable", False),
+                    "read_only_reentrancy_risk": node_data.get("read_only_reentrancy_risk", False),
+                }
+            )
         return results
 
     def get_cei_violations(self, contract_name: str | None = None) -> list[dict[str, Any]]:
@@ -373,14 +389,16 @@ class GraphQueries:
                 continue
             if contract_name and node_data.get("contract") != contract_name:
                 continue
-            results.append({
-                "function_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "external_call_type": node_data.get("external_call_type", []),
-                "propagated_state_variables": node_data.get("propagated_state_variables", []),
-                "visibility": node_data.get("visibility"),
-            })
+            results.append(
+                {
+                    "function_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "external_call_type": node_data.get("external_call_type", []),
+                    "propagated_state_variables": node_data.get("propagated_state_variables", []),
+                    "visibility": node_data.get("visibility"),
+                }
+            )
         return results
 
     # ════════════════════════════════════════════════════════════
@@ -421,24 +439,24 @@ class GraphQueries:
                 if func_data.get("contract") != contract_name:
                     continue
 
-            results.append({
-                "transition_id": node_id,
-                "function": node_data.get("function"),
-                "variable": node_data.get("variable"),
-                "operation": node_data.get("operation"),
-                "is_array_length": node_data.get("is_array_length", False),
-                "is_array": node_data.get("is_array", False),
-                "is_mapping": node_data.get("is_mapping", False),
-                "is_owner_assignment": node_data.get("is_owner_assignment", False),
-                "attacker_controlled_input": node_data.get("attacker_controlled_input", False),
-                "affects_privileged_var": node_data.get("affects_privileged_var", False),
-                "ir_expression": node_data.get("ir_expression", ""),
-            })
+            results.append(
+                {
+                    "transition_id": node_id,
+                    "function": node_data.get("function"),
+                    "variable": node_data.get("variable"),
+                    "operation": node_data.get("operation"),
+                    "is_array_length": node_data.get("is_array_length", False),
+                    "is_array": node_data.get("is_array", False),
+                    "is_mapping": node_data.get("is_mapping", False),
+                    "is_owner_assignment": node_data.get("is_owner_assignment", False),
+                    "attacker_controlled_input": node_data.get("attacker_controlled_input", False),
+                    "affects_privileged_var": node_data.get("affects_privileged_var", False),
+                    "ir_expression": node_data.get("ir_expression", ""),
+                }
+            )
         return results
 
-    def get_array_length_mutations(
-        self, contract_name: str | None = None
-    ) -> list[dict[str, Any]]:
+    def get_array_length_mutations(self, contract_name: str | None = None) -> list[dict[str, Any]]:
         """
         Story 6.2: Returns functions that contain array length mutation
         primitives (pop / decrement_length on dynamic arrays).
@@ -451,18 +469,18 @@ class GraphQueries:
                 continue
             if contract_name and node_data.get("contract") != contract_name:
                 continue
-            results.append({
-                "function_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "visibility": node_data.get("visibility"),
-                "is_protected": node_data.get("is_protected", False),
-            })
+            results.append(
+                {
+                    "function_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "visibility": node_data.get("visibility"),
+                    "is_protected": node_data.get("is_protected", False),
+                }
+            )
         return results
 
-    def get_delegatecall_storage_risks(
-        self, contract_name: str | None = None
-    ) -> list[dict[str, Any]]:
+    def get_delegatecall_storage_risks(self, contract_name: str | None = None) -> list[dict[str, Any]]:
         """
         Story 6.3: Returns functions flagged with DELEGATECALL_STORAGE_RISK.
         """
@@ -474,25 +492,23 @@ class GraphQueries:
                 continue
             if contract_name and node_data.get("contract") != contract_name:
                 continue
-            results.append({
-                "function_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "visibility": node_data.get("visibility"),
-                "external_call_type": node_data.get("external_call_type", []),
-                "state_write_after_external_call": node_data.get(
-                    "state_write_after_external_call", False
-                ),
-            })
+            results.append(
+                {
+                    "function_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "visibility": node_data.get("visibility"),
+                    "external_call_type": node_data.get("external_call_type", []),
+                    "state_write_after_external_call": node_data.get("state_write_after_external_call", False),
+                }
+            )
         return results
 
     # ════════════════════════════════════════════════════════════
     #  Epic 7 — Contract Tier Queries
     # ════════════════════════════════════════════════════════════
 
-    def get_contract_tiers(
-        self, tier: str | None = None
-    ) -> list[dict[str, Any]]:
+    def get_contract_tiers(self, tier: str | None = None) -> list[dict[str, Any]]:
         """
         Returns contract-level tier classifications.
 
@@ -506,13 +522,15 @@ class GraphQueries:
             contract_tier = node_data.get("tier", "INFRA")
             if tier and contract_tier != tier:
                 continue
-            results.append({
-                "contract": node_id,
-                "tier": contract_tier,
-                "is_library": node_data.get("is_library", False),
-                "is_interface": node_data.get("is_interface", False),
-                "is_upgradeable": node_data.get("is_upgradeable", False),
-            })
+            results.append(
+                {
+                    "contract": node_id,
+                    "tier": contract_tier,
+                    "is_library": node_data.get("is_library", False),
+                    "is_interface": node_data.get("is_interface", False),
+                    "is_upgradeable": node_data.get("is_upgradeable", False),
+                }
+            )
         return results
 
     # ════════════════════════════════════════════════════════════
@@ -529,15 +547,17 @@ class GraphQueries:
                 continue
             if contract_name and node_data.get("contract") != contract_name:
                 continue
-            results.append({
-                "function_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "has_initializer_guard": True,
-                "safe_init_pattern": node_data.get("safe_init_pattern", False),
-                "has_initializer_modifier": node_data.get("has_initializer_modifier", False),
-                "is_protected": node_data.get("is_protected", False),
-            })
+            results.append(
+                {
+                    "function_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "has_initializer_guard": True,
+                    "safe_init_pattern": node_data.get("safe_init_pattern", False),
+                    "has_initializer_modifier": node_data.get("has_initializer_modifier", False),
+                    "is_protected": node_data.get("is_protected", False),
+                }
+            )
         return results
 
     def get_access_control_types(self, contract_name: str | None = None) -> list[dict[str, Any]]:
@@ -551,15 +571,17 @@ class GraphQueries:
             ac_type = node_data.get("access_control_type", "none")
             if ac_type == "none":
                 continue
-            results.append({
-                "function_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "access_control_type": ac_type,
-                "require_access_control_targets": node_data.get("require_access_control_targets", []),
-                "modifier_equivalences": node_data.get("modifier_equivalences", {}),
-                "is_protected": node_data.get("is_protected", False),
-            })
+            results.append(
+                {
+                    "function_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "access_control_type": ac_type,
+                    "require_access_control_targets": node_data.get("require_access_control_targets", []),
+                    "modifier_equivalences": node_data.get("modifier_equivalences", {}),
+                    "is_protected": node_data.get("is_protected", False),
+                }
+            )
         return results
 
     def get_modifier_equivalences(self, contract_name: str | None = None) -> list[dict[str, Any]]:
@@ -570,13 +592,15 @@ class GraphQueries:
                 continue
             if contract_name and node_data.get("contract") != contract_name:
                 continue
-            results.append({
-                "modifier_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "semantic_category": node_data.get("semantic_category", "custom"),
-                "is_access_control": node_data.get("is_access_control", False),
-            })
+            results.append(
+                {
+                    "modifier_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "semantic_category": node_data.get("semantic_category", "custom"),
+                    "is_access_control": node_data.get("is_access_control", False),
+                }
+            )
         return results
 
     def get_safe_functions(self, contract_name: str | None = None) -> list[dict[str, Any]]:
@@ -603,14 +627,16 @@ class GraphQueries:
             if not safe_reasons:
                 continue
 
-            results.append({
-                "function_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "safe_reasons": safe_reasons,
-                "risk_categories": node_data.get("risk_categories", []),
-                "final_score": node_data.get("final_score", 0),
-            })
+            results.append(
+                {
+                    "function_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "safe_reasons": safe_reasons,
+                    "risk_categories": node_data.get("risk_categories", []),
+                    "final_score": node_data.get("final_score", 0),
+                }
+            )
         return results
 
     # ════════════════════════════════════════════════════════════
@@ -627,16 +653,18 @@ class GraphQueries:
                 continue
             if contract_name and node_data.get("contract") != contract_name:
                 continue
-            results.append({
-                "function_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "taint_sources": node_data.get("taint_sources", []),
-                "taint_risk_types": node_data.get("taint_risk_types", []),
-                "taint_critical_paths": node_data.get("taint_critical_paths", []),
-                "taint_risk_score": node_data.get("taint_risk_score", 0),
-                "cross_function_taint_paths": node_data.get("cross_function_taint_paths", []),
-            })
+            results.append(
+                {
+                    "function_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "taint_sources": node_data.get("taint_sources", []),
+                    "taint_risk_types": node_data.get("taint_risk_types", []),
+                    "taint_critical_paths": node_data.get("taint_critical_paths", []),
+                    "taint_risk_score": node_data.get("taint_risk_score", 0),
+                    "cross_function_taint_paths": node_data.get("cross_function_taint_paths", []),
+                }
+            )
         results.sort(key=lambda x: x["taint_risk_score"], reverse=True)
         return results
 
@@ -650,16 +678,18 @@ class GraphQueries:
                 continue
             if contract_name and node_data.get("contract") != contract_name:
                 continue
-            results.append({
-                "variable_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "sensitivity_tags": node_data.get("sensitivity_tags", []),
-                "sensitivity_tag": node_data.get("sensitivity_tag"),
-                "tainted": node_data.get("tainted", False),
-                "taint_sources": node_data.get("taint_sources", []),
-                "tainted_by_functions": node_data.get("tainted_by_functions", []),
-            })
+            results.append(
+                {
+                    "variable_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "sensitivity_tags": node_data.get("sensitivity_tags", []),
+                    "sensitivity_tag": node_data.get("sensitivity_tag"),
+                    "tainted": node_data.get("tainted", False),
+                    "taint_sources": node_data.get("taint_sources", []),
+                    "tainted_by_functions": node_data.get("tainted_by_functions", []),
+                }
+            )
         return results
 
     def get_tainted_variables(self, contract_name: str | None = None) -> list[dict[str, Any]]:
@@ -672,14 +702,16 @@ class GraphQueries:
                 continue
             if contract_name and node_data.get("contract") != contract_name:
                 continue
-            results.append({
-                "variable_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "sensitivity_tags": node_data.get("sensitivity_tags", []),
-                "taint_sources": node_data.get("taint_sources", []),
-                "tainted_by_functions": node_data.get("tainted_by_functions", []),
-            })
+            results.append(
+                {
+                    "variable_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "sensitivity_tags": node_data.get("sensitivity_tags", []),
+                    "taint_sources": node_data.get("taint_sources", []),
+                    "tainted_by_functions": node_data.get("tainted_by_functions", []),
+                }
+            )
         return results
 
     def get_taint_risks(
@@ -705,15 +737,17 @@ class GraphQueries:
             func_risks = node_data.get("taint_risk_types", [])
             if risk_type and risk_type not in func_risks:
                 continue
-            results.append({
-                "function_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "taint_risk_types": func_risks,
-                "taint_risk_score": node_data.get("taint_risk_score", 0),
-                "tainted_state_writes": node_data.get("tainted_state_writes", []),
-                "unchecked_external_return": node_data.get("unchecked_external_return", False),
-            })
+            results.append(
+                {
+                    "function_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "taint_risk_types": func_risks,
+                    "taint_risk_score": node_data.get("taint_risk_score", 0),
+                    "tainted_state_writes": node_data.get("tainted_state_writes", []),
+                    "unchecked_external_return": node_data.get("unchecked_external_return", False),
+                }
+            )
         results.sort(key=lambda x: x["taint_risk_score"], reverse=True)
         return results
 
@@ -730,13 +764,15 @@ class GraphQueries:
             src_data = self.graph.nodes.get(src, {})
             if contract_name and src_data.get("contract") != contract_name:
                 continue
-            results.append({
-                "writer": src,
-                "reader": dst,
-                "shared_variables": edge_data.get("shared_variables", []),
-                "dependency_type": edge_data.get("dependency_type", ""),
-                "sensitivity_overlap": edge_data.get("sensitivity_overlap", []),
-            })
+            results.append(
+                {
+                    "writer": src,
+                    "reader": dst,
+                    "shared_variables": edge_data.get("shared_variables", []),
+                    "dependency_type": edge_data.get("dependency_type", ""),
+                    "sensitivity_overlap": edge_data.get("sensitivity_overlap", []),
+                }
+            )
         return results
 
     def get_dangerous_sequences(self, contract_name: str | None = None) -> list[dict[str, Any]]:
@@ -749,13 +785,15 @@ class GraphQueries:
                 continue
             if contract_name and node_data.get("contract") != contract_name:
                 continue
-            results.append({
-                "function_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "dangerous_sequences": node_data.get("dangerous_sequences", []),
-                "sequence_risk_score": node_data.get("sequence_risk_score", 0),
-            })
+            results.append(
+                {
+                    "function_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "dangerous_sequences": node_data.get("dangerous_sequences", []),
+                    "sequence_risk_score": node_data.get("sequence_risk_score", 0),
+                }
+            )
         results.sort(key=lambda x: x["sequence_risk_score"], reverse=True)
         return results
 
@@ -781,17 +819,19 @@ class GraphQueries:
             for chain in node_data.get("exploit_chains", []):
                 if chain.get("chain_length", 0) < min_length:
                     continue
-                results.append({
-                    "entry_function": node_id,
-                    "contract": node_data.get("contract"),
-                    "steps": chain.get("steps", []),
-                    "exploit_sequence": chain.get("exploit_sequence", []),
-                    "shared_variables": chain.get("shared_variables", []),
-                    "sensitivity": chain.get("sensitivity", []),
-                    "danger_types": chain.get("danger_types", []),
-                    "chain_length": chain.get("chain_length", 0),
-                    "chain_score": chain.get("chain_score", 0),
-                })
+                results.append(
+                    {
+                        "entry_function": node_id,
+                        "contract": node_data.get("contract"),
+                        "steps": chain.get("steps", []),
+                        "exploit_sequence": chain.get("exploit_sequence", []),
+                        "shared_variables": chain.get("shared_variables", []),
+                        "sensitivity": chain.get("sensitivity", []),
+                        "danger_types": chain.get("danger_types", []),
+                        "chain_length": chain.get("chain_length", 0),
+                        "chain_score": chain.get("chain_score", 0),
+                    }
+                )
         results.sort(key=lambda x: x["chain_score"], reverse=True)
         return results
 
@@ -826,16 +866,18 @@ class GraphQueries:
                 + node_data.get("reward_drift_score", 0)
                 + node_data.get("monotonicity_score", 0)
             )
-            results.append({
-                "function_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "supply_consistency_flags": node_data.get("supply_consistency_flags", []),
-                "cap_enforcement_flags": node_data.get("cap_enforcement_flags", []),
-                "reward_drift_flags": node_data.get("reward_drift_flags", []),
-                "monotonicity_flags": node_data.get("monotonicity_flags", []),
-                "accounting_invariant_score": score,
-            })
+            results.append(
+                {
+                    "function_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "supply_consistency_flags": node_data.get("supply_consistency_flags", []),
+                    "cap_enforcement_flags": node_data.get("cap_enforcement_flags", []),
+                    "reward_drift_flags": node_data.get("reward_drift_flags", []),
+                    "monotonicity_flags": node_data.get("monotonicity_flags", []),
+                    "accounting_invariant_score": score,
+                }
+            )
         results.sort(key=lambda x: x["accounting_invariant_score"], reverse=True)
         return results
 
@@ -858,15 +900,17 @@ class GraphQueries:
             if risk_tag and risk_tag not in tags:
                 continue
 
-            results.append({
-                "function_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "external_risk_tags": tags,
-                "external_call_risk_score": node_data.get("external_call_risk_score", 0),
-                "state_write_after_external_call": node_data.get("state_write_after_external_call", False),
-                "unchecked_external_return": node_data.get("unchecked_external_return", False),
-            })
+            results.append(
+                {
+                    "function_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "external_risk_tags": tags,
+                    "external_call_risk_score": node_data.get("external_call_risk_score", 0),
+                    "state_write_after_external_call": node_data.get("state_write_after_external_call", False),
+                    "unchecked_external_return": node_data.get("unchecked_external_return", False),
+                }
+            )
         results.sort(key=lambda x: x["external_call_risk_score"], reverse=True)
         return results
 
@@ -889,15 +933,17 @@ class GraphQueries:
                 continue
             if not node_data.get("send_to_exploit_writer", False):
                 continue
-            results.append({
-                "function_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "exploit_target_score": exploit_score,
-                "exploit_target_threshold": node_data.get("exploit_target_threshold", 65),
-                "final_score": node_data.get("final_score", node_data.get("risk_score", 0)),
-                "risk_categories": node_data.get("risk_categories", []),
-            })
+            results.append(
+                {
+                    "function_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "exploit_target_score": exploit_score,
+                    "exploit_target_threshold": node_data.get("exploit_target_threshold", 65),
+                    "final_score": node_data.get("final_score", node_data.get("risk_score", 0)),
+                    "risk_categories": node_data.get("risk_categories", []),
+                }
+            )
         results.sort(key=lambda x: x["exploit_target_score"], reverse=True)
         return results
 
@@ -908,23 +954,27 @@ class GraphQueries:
             if node_data.get("type") == "function" and node_data.get("can_escalate_privileges"):
                 if contract_name and node_data.get("contract") != contract_name:
                     continue
-                risky_functions.append({
-                    "function_id": node_id,
-                    "name": node_data.get("name"),
-                    "contract": node_data.get("contract"),
-                    "visibility": node_data.get("visibility"),
-                    "is_payable": node_data.get("is_payable", False)
-                })
+                risky_functions.append(
+                    {
+                        "function_id": node_id,
+                        "name": node_data.get("name"),
+                        "contract": node_data.get("contract"),
+                        "visibility": node_data.get("visibility"),
+                        "is_payable": node_data.get("is_payable", False),
+                    }
+                )
             if node_data.get("type") == "state_variable" and node_data.get("privilege_escalation_risk"):
                 if contract_name and node_data.get("contract") != contract_name:
                     continue
-                risky_variables.append({
-                    "variable_id": node_id,
-                    "name": node_data.get("name"),
-                    "contract": node_data.get("contract"),
-                    "roles_using": node_data.get("roles_using_variable", []),
-                    "risky_mutators": node_data.get("risky_mutators", [])
-                })
+                risky_variables.append(
+                    {
+                        "variable_id": node_id,
+                        "name": node_data.get("name"),
+                        "contract": node_data.get("contract"),
+                        "roles_using": node_data.get("roles_using_variable", []),
+                        "risky_mutators": node_data.get("risky_mutators", []),
+                    }
+                )
         return {"risky_functions": risky_functions, "risky_variables": risky_variables}
 
     def get_contract_signatures(self, contract_name: str) -> dict[str, str]:
@@ -967,15 +1017,17 @@ class GraphQueries:
             if not filtered:
                 continue
 
-            results.append({
-                "function_id": node_id,
-                "name": node_data.get("name"),
-                "contract": node_data.get("contract"),
-                "pattern_hits": node_data.get("pattern_hits", []),
-                "pattern_categories": node_data.get("pattern_categories", []),
-                "hit_details": filtered,
-                "hit_count": len(filtered),
-            })
+            results.append(
+                {
+                    "function_id": node_id,
+                    "name": node_data.get("name"),
+                    "contract": node_data.get("contract"),
+                    "pattern_hits": node_data.get("pattern_hits", []),
+                    "pattern_categories": node_data.get("pattern_categories", []),
+                    "hit_details": filtered,
+                    "hit_count": len(filtered),
+                }
+            )
         results.sort(key=lambda x: x["hit_count"], reverse=True)
         return results
 
@@ -1016,9 +1068,9 @@ class GraphQueries:
             # Reduced from 70/40/30 to 55/20/10 to stop Slither-correlated signals
             # from acting as a correlated error: a bug that Slither misclassifies on
             # TWO sub-dimensions was being dropped incorrectly.
-            _min_score   = int(os.environ.get("HOTSPOT_MIN_SCORE",      "55"))   # was 70
-            _min_struct  = int(os.environ.get("HOTSPOT_MIN_STRUCTURAL", "20"))   # was 40
-            _min_exploit = int(os.environ.get("HOTSPOT_MIN_EXPLOIT",    "10"))   # was 30
+            _min_score = int(os.environ.get("HOTSPOT_MIN_SCORE", "55"))  # was 70
+            _min_struct = int(os.environ.get("HOTSPOT_MIN_STRUCTURAL", "20"))  # was 40
+            _min_exploit = int(os.environ.get("HOTSPOT_MIN_EXPLOIT", "10"))  # was 30
 
             if final < _min_score:
                 continue
@@ -1072,21 +1124,22 @@ class GraphQueries:
             elif final >= 80:
                 priority = "HIGH"
 
-            hotspots.append(Hotspot(
-                node_id=node_id,
-                contract=contract_name,
-                function=data.get("name", node_id),
-                risk_score=final,
-                risk_categories=data.get("risk_categories", []),
-                signals=data,
-                priority=priority,
-                structural_score=structural,
-                exploitability_score=exploit,
-                impact_score=data.get("impact_score", 0),
-                final_score=final,
-                tier=contract_data.get("tier", "INFRA"),
-            ))
-
+            hotspots.append(
+                Hotspot(
+                    node_id=node_id,
+                    contract=contract_name,
+                    function=data.get("name", node_id),
+                    risk_score=final,
+                    risk_categories=data.get("risk_categories", []),
+                    signals=data,
+                    priority=priority,
+                    structural_score=structural,
+                    exploitability_score=exploit,
+                    impact_score=data.get("impact_score", 0),
+                    final_score=final,
+                    tier=contract_data.get("tier", "INFRA"),
+                )
+            )
 
         if skipped_test:
             print(f"[GraphQueries] Skipped {skipped_test} hotspot(s) in test/mock/fuzzing contracts.")
@@ -1096,12 +1149,14 @@ class GraphQueries:
         hotspots.sort(key=lambda x: x.risk_score, reverse=True)
         # Part 9 — Hotspot Budget Enforcement
         # Default 25; override via HOTSPOT_BUDGET env var (e.g. HOTSPOT_BUDGET=50 for deep mode).
-        MAX_HOTSPOTS = int(os.environ.get("HOTSPOT_BUDGET", "40"))   # was 25
+        MAX_HOTSPOTS = int(os.environ.get("HOTSPOT_BUDGET", "40"))  # was 25
         if len(hotspots) > MAX_HOTSPOTS:
             threshold_score = hotspots[MAX_HOTSPOTS - 1].risk_score
             dropped = len(hotspots) - MAX_HOTSPOTS
-            print(f"[GraphQueries] Hotspot budget: capped from {len(hotspots)} to {MAX_HOTSPOTS} "
-                  f"(dynamic threshold: {threshold_score}, dropped {dropped}).")
+            print(
+                f"[GraphQueries] Hotspot budget: capped from {len(hotspots)} to {MAX_HOTSPOTS} "
+                f"(dynamic threshold: {threshold_score}, dropped {dropped})."
+            )
             # Expose budget metadata on graph for report consumption
             self.graph.graph.setdefault("report_metadata", {})
             self.graph.graph["report_metadata"]["hotspot_budget_applied"] = True
@@ -1116,95 +1171,130 @@ class GraphQueries:
 #  Standalone Functional Wrappers
 # ════════════════════════════════════════════════════════════
 
+
 def get_external_entry_points(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_external_entry_points(contract_name)
+
 
 def get_privileged_roles(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_privileged_roles(contract_name)
 
+
 def get_reentrancy_risks(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_reentrancy_risks(contract_name)
+
 
 def get_state_mutators(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_state_mutators(contract_name)
 
+
 def get_unprotected_mutators(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_unprotected_mutators(contract_name)
+
 
 def get_high_risk_hotspots(graph: nx.DiGraph, min_score: int = 40) -> list[Any]:
     return get_graph_queries(graph).get_high_risk_hotspots(min_score)
 
+
 def get_function_context(graph: nx.DiGraph, node_id: str) -> dict[str, Any]:
     return get_graph_queries(graph).get_function_context(node_id)
+
 
 def get_internal_calls(graph: nx.DiGraph, function_id: str) -> list[str]:
     return get_graph_queries(graph).get_internal_calls(function_id)
 
+
 def get_callers(graph: nx.DiGraph, function_id: str) -> list[str]:
     return get_graph_queries(graph).get_callers(function_id)
+
 
 def get_external_call_functions(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_external_call_functions(contract_name)
 
+
 def get_external_call_edges(graph: nx.DiGraph, function_id: str) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_external_call_edges(function_id)
+
 
 def get_cei_violations(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_cei_violations(contract_name)
 
+
 def get_privilege_escalation_risks(graph: nx.DiGraph, contract_name: str | None = None) -> dict[str, Any]:
     return get_graph_queries(graph).get_privilege_escalation_risks(contract_name)
+
 
 def get_contract_signatures(graph: nx.DiGraph, contract_name: str) -> dict[str, str]:
     return get_graph_queries(graph).get_contract_signatures(contract_name)
 
+
 def get_state_transitions(graph: nx.DiGraph, **kwargs) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_state_transitions(**kwargs)
+
 
 def get_array_length_mutations(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_array_length_mutations(contract_name)
 
+
 def get_delegatecall_storage_risks(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_delegatecall_storage_risks(contract_name)
+
 
 def get_contract_tiers(graph: nx.DiGraph, tier: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_contract_tiers(tier)
 
+
 def get_guarded_initializers(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_guarded_initializers(contract_name)
+
 
 def get_access_control_types(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_access_control_types(contract_name)
 
+
 def get_modifier_equivalences(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_modifier_equivalences(contract_name)
+
 
 def get_safe_functions(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_safe_functions(contract_name)
 
+
 def get_taint_critical_paths(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_taint_critical_paths(contract_name)
+
 
 def get_storage_sensitivity_tags(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_storage_sensitivity_tags(contract_name)
 
+
 def get_tainted_variables(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_tainted_variables(contract_name)
 
-def get_taint_risks(graph: nx.DiGraph, risk_type: str | None = None, contract_name: str | None = None) -> list[dict[str, Any]]:
+
+def get_taint_risks(
+    graph: nx.DiGraph, risk_type: str | None = None, contract_name: str | None = None
+) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_taint_risks(risk_type, contract_name)
+
 
 def get_state_dependencies(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_state_dependencies(contract_name)
 
+
 def get_dangerous_sequences(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_dangerous_sequences(contract_name)
 
-def get_exploit_chains(graph: nx.DiGraph, contract_name: str | None = None, min_length: int = 2) -> list[dict[str, Any]]:
+
+def get_exploit_chains(
+    graph: nx.DiGraph, contract_name: str | None = None, min_length: int = 2
+) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_exploit_chains(contract_name, min_length)
+
 
 def get_accounting_invariant_risks(graph: nx.DiGraph, contract_name: str | None = None) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_accounting_invariant_risks(contract_name)
+
 
 def get_external_call_risks(
     graph: nx.DiGraph,
@@ -1213,12 +1303,14 @@ def get_external_call_risks(
 ) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_external_call_risks(risk_tag, contract_name)
 
+
 def get_exploit_targets(
     graph: nx.DiGraph,
     min_exploit_score: int = 75,
     contract_name: str | None = None,
 ) -> list[dict[str, Any]]:
     return get_graph_queries(graph).get_exploit_targets(min_exploit_score, contract_name)
+
 
 def get_pattern_hits(
     graph: nx.DiGraph,

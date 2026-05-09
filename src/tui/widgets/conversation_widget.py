@@ -22,13 +22,13 @@ from rich.text import Text
 from textual.widgets import RichLog
 
 # ── Monochrome palette (keep in sync with styles.tcss) ──
-FG        = "#e8e8e8"   # primary text
-FG_BRIGHT = "#ffffff"   # emphasis
-DIM       = "#8a8a8a"   # secondary
-DIMMER    = "#5a5a5a"   # tertiary / done
-FAINT     = "#3a3a3a"   # borders, separators
-ACCENT    = "#7dd3c0"   # cyan — single accent, used sparingly
-DANGER    = "#e08a8a"   # muted red, for errors/critical only
+FG = "#e8e8e8"  # primary text
+FG_BRIGHT = "#ffffff"  # emphasis
+DIM = "#8a8a8a"  # secondary
+DIMMER = "#5a5a5a"  # tertiary / done
+FAINT = "#3a3a3a"  # borders, separators
+ACCENT = "#7dd3c0"  # cyan — single accent, used sparingly
+DANGER = "#e08a8a"  # muted red, for errors/critical only
 
 
 class ConversationWidget(RichLog):

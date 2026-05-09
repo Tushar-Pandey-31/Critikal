@@ -27,7 +27,6 @@ _BG_TASKS: set[asyncio.Task] = set()
 
 
 class SpawnAgentTool(Tool):
-
     def name(self) -> str:
         return "spawn_agent"
 
@@ -88,9 +87,7 @@ class SpawnAgentTool(Tool):
 
         prompt = params["prompt"]
         description = params.get("description", "sub-agent task")
-        model = params.get("model") or os.getenv(
-            "SUB_AGENT_MODEL_NAME", DEFAULT_SUB_AGENT_MODEL
-        )
+        model = params.get("model") or os.getenv("SUB_AGENT_MODEL_NAME", DEFAULT_SUB_AGENT_MODEL)
         tool_allowlist = params.get("tools")
         max_turns = min(params.get("max_turns", DEFAULT_MAX_TURNS), 100)
         background = params.get("background", False)
@@ -123,15 +120,15 @@ class SpawnAgentTool(Tool):
 
         # Emit worker spawned event
         if ctx.event_bus:
-            await ctx.event_bus.emit(Event(
-                type=EventType.WORKER_SPAWNED,
-                data={"task_id": task_id, "description": description, "model": model},
-            ))
+            await ctx.event_bus.emit(
+                Event(
+                    type=EventType.WORKER_SPAWNED,
+                    data={"task_id": task_id, "description": description, "model": model},
+                )
+            )
 
         if background:
-            return await self._run_background(
-                sub_loop, prompt, task_id, description, ctx
-            )
+            return await self._run_background(sub_loop, prompt, task_id, description, ctx)
 
         # Foreground: blocking
         try:
@@ -148,14 +145,16 @@ class SpawnAgentTool(Tool):
 
         # Emit worker complete
         if ctx.event_bus:
-            await ctx.event_bus.emit(Event(
-                type=EventType.WORKER_COMPLETE,
-                data={
-                    "task_id": task_id,
-                    "description": description,
-                    "result_preview": result[:200],
-                },
-            ))
+            await ctx.event_bus.emit(
+                Event(
+                    type=EventType.WORKER_COMPLETE,
+                    data={
+                        "task_id": task_id,
+                        "description": description,
+                        "result_preview": result[:200],
+                    },
+                )
+            )
 
         return ToolResult.success(result, task_id=task_id)
 
@@ -186,25 +185,21 @@ class SpawnAgentTool(Tool):
                     timeout=SUB_AGENT_TIMEOUT,
                 )
                 if ctx.task_store:
-                    await ctx.task_store.update(
-                        task_id, status="done", result=result[:5000]
-                    )
+                    await ctx.task_store.update(task_id, status="done", result=result[:5000])
             except TimeoutError:
                 if ctx.task_store:
-                    await ctx.task_store.update(
-                        task_id, status="failed", error="Timed out"
-                    )
+                    await ctx.task_store.update(task_id, status="failed", error="Timed out")
             except Exception as e:
                 if ctx.task_store:
-                    await ctx.task_store.update(
-                        task_id, status="failed", error=str(e)
-                    )
+                    await ctx.task_store.update(task_id, status="failed", error=str(e))
             finally:
                 if ctx.event_bus:
-                    await ctx.event_bus.emit(Event(
-                        type=EventType.WORKER_COMPLETE,
-                        data={"task_id": task_id, "description": description},
-                    ))
+                    await ctx.event_bus.emit(
+                        Event(
+                            type=EventType.WORKER_COMPLETE,
+                            data={"task_id": task_id, "description": description},
+                        )
+                    )
 
         _t = asyncio.create_task(_bg(), name=task_id)
         _BG_TASKS.add(_t)

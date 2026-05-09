@@ -4,12 +4,13 @@ Test Suite for Story 3.3 — Reachability from External Entry
 Verifies that BFS from external entries correctly marks reachable functions
 and leaves dead code unmarked.
 """
+
 import os
 import sys
 
 import pytest
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from analysis_engine import AnalysisEngine
 from src.graph import GraphBuilder
@@ -18,7 +19,7 @@ from src.graph import GraphBuilder
 @pytest.fixture(scope="module")
 def graph():
     """Build graph from all test contracts."""
-    contract_path = os.path.join(os.getcwd(), 'tests', 'contracts')
+    contract_path = os.path.join(os.getcwd(), "tests", "contracts")
 
     engine = AnalysisEngine()
     slither_obj = engine.run_analysis(contract_path)
@@ -99,7 +100,8 @@ class TestReceiveFallback:
     def test_receive_is_reachable(self, graph):
         # Slither names receive as "receive()" or similar
         receive_nodes = [
-            nid for nid, d in graph.nodes(data=True)
+            nid
+            for nid, d in graph.nodes(data=True)
             if d.get("contract") == "ReachabilityTest" and d.get("is_receive", False)
         ]
         assert len(receive_nodes) > 0, "receive() not found in graph"
@@ -108,7 +110,8 @@ class TestReceiveFallback:
 
     def test_fallback_is_reachable(self, graph):
         fallback_nodes = [
-            nid for nid, d in graph.nodes(data=True)
+            nid
+            for nid, d in graph.nodes(data=True)
             if d.get("contract") == "ReachabilityTest" and d.get("is_fallback", False)
         ]
         assert len(fallback_nodes) > 0, "fallback() not found in graph"

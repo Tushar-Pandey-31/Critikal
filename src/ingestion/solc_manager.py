@@ -21,17 +21,13 @@ logger = logging.getLogger(__name__)
 # ════════════════════════════════════════════════════════════
 
 # Matches: pragma solidity ^0.8.17; / pragma solidity >=0.6.0 <0.9.0; / etc.
-_PRAGMA_RE = re.compile(
-    r'pragma\s+solidity\s+([^;]+);'
-)
+_PRAGMA_RE = re.compile(r"pragma\s+solidity\s+([^;]+);")
 
 # Matches a single version like 0.8.17
-_VERSION_RE = re.compile(r'(\d+\.\d+\.\d+)')
+_VERSION_RE = re.compile(r"(\d+\.\d+\.\d+)")
 
 # Matches constraint operators
-_CONSTRAINT_RE = re.compile(
-    r'([><=^~!]*)\s*(\d+\.\d+\.\d+)'
-)
+_CONSTRAINT_RE = re.compile(r"([><=^~!]*)\s*(\d+\.\d+\.\d+)")
 
 
 def _parse_version(v: str) -> tuple[int, int, int]:
@@ -72,7 +68,9 @@ class SolcManager:
         try:
             result = subprocess.run(
                 ["solc-select", "versions"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if result.returncode == 0:
                 versions = set()
@@ -121,7 +119,9 @@ class SolcManager:
             try:
                 subprocess.run(
                     ["solc-select", "install", version],
-                    check=True, capture_output=True, timeout=300,
+                    check=True,
+                    capture_output=True,
+                    timeout=300,
                 )
                 self._installed_versions.add(version)
             except subprocess.CalledProcessError as e:
@@ -138,7 +138,9 @@ class SolcManager:
             try:
                 subprocess.run(
                     ["solc-select", "use", version],
-                    check=True, capture_output=True, timeout=10,
+                    check=True,
+                    capture_output=True,
+                    timeout=10,
                 )
                 self._active_version = version
             except subprocess.CalledProcessError as e:
@@ -239,7 +241,7 @@ class SolcManager:
     def detect_pragma(sol_file: str) -> str | None:
         """Read a .sol file and return the raw pragma constraint string."""
         try:
-            with open(sol_file, encoding='utf-8', errors='replace') as f:
+            with open(sol_file, encoding="utf-8", errors="replace") as f:
                 content = f.read()
             m = _PRAGMA_RE.search(content)
             if m:

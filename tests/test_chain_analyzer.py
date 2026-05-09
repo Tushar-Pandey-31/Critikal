@@ -130,29 +130,21 @@ class TestMatchStrength:
         enabler = _make_finding(contract="Vault", postconditions=["balance drained"])
         blocked = _make_finding(contract="Vault", preconditions_missing=["balance is zero"])
         strength = _compute_match_strength(
-            "balance drained completely to zero",
-            "balance must be zero for overflow",
-            enabler, blocked
+            "balance drained completely to zero", "balance must be zero for overflow", enabler, blocked
         )
         assert strength == "STRONG"
 
     def test_moderate_match_shared_category(self):
         enabler = _make_finding(contract="TokenA")
         blocked = _make_finding(contract="TokenB")
-        strength = _compute_match_strength(
-            "owner privileges changed",
-            "admin control required",
-            enabler, blocked
-        )
+        strength = _compute_match_strength("owner privileges changed", "admin control required", enabler, blocked)
         assert strength in ("MODERATE", "STRONG")
 
     def test_weak_match_no_overlap(self):
         enabler = _make_finding(contract="ContractA")
         blocked = _make_finding(contract="ContractB")
         strength = _compute_match_strength(
-            "completely unrelated output",
-            "totally different requirement",
-            enabler, blocked
+            "completely unrelated output", "totally different requirement", enabler, blocked
         )
         # Should be WEAK or MODERATE depending on category match
         assert strength in ("WEAK", "MODERATE")

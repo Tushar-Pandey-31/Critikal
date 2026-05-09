@@ -15,7 +15,6 @@ MAX_RESULTS = 500
 
 
 class GlobTool(Tool):
-
     def name(self) -> str:
         return "glob"
 
@@ -70,10 +69,7 @@ class GlobTool(Tool):
             return ToolResult.error(f"Invalid glob pattern: {e}")
 
         # Filter to files only, skip .git internals
-        files = [
-            f for f in matches
-            if f.is_file() and ".git" not in f.parts
-        ]
+        files = [f for f in matches if f.is_file() and ".git" not in f.parts]
 
         # Sort by mtime (newest first)
         files.sort(key=lambda f: os.path.getmtime(f), reverse=True)

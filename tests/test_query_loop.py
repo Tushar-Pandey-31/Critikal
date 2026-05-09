@@ -14,6 +14,7 @@ from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 # ── Test doubles ──
 
+
 class EchoTool(Tool):
     """Echoes input back — no LLM required."""
 
@@ -76,8 +77,8 @@ def _make_tool_call_response(tool_name: str, args: dict, call_id: str = "call_1"
 
 # ── _summarize_args tests ──
 
-class TestSummarizeArgs:
 
+class TestSummarizeArgs:
     def test_empty_args(self):
         assert _summarize_args({}) == ""
 
@@ -100,8 +101,8 @@ class TestSummarizeArgs:
 
 # ── Tool result budget tests ──
 
-class TestToolResultBudget:
 
+class TestToolResultBudget:
     def _make_loop(self) -> QueryLoop:
         ctx = ToolContext(permission_mode="yolo")
         return QueryLoop(tools=[], ctx=ctx, model="grok-4-1-fast-reasoning")
@@ -135,8 +136,8 @@ class TestToolResultBudget:
 
 # ── _parse_response tests ──
 
-class TestParseResponse:
 
+class TestParseResponse:
     def _make_loop(self) -> QueryLoop:
         ctx = ToolContext(permission_mode="yolo")
         return QueryLoop(tools=[], ctx=ctx)
@@ -178,8 +179,8 @@ class TestParseResponse:
 
 # ── get_conversation_stats tests ──
 
-class TestConversationStats:
 
+class TestConversationStats:
     def test_initial_stats(self):
         ctx = ToolContext(permission_mode="yolo")
         loop = QueryLoop(tools=[], ctx=ctx, model="grok-4-1-fast-reasoning")
@@ -200,8 +201,8 @@ class TestConversationStats:
 
 # ── Tool execution tests ──
 
-class TestToolExecution:
 
+class TestToolExecution:
     @pytest.mark.asyncio
     async def test_execute_known_tool(self):
         ctx = ToolContext(permission_mode="yolo")
@@ -240,11 +241,20 @@ class TestToolExecution:
         from src.agent.tool import PermissionLevel
 
         class DangerousTool(Tool):
-            def name(self): return "danger"
-            def description(self): return "dangerous"
-            def permission_level(self): return PermissionLevel.DANGEROUS
-            def input_schema(self): return {"type": "object", "properties": {}}
-            async def execute(self, p, c): return ToolResult.success("done")
+            def name(self):
+                return "danger"
+
+            def description(self):
+                return "dangerous"
+
+            def permission_level(self):
+                return PermissionLevel.DANGEROUS
+
+            def input_schema(self):
+                return {"type": "object", "properties": {}}
+
+            async def execute(self, p, c):
+                return ToolResult.success("done")
 
         ctx = ToolContext(permission_mode="ask")
         loop = QueryLoop(tools=[DangerousTool()], ctx=ctx)
@@ -257,8 +267,8 @@ class TestToolExecution:
 
 # ── Full agentic run with mocked LLM ──
 
-class TestQueryLoopRun:
 
+class TestQueryLoopRun:
     @pytest.mark.asyncio
     async def test_run_returns_text_on_end_turn(self):
         """Agent returns immediately when LLM produces no tool calls."""

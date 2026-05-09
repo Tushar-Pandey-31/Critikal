@@ -17,16 +17,18 @@ if TYPE_CHECKING:
 
 class PermissionLevel(Enum):
     """How dangerous is this tool invocation?"""
-    NONE = "none"               # Pure info, no side effects (graph queries)
-    READ_ONLY = "read_only"     # Reads filesystem/network, no mutations
-    WRITE = "write"             # Writes files
-    EXECUTE = "execute"         # Runs shell commands or LLM calls
-    DANGEROUS = "dangerous"     # Destructive ops, mainnet interactions
+
+    NONE = "none"  # Pure info, no side effects (graph queries)
+    READ_ONLY = "read_only"  # Reads filesystem/network, no mutations
+    WRITE = "write"  # Writes files
+    EXECUTE = "execute"  # Runs shell commands or LLM calls
+    DANGEROUS = "dangerous"  # Destructive ops, mainnet interactions
 
 
 @dataclass
 class ToolResult:
     """Uniform output from any tool execution."""
+
     output: str
     is_error: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)

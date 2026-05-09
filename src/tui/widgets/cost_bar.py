@@ -9,13 +9,13 @@ from rich.text import Text
 from textual.widgets import Static
 
 # ── Palette (keep in sync with conversation_widget.py) ──
-FG       = "#e8e8e8"
-DIM      = "#8a8a8a"
-DIMMER   = "#5a5a5a"
-FAINT    = "#3a3a3a"
-ACCENT   = "#7dd3c0"
-WARN     = "#d9c47d"
-DANGER   = "#e08a8a"
+FG = "#e8e8e8"
+DIM = "#8a8a8a"
+DIMMER = "#5a5a5a"
+FAINT = "#3a3a3a"
+ACCENT = "#7dd3c0"
+WARN = "#d9c47d"
+DANGER = "#e08a8a"
 
 
 class CostBar(Static):

@@ -19,10 +19,10 @@ MAX_PATTERN_LEN = 1000
 # a heuristic tripwire — not a full static analyzer, but they catch the
 # textbook ReDoS patterns without blocking normal use.
 _REDOS_SIGNATURES = (
-    re.compile(r"\([^)]*[+*][^)]*\)[+*]"),       # (a+)+, (a*)+, (.+)*
-    re.compile(r"\([^)]*\|[^)]*\)[+*]\+"),        # (a|b)++
-    re.compile(r"\([^)]*\?[^)]*\)[+*]"),          # (a?)+ / (a?)*
-    re.compile(r"\(\?:[^)]*[+*][^)]*\)[+*]"),     # non-capturing variants
+    re.compile(r"\([^)]*[+*][^)]*\)[+*]"),  # (a+)+, (a*)+, (.+)*
+    re.compile(r"\([^)]*\|[^)]*\)[+*]\+"),  # (a|b)++
+    re.compile(r"\([^)]*\?[^)]*\)[+*]"),  # (a?)+ / (a?)*
+    re.compile(r"\(\?:[^)]*[+*][^)]*\)[+*]"),  # non-capturing variants
 )
 # Per-file search timeout — prevents a pathological pattern on a huge
 # line from hanging the whole tool.
@@ -40,7 +40,6 @@ def _looks_like_redos(pattern: str) -> str | None:
 
 
 class GrepTool(Tool):
-
     def name(self) -> str:
         return "grep"
 
@@ -113,8 +112,7 @@ class GrepTool(Tool):
         danger = _looks_like_redos(pattern_str)
         if danger:
             return ToolResult.error(
-                f"Refusing pattern: {danger}. Rewrite without nested "
-                f"quantifiers, or narrow the pattern."
+                f"Refusing pattern: {danger}. Rewrite without nested quantifiers, or narrow the pattern."
             )
 
         flags = re.IGNORECASE if case_insensitive else 0
@@ -205,8 +203,19 @@ class GrepTool(Tool):
 
     def _collect_files(self, root: Path, glob_pattern: str | None) -> list[Path]:
         """Collect files to search, respecting glob filter and skipping binaries."""
-        skip_dirs = {".git", "node_modules", "__pycache__", ".venv", "venv",
-                     "target", "build", "dist", ".tox", "artifacts", "cache"}
+        skip_dirs = {
+            ".git",
+            "node_modules",
+            "__pycache__",
+            ".venv",
+            "venv",
+            "target",
+            "build",
+            "dist",
+            ".tox",
+            "artifacts",
+            "cache",
+        }
 
         if glob_pattern:
             return sorted(root.glob(glob_pattern))
@@ -218,10 +227,24 @@ class GrepTool(Tool):
             for fname in filenames:
                 fp = Path(dirpath) / fname
                 # Skip obvious binary extensions
-                if fp.suffix.lower() in (".pyc", ".pyo", ".so", ".o", ".a",
-                                          ".exe", ".dll", ".bin", ".png",
-                                          ".jpg", ".gif", ".zip", ".tar",
-                                          ".gz", ".pdf", ".wasm"):
+                if fp.suffix.lower() in (
+                    ".pyc",
+                    ".pyo",
+                    ".so",
+                    ".o",
+                    ".a",
+                    ".exe",
+                    ".dll",
+                    ".bin",
+                    ".png",
+                    ".jpg",
+                    ".gif",
+                    ".zip",
+                    ".tar",
+                    ".gz",
+                    ".pdf",
+                    ".wasm",
+                ):
                     continue
                 files.append(fp)
                 if len(files) > 50_000:

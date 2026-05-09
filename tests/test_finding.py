@@ -1,4 +1,3 @@
-
 from src.hotspot_engine import Hotspot
 from src.models.finding import Finding
 from src.pipeline.base_worker import WorkerOutput
@@ -39,4 +38,5 @@ def test_finding_default_status_is_unconfirmed():
     output = WorkerOutput(worker_type="attack_hypothesis", confidence=50, raw_output={})
     finding = Finding.from_worker_output(output, hotspot)
     from src.models.finding import FindingStatus
+
     assert finding.status == FindingStatus.UNCONFIRMED

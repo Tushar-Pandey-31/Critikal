@@ -16,7 +16,7 @@ def _make_function(
     modifies_sensitive_storage: bool = False,
     can_escalate_privileges: bool = False,
     access_control_type: str = "none",
-    source_code: str = ""
+    source_code: str = "",
 ):
     fid = f"{contract}::{name}"
     g.add_node(
@@ -38,10 +38,12 @@ def _make_function(
     )
     return fid
 
+
 def _make_state_var(g: nx.DiGraph, contract: str, name: str):
     vid = f"{contract}::{name}"
     g.add_node(vid, type="state_variable", name=name, contract=contract)
     return vid
+
 
 class TestFeasibilityValidator:
     def test_strict_access_guard_hard_drop(self):
@@ -52,11 +54,21 @@ class TestFeasibilityValidator:
         s1 = _make_function(g, "Bank", "f1", writes_state=True, attacker_controlled_input=True)
         s2 = _make_function(g, "Bank", "f2", writes_state=True, is_protected=True, access_control_type="modifier")
 
-        g.add_edge(s1, s2, relationship="STATE_DEPENDENCY", shared_variables=[v], sensitivity_overlap=["ACCOUNTING_CRITICAL"])
-        g.nodes[s1]["dangerous_sequences"] = [{
-            "writer": s1, "reader": s2, "shared_variables": [v], "sensitivity": ["ACCOUNTING_CRITICAL"],
-            "danger_types": ["ACCOUNTING_MANIPULATION"], "writer_protected": False, "reader_protected": True, "score": 40
-        }]
+        g.add_edge(
+            s1, s2, relationship="STATE_DEPENDENCY", shared_variables=[v], sensitivity_overlap=["ACCOUNTING_CRITICAL"]
+        )
+        g.nodes[s1]["dangerous_sequences"] = [
+            {
+                "writer": s1,
+                "reader": s2,
+                "shared_variables": [v],
+                "sensitivity": ["ACCOUNTING_CRITICAL"],
+                "danger_types": ["ACCOUNTING_MANIPULATION"],
+                "writer_protected": False,
+                "reader_protected": True,
+                "score": 40,
+            }
+        ]
 
         builder = GraphBuilder()
         builder.graph = g
@@ -73,14 +85,34 @@ class TestFeasibilityValidator:
         v1 = _make_state_var(g, "Gov", "owner")
         v2 = _make_state_var(g, "Bank", "funds")
 
-        s1 = _make_function(g, "Gov", "setOwner", writes_state=True, attacker_controlled_input=True, can_escalate_privileges=True)
-        s2 = _make_function(g, "Bank", "drain", writes_state=True, is_protected=True, access_control_type="modifier", modifies_sensitive_storage=True)
+        s1 = _make_function(
+            g, "Gov", "setOwner", writes_state=True, attacker_controlled_input=True, can_escalate_privileges=True
+        )
+        s2 = _make_function(
+            g,
+            "Bank",
+            "drain",
+            writes_state=True,
+            is_protected=True,
+            access_control_type="modifier",
+            modifies_sensitive_storage=True,
+        )
 
-        g.add_edge(s1, s2, relationship="STATE_DEPENDENCY", shared_variables=[v1], sensitivity_overlap=["ACCESS_CRITICAL"])
-        g.nodes[s1]["dangerous_sequences"] = [{
-            "writer": s1, "reader": s2, "shared_variables": [v1], "sensitivity": ["ACCESS_CRITICAL"],
-            "danger_types": ["PRIVILEGE_CHAIN"], "writer_protected": False, "reader_protected": True, "score": 50
-        }]
+        g.add_edge(
+            s1, s2, relationship="STATE_DEPENDENCY", shared_variables=[v1], sensitivity_overlap=["ACCESS_CRITICAL"]
+        )
+        g.nodes[s1]["dangerous_sequences"] = [
+            {
+                "writer": s1,
+                "reader": s2,
+                "shared_variables": [v1],
+                "sensitivity": ["ACCESS_CRITICAL"],
+                "danger_types": ["PRIVILEGE_CHAIN"],
+                "writer_protected": False,
+                "reader_protected": True,
+                "score": 50,
+            }
+        ]
 
         builder = GraphBuilder()
         builder.graph = g
@@ -101,16 +133,26 @@ class TestFeasibilityValidator:
 
         # Override reachable flag since external_funcs iteration checks it before processing chains normally.
         # But for test sake, let's force the function to behave like it is processed but feasibility says NO.
-        g.nodes[s1]["reachable_from_external_entry"] = True # To trigger _generate_exploit_chains looking at it
+        g.nodes[s1]["reachable_from_external_entry"] = True  # To trigger _generate_exploit_chains looking at it
         g.nodes[s1]["is_external_entry"] = False
         g.nodes[s1]["attacker_controlled_input"] = False
         g.nodes[s1]["has_taint_risk"] = False
 
-        g.add_edge(s1, s2, relationship="STATE_DEPENDENCY", shared_variables=[v], sensitivity_overlap=["ACCOUNTING_CRITICAL"])
-        g.nodes[s1]["dangerous_sequences"] = [{
-            "writer": s1, "reader": s2, "shared_variables": [v], "sensitivity": ["ACCOUNTING_CRITICAL"],
-            "danger_types": ["ACCOUNTING_MANIPULATION"], "writer_protected": False, "reader_protected": False, "score": 40
-        }]
+        g.add_edge(
+            s1, s2, relationship="STATE_DEPENDENCY", shared_variables=[v], sensitivity_overlap=["ACCOUNTING_CRITICAL"]
+        )
+        g.nodes[s1]["dangerous_sequences"] = [
+            {
+                "writer": s1,
+                "reader": s2,
+                "shared_variables": [v],
+                "sensitivity": ["ACCOUNTING_CRITICAL"],
+                "danger_types": ["ACCOUNTING_MANIPULATION"],
+                "writer_protected": False,
+                "reader_protected": False,
+                "score": 40,
+            }
+        ]
 
         builder = GraphBuilder()
         builder.graph = g
@@ -128,11 +170,21 @@ class TestFeasibilityValidator:
         s1 = _make_function(g, "Game", "set", writes_state=True, attacker_controlled_input=True)
         s2 = _make_function(g, "Game", "play", source_code='require(state == 1, "bad");')
 
-        g.add_edge(s1, s2, relationship="STATE_DEPENDENCY", shared_variables=[v], sensitivity_overlap=["ACCOUNTING_CRITICAL"])
-        g.nodes[s1]["dangerous_sequences"] = [{
-            "writer": s1, "reader": s2, "shared_variables": [v], "sensitivity": ["ACCOUNTING_CRITICAL"],
-            "danger_types": ["ACCOUNTING_MANIPULATION"], "writer_protected": False, "reader_protected": False, "score": 40
-        }]
+        g.add_edge(
+            s1, s2, relationship="STATE_DEPENDENCY", shared_variables=[v], sensitivity_overlap=["ACCOUNTING_CRITICAL"]
+        )
+        g.nodes[s1]["dangerous_sequences"] = [
+            {
+                "writer": s1,
+                "reader": s2,
+                "shared_variables": [v],
+                "sensitivity": ["ACCOUNTING_CRITICAL"],
+                "danger_types": ["ACCOUNTING_MANIPULATION"],
+                "writer_protected": False,
+                "reader_protected": False,
+                "score": 40,
+            }
+        ]
 
         builder = GraphBuilder()
         builder.graph = g

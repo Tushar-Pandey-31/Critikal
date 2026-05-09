@@ -9,6 +9,7 @@ from src.agent.tool import PermissionLevel, Tool, ToolResult
 
 # ── Concrete test implementation of Tool ──
 
+
 class NoopTool(Tool):
     """Minimal tool that does nothing, for testing the ABC."""
 
@@ -52,8 +53,8 @@ class DangerousTool(Tool):
 
 # ── ToolResult tests ──
 
-class TestToolResult:
 
+class TestToolResult:
     def test_success_result(self):
         r = ToolResult.success("all good")
         assert r.output == "all good"
@@ -83,8 +84,8 @@ class TestToolResult:
 
 # ── PermissionLevel tests ──
 
-class TestPermissionLevel:
 
+class TestPermissionLevel:
     def test_all_levels_exist(self):
         levels = list(PermissionLevel)
         names = [l.value for l in levels]
@@ -103,8 +104,8 @@ class TestPermissionLevel:
 
 # ── Tool ABC tests ──
 
-class TestToolABC:
 
+class TestToolABC:
     def test_noop_tool_implements_interface(self):
         tool = NoopTool()
         assert tool.name() == "noop"
@@ -141,6 +142,7 @@ class TestToolABC:
 
 # ── Tool availability override ──
 
+
 class GraphOnlyTool(Tool):
     """Tool only available when a graph is loaded."""
 
@@ -164,7 +166,6 @@ class GraphOnlyTool(Tool):
 
 
 class TestToolAvailability:
-
     def test_graph_only_unavailable_without_graph(self):
         tool = GraphOnlyTool()
         ctx = ToolContext()
@@ -172,6 +173,7 @@ class TestToolAvailability:
 
     def test_graph_only_available_with_graph(self):
         import networkx as nx
+
         tool = GraphOnlyTool()
         ctx = ToolContext()
         ctx.graph = nx.DiGraph()

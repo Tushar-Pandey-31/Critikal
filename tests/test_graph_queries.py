@@ -1,4 +1,3 @@
-
 import os
 import sys
 import unittest
@@ -6,7 +5,7 @@ import unittest
 import networkx as nx
 
 # Add src to path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from utils.graph_queries import GraphQueries
 
@@ -65,5 +64,6 @@ class TestGraphQueries(unittest.TestCase):
         self.assertTrue(self.queries.verify_existence("Real::node"))
         self.assertFalse(self.queries.verify_existence("Fake::node"))
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

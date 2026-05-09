@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 
 class TestWriterTool(Tool):
-
     def name(self) -> str:
         return "write_exploit_test"
 
@@ -72,7 +71,8 @@ class TestWriterTool(Tool):
             eligible = [ctx.findings[i] for i in indices if i < len(ctx.findings)]
         else:
             eligible = [
-                f for f in ctx.findings
+                f
+                for f in ctx.findings
                 if getattr(f, "plausibility_score", 0) >= promote_threshold
                 and not getattr(f, "exploit_success", False)
                 and getattr(f, "gate_verdict", None) != "GATE_REFUTED"
@@ -80,8 +80,7 @@ class TestWriterTool(Tool):
 
         if not eligible:
             return ToolResult.success(
-                f"No findings eligible for PoC generation "
-                f"(need plausibility >= {promote_threshold})."
+                f"No findings eligible for PoC generation (need plausibility >= {promote_threshold})."
             )
 
         max_concurrent = params.get("max_concurrent", 3)

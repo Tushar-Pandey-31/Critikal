@@ -33,7 +33,6 @@ DEFAULT_TIMEOUT = 120
 
 
 class SandboxRunTool(Tool):
-
     def name(self) -> str:
         return "sandbox_run"
 
@@ -118,8 +117,15 @@ class SandboxRunTool(Tool):
             return await asyncio.get_event_loop().run_in_executor(
                 None,
                 self._run_sync,
-                tmp_dir, test_code, fork_url, fork_block,
-                additional, verbosity, match_test, timeout, disable_sandbox,
+                tmp_dir,
+                test_code,
+                fork_url,
+                fork_block,
+                additional,
+                verbosity,
+                match_test,
+                timeout,
+                disable_sandbox,
             )
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -147,20 +153,18 @@ class SandboxRunTool(Tool):
         )
 
         # 1. Initialise a bare Foundry project in the temp dir — sandboxed.
-        init_shell_cmd = (
-            f"forge init --no-git --force --empty {shlex_quote(str(tmp_dir))}"
-        )
+        init_shell_cmd = f"forge init --no-git --force --empty {shlex_quote(str(tmp_dir))}"
         init_shell_cmd = SandboxManager.wrapWithSandbox(
             init_shell_cmd, "/bin/bash", sandbox_opts, dangerously_disable=disable_sandbox
         )
         init_result = subprocess.run(
             ["bash", "-c", init_shell_cmd],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         if init_result.returncode != 0:
-            return ToolResult.error(
-                f"forge init failed:\n{init_result.stderr[:2000]}"
-            )
+            return ToolResult.error(f"forge init failed:\n{init_result.stderr[:2000]}")
 
         test_dir = tmp_dir / "test"
         test_dir.mkdir(parents=True, exist_ok=True)
@@ -176,7 +180,8 @@ class SandboxRunTool(Tool):
 
         # 4. Build forge test command
         forge_cmd_parts = [
-            "forge", "test",
+            "forge",
+            "test",
             f"-{'v' * min(max(verbosity, 1), 5)}",
         ]
         if fork_url:
@@ -196,13 +201,13 @@ class SandboxRunTool(Tool):
         build_result = subprocess.run(
             ["bash", "-c", build_shell_cmd],
             cwd=str(tmp_dir),
-            capture_output=True, text=True, timeout=60,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         if build_result.returncode != 0:
             return ToolResult.error(
-                f"Compilation failed:\n"
-                f"{build_result.stdout[-3000:]}\n"
-                f"{build_result.stderr[-3000:]}"
+                f"Compilation failed:\n{build_result.stdout[-3000:]}\n{build_result.stderr[-3000:]}"
             )
 
         # 6. Run tests via sandbox

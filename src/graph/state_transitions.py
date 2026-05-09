@@ -72,29 +72,30 @@ class StateTransitionMixin:
                     is_array = "[]" in var_type_str
                     is_array_length = operation in ("decrement_length", "pop")
 
-                    attacker_controlled = self._check_attacker_controlled_input(
-                        cfg_node, slither_func
-                    )
+                    attacker_controlled = self._check_attacker_controlled_input(cfg_node, slither_func)
 
                     expression = str(cfg_node.expression) if cfg_node.expression else ""
 
                     st_id = f"__st::{node_id}::{st_counter}"
                     st_counter += 1
 
-                    self.graph.add_node(st_id, **{
-                        "type": "state_transition",
-                        "node_type": "StateTransition",
-                        "function": node_id,
-                        "variable": var_node_id,
-                        "operation": operation,
-                        "is_array_length": is_array_length,
-                        "is_array": is_array,
-                        "is_mapping": is_mapping,
-                        "is_owner_assignment": False,
-                        "attacker_controlled_input": attacker_controlled,
-                        "affects_privileged_var": False,
-                        "ir_expression": expression,
-                    })
+                    self.graph.add_node(
+                        st_id,
+                        **{
+                            "type": "state_transition",
+                            "node_type": "StateTransition",
+                            "function": node_id,
+                            "variable": var_node_id,
+                            "operation": operation,
+                            "is_array_length": is_array_length,
+                            "is_array": is_array,
+                            "is_mapping": is_mapping,
+                            "is_owner_assignment": False,
+                            "attacker_controlled_input": attacker_controlled,
+                            "affects_privileged_var": False,
+                            "ir_expression": expression,
+                        },
+                    )
 
                     self.graph.add_edge(node_id, st_id, relationship="PERFORMS")
                     self.graph.add_edge(st_id, var_node_id, relationship="AFFECTS")
@@ -137,9 +138,7 @@ class StateTransitionMixin:
                 continue
             binary_type_str = str(getattr(ir, "type", "")).upper()
             used = getattr(ir, "used", [])
-            involves_var = any(
-                str(getattr(v, "name", "")) == var_name for v in used
-            )
+            involves_var = any(str(getattr(v, "name", "")) == var_name for v in used)
             if involves_var:
                 if "ADD" in binary_type_str:
                     return "add"
@@ -197,9 +196,7 @@ class StateTransitionMixin:
             var_data = self.graph.nodes.get(var_id, {})
             var_name_lower = var_data.get("name", "").lower()
 
-            node_data["is_owner_assignment"] = (
-                var_name_lower in owner_names or var_id in privileged_var_ids
-            )
+            node_data["is_owner_assignment"] = var_name_lower in owner_names or var_id in privileged_var_ids
             node_data["affects_privileged_var"] = var_id in privileged_var_ids
 
     # ================================================================
@@ -251,10 +248,7 @@ class StateTransitionMixin:
 
             contract_state_var_names: set = set()
             for nid, ndata in self.graph.nodes(data=True):
-                if (
-                    ndata.get("type") == "state_variable"
-                    and ndata.get("contract") == contract_name
-                ):
+                if ndata.get("type") == "state_variable" and ndata.get("contract") == contract_name:
                     contract_state_var_names.add(ndata.get("name", ""))
 
             has_delegatecall = False
@@ -279,18 +273,13 @@ class StateTransitionMixin:
 
             writes_state_after = node_data.get("state_write_after_external_call", False)
             has_state_writes = (
-                node_data.get("writes_state", False)
-                or len(node_data.get("propagated_state_variables", [])) > 0
+                node_data.get("writes_state", False) or len(node_data.get("propagated_state_variables", [])) > 0
             )
 
             contract_data = self.graph.nodes.get(contract_name, {})
             is_upgradeable = contract_data.get("is_upgradeable", False)
 
-            is_risk = (
-                target_attacker_controlled
-                or (writes_state_after and has_state_writes)
-                or is_upgradeable
-            )
+            is_risk = target_attacker_controlled or (writes_state_after and has_state_writes) or is_upgradeable
 
             node_data["delegatecall_storage_risk"] = is_risk
 
@@ -334,7 +323,7 @@ class StateTransitionMixin:
                         if function.source_mapping:
                             sm = function.source_mapping
                             content = self._read_file_cached(str(sm.filename.absolute))
-                            expression = content[sm.start:sm.start + sm.length]
+                            expression = content[sm.start : sm.start + sm.length]
                     except Exception:
                         pass
                     if re.search(r"\bnew\s+[A-Z]\w*\s*\(", expression):
@@ -379,49 +368,49 @@ class StateTransitionMixin:
 
     # Patterns that represent initializer guards in require/if-revert form.
     _INIT_GUARD_PATTERNS = [
-        re.compile(r'require\s*\(\s*!\s*initialized\b'),
-        re.compile(r'require\s*\(\s*initialized\s*==\s*false\b'),
-        re.compile(r'require\s*\(\s*!_initialized\b'),
-        re.compile(r'require\s*\(\s*_initialized\s*==\s*false\b'),
-        re.compile(r'require\s*\(\s*!_initializing\b'),
-        re.compile(r'if\s*\(\s*initialized\s*\)\s*revert\b'),
-        re.compile(r'if\s*\(\s*_initialized\b[^)]*\)\s*revert\b'),
-        re.compile(r'require\s*\(\s*initializing\s*==\s*0\b'),
-        re.compile(r'require\s*\(\s*_initialized\s*==\s*0\b'),
-        re.compile(r'require\s*\(\s*_initialized\s*<\s'),
+        re.compile(r"require\s*\(\s*!\s*initialized\b"),
+        re.compile(r"require\s*\(\s*initialized\s*==\s*false\b"),
+        re.compile(r"require\s*\(\s*!_initialized\b"),
+        re.compile(r"require\s*\(\s*_initialized\s*==\s*false\b"),
+        re.compile(r"require\s*\(\s*!_initializing\b"),
+        re.compile(r"if\s*\(\s*initialized\s*\)\s*revert\b"),
+        re.compile(r"if\s*\(\s*_initialized\b[^)]*\)\s*revert\b"),
+        re.compile(r"require\s*\(\s*initializing\s*==\s*0\b"),
+        re.compile(r"require\s*\(\s*_initialized\s*==\s*0\b"),
+        re.compile(r"require\s*\(\s*_initialized\s*<\s"),
         # Compound / Cream Finance inline accounting guard (Dev Story 1 / Fix)
-        re.compile(r'accrualBlockNumber\s*==\s*0'),
-        re.compile(r'borrowIndex\s*==\s*0'),
-        re.compile(r'market may only be initialized once', re.IGNORECASE),
-        re.compile(r'only admin may initialize the market', re.IGNORECASE),
+        re.compile(r"accrualBlockNumber\s*==\s*0"),
+        re.compile(r"borrowIndex\s*==\s*0"),
+        re.compile(r"market may only be initialized once", re.IGNORECASE),
+        re.compile(r"only admin may initialize the market", re.IGNORECASE),
     ]
 
     # Modifier names that semantically map to known categories.
     _MODIFIER_EQUIVALENCE_MAP = {
         "owner": [
-            re.compile(r'only\s*owner', re.IGNORECASE),
-            re.compile(r'only_owner', re.IGNORECASE),
-            re.compile(r'onlyGovernance', re.IGNORECASE),
-            re.compile(r'onlyGuardian', re.IGNORECASE),
-            re.compile(r'onlyAuthority', re.IGNORECASE),
+            re.compile(r"only\s*owner", re.IGNORECASE),
+            re.compile(r"only_owner", re.IGNORECASE),
+            re.compile(r"onlyGovernance", re.IGNORECASE),
+            re.compile(r"onlyGuardian", re.IGNORECASE),
+            re.compile(r"onlyAuthority", re.IGNORECASE),
         ],
         "admin": [
-            re.compile(r'only\s*admin', re.IGNORECASE),
-            re.compile(r'onlyRole', re.IGNORECASE),
-            re.compile(r'onlyMinter', re.IGNORECASE),
-            re.compile(r'onlyOperator', re.IGNORECASE),
-            re.compile(r'onlyManager', re.IGNORECASE),
+            re.compile(r"only\s*admin", re.IGNORECASE),
+            re.compile(r"onlyRole", re.IGNORECASE),
+            re.compile(r"onlyMinter", re.IGNORECASE),
+            re.compile(r"onlyOperator", re.IGNORECASE),
+            re.compile(r"onlyManager", re.IGNORECASE),
         ],
         "initializer": [
-            re.compile(r'^initializer$', re.IGNORECASE),
-            re.compile(r'^reinitializer$', re.IGNORECASE),
-            re.compile(r'onlyInitializing', re.IGNORECASE),
+            re.compile(r"^initializer$", re.IGNORECASE),
+            re.compile(r"^reinitializer$", re.IGNORECASE),
+            re.compile(r"onlyInitializing", re.IGNORECASE),
         ],
         "reentrancy_guard": [
-            re.compile(r'^nonReentrant$', re.IGNORECASE),
-            re.compile(r'^noReentrancy$', re.IGNORECASE),
-            re.compile(r'reentrancyGuard', re.IGNORECASE),
-            re.compile(r'^lock$', re.IGNORECASE),
+            re.compile(r"^nonReentrant$", re.IGNORECASE),
+            re.compile(r"^noReentrancy$", re.IGNORECASE),
+            re.compile(r"reentrancyGuard", re.IGNORECASE),
+            re.compile(r"^lock$", re.IGNORECASE),
         ],
     }
 
@@ -493,9 +482,7 @@ class StateTransitionMixin:
 
     # ── Phase 1: Intra-procedural taint (IR-based) ────────────
 
-    def _analyze_function_taint(
-        self, node_id: str, node_data: dict, slither_func
-    ) -> dict[str, Any]:
+    def _analyze_function_taint(self, node_id: str, node_data: dict, slither_func) -> dict[str, Any]:
         """
         Tracks taint through a single function's Slither IR.
 
@@ -543,9 +530,7 @@ class StateTransitionMixin:
                             source_types.append("ext_return")
 
                         # Track unchecked return: check if it's later validated
-                        rv_checked = self._is_return_value_validated(
-                            ir, slither_func, cfg_node
-                        )
+                        rv_checked = self._is_return_value_validated(ir, slither_func, cfg_node)
                         if not rv_checked:
                             unchecked_ext_returns.append(lv_name)
 
@@ -574,9 +559,7 @@ class StateTransitionMixin:
 
                 # Taint propagation: if any used variable is tainted → lvalue tainted
                 used = getattr(ir, "used", None) or []
-                reads_tainted = any(
-                    str(v) in tainted for v in used if v is not None
-                )
+                reads_tainted = any(str(v) in tainted for v in used if v is not None)
                 if reads_tainted:
                     lvalue = getattr(ir, "lvalue", None)
                     if lvalue:
@@ -605,12 +588,14 @@ class StateTransitionMixin:
                 if write_tainted:
                     var_data = self.graph.nodes.get(var_node_id, {})
                     sensitivity = var_data.get("sensitivity_tags", [])
-                    tainted_writes.append({
-                        "variable": var_node_id,
-                        "source_types": list(source_types),
-                        "sensitivity": sensitivity,
-                        "paths": [[node_id]],
-                    })
+                    tainted_writes.append(
+                        {
+                            "variable": var_node_id,
+                            "source_types": list(source_types),
+                            "sensitivity": sensitivity,
+                            "paths": [[node_id]],
+                        }
+                    )
 
         return {
             "taint_sources": source_types,
@@ -655,9 +640,7 @@ class StateTransitionMixin:
 
     # ── Phase 1 fallback: source-code based taint ─────────────
 
-    def _taint_from_source_code(
-        self, node_id: str, node_data: dict
-    ) -> dict[str, Any]:
+    def _taint_from_source_code(self, node_id: str, node_data: dict) -> dict[str, Any]:
         """
         Source-code fallback when Slither IR is unavailable.
         Uses regex heuristics to detect taint sources flowing into state writes.
@@ -687,9 +670,7 @@ class StateTransitionMixin:
             source_types.append("tx.origin")
 
         # Extract parameter names from source
-        param_match = re.search(
-            r'function\s+\w+\s*\(([^)]*)\)', source
-        )
+        param_match = re.search(r"function\s+\w+\s*\(([^)]*)\)", source)
         param_names: set[str] = set()
         if param_match:
             param_str = param_match.group(1)
@@ -709,22 +690,26 @@ class StateTransitionMixin:
                 for pname in param_names:
                     if pname in source:
                         sensitivity = var_data.get("sensitivity_tags", [])
-                        tainted_writes.append({
-                            "variable": var_id,
-                            "source_types": list(source_types),
-                            "sensitivity": sensitivity,
-                            "paths": [[node_id]],
-                        })
+                        tainted_writes.append(
+                            {
+                                "variable": var_id,
+                                "source_types": list(source_types),
+                                "sensitivity": sensitivity,
+                                "paths": [[node_id]],
+                            }
+                        )
                         break
                 else:
                     if "msg.value" in source:
                         sensitivity = var_data.get("sensitivity_tags", [])
-                        tainted_writes.append({
-                            "variable": var_id,
-                            "source_types": list(source_types),
-                            "sensitivity": sensitivity,
-                            "paths": [[node_id]],
-                        })
+                        tainted_writes.append(
+                            {
+                                "variable": var_id,
+                                "source_types": list(source_types),
+                                "sensitivity": sensitivity,
+                                "paths": [[node_id]],
+                            }
+                        )
 
         return {
             "taint_sources": source_types,
@@ -811,9 +796,7 @@ class StateTransitionMixin:
 
                     # IR-level argument matching
                     injected = self._inject_caller_taint(
-                        slither_caller, slither_callee,
-                        caller_result, callee_result, target_id,
-                        target_data, node_id
+                        slither_caller, slither_callee, caller_result, callee_result, target_id, target_data, node_id
                     )
                     if injected:
                         changed = True
@@ -855,8 +838,7 @@ class StateTransitionMixin:
                         continue
                     if getattr(target_func, "name", "") != callee_name:
                         continue
-                    tc = (getattr(target_func, "contract_declarer", None)
-                          or getattr(target_func, "contract", None))
+                    tc = getattr(target_func, "contract_declarer", None) or getattr(target_func, "contract", None)
                     if tc and tc.name != callee_contract:
                         continue
 
@@ -915,12 +897,14 @@ class StateTransitionMixin:
                                     break
 
                             if already_idx == -1:
-                                callee_result["tainted_writes"].append({
-                                    "variable": var_node_id,
-                                    "source_types": list(callee_result["taint_sources"]),
-                                    "sensitivity": var_data.get("sensitivity_tags", []),
-                                    "paths": list(callee_result["taint_paths"]),
-                                })
+                                callee_result["tainted_writes"].append(
+                                    {
+                                        "variable": var_node_id,
+                                        "source_types": list(callee_result["taint_sources"]),
+                                        "sensitivity": var_data.get("sensitivity_tags", []),
+                                        "paths": list(callee_result["taint_paths"]),
+                                    }
+                                )
                             else:
                                 tw = callee_result["tainted_writes"][already_idx]
                                 for p in callee_result["taint_paths"]:

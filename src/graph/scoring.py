@@ -98,8 +98,12 @@ class ScoringMixin:
 
                 # Determine if a risky call happens BEFORE a state update
                 target_data = self.graph.nodes.get(target, {})
-                writes_state = target_data.get("writes_state", False) or len(target_data.get("propagated_state_variables", [])) > 0
-                if (is_untrusted or is_tainted) and (writes_state or node_data.get("state_write_after_external_call", False)):
+                writes_state = (
+                    target_data.get("writes_state", False) or len(target_data.get("propagated_state_variables", [])) > 0
+                )
+                if (is_untrusted or is_tainted) and (
+                    writes_state or node_data.get("state_write_after_external_call", False)
+                ):
                     has_risky_call_before_write = True
 
             node_data["external_call_classes"] = list(call_classes)
@@ -222,14 +226,10 @@ class ScoringMixin:
                 edge_data.get("relationship") == "EXTERNAL_CALL"
                 for _, _, edge_data in self.graph.out_edges(node_id, data=True)
             )
-            no_external_calls = (
-                not node_data.get("makes_external_call", False)
-                and not has_external_edges
-            )
+            no_external_calls = not node_data.get("makes_external_call", False) and not has_external_edges
 
             no_state_mutation = (
-                not node_data.get("writes_state", False)
-                and len(node_data.get("propagated_state_variables", [])) == 0
+                not node_data.get("writes_state", False) and len(node_data.get("propagated_state_variables", [])) == 0
             )
 
             no_tainted_inputs = (
@@ -350,8 +350,9 @@ class ScoringMixin:
                     structural += int(40 * (1.0 - ac_conf))
                     risk_categories.append("unprotected_mutator")
 
-            if node_data.get("cei_violation_only") or (node_data.get("state_write_after_external_call")
-                  and not node_data.get("reentrancy_risk")):
+            if node_data.get("cei_violation_only") or (
+                node_data.get("state_write_after_external_call") and not node_data.get("reentrancy_risk")
+            ):
                 structural += 15
                 risk_categories.append("cei_violation")
 
@@ -527,11 +528,7 @@ class ScoringMixin:
             structural = max(0, structural)
 
             # ── Final Score (weighted combination) ────────────
-            final = (
-                structural * 0.40
-                + exploitability * 0.35
-                + impact * 0.25
-            )
+            final = structural * 0.40 + exploitability * 0.35 + impact * 0.25
 
             has_taint_involvement = (
                 node_data.get("has_taint_risk", False)
@@ -540,12 +537,10 @@ class ScoringMixin:
                 or len(node_data.get("tainted_state_writes", [])) > 0
             )
             has_state_mutation = (
-                node_data.get("writes_state", False)
-                or len(node_data.get("propagated_state_variables", [])) > 0
+                node_data.get("writes_state", False) or len(node_data.get("propagated_state_variables", [])) > 0
             )
-            has_sensitive_impact = (
-                node_data.get("modifies_sensitive_storage", False)
-                or any(tw.get("sensitivity") for tw in node_data.get("tainted_state_writes", []))
+            has_sensitive_impact = node_data.get("modifies_sensitive_storage", False) or any(
+                tw.get("sensitivity") for tw in node_data.get("tainted_state_writes", [])
             )
 
             has_titan_hits = bool(node_data.get("pattern_hits", []))
@@ -564,7 +559,7 @@ class ScoringMixin:
             node_data["base_score"] = base_int
             node_data["safety_score"] = safety_score
             node_data["final_score"] = final_int
-            node_data["risk_score"] = final_int   # backward compat
+            node_data["risk_score"] = final_int  # backward compat
             node_data["risk_categories"] = risk_categories
 
     # ================================================================
@@ -590,12 +585,10 @@ class ScoringMixin:
                 or len(node_data.get("tainted_state_writes", [])) > 0
             )
             has_state_mutation = (
-                node_data.get("writes_state", False)
-                or len(node_data.get("propagated_state_variables", [])) > 0
+                node_data.get("writes_state", False) or len(node_data.get("propagated_state_variables", [])) > 0
             )
-            has_sensitive_impact = (
-                node_data.get("modifies_sensitive_storage", False)
-                or any(tw.get("sensitivity") for tw in node_data.get("tainted_state_writes", []))
+            has_sensitive_impact = node_data.get("modifies_sensitive_storage", False) or any(
+                tw.get("sensitivity") for tw in node_data.get("tainted_state_writes", [])
             )
 
             # Taint depth proxy
@@ -684,7 +677,11 @@ class ScoringMixin:
             score = max(0, min(100, score))
 
             has_viable_attacker_path = self._has_viable_attacker_path(node_id)
-            if node_data.get("is_chain_entry") and len(node_data.get("exploit_chains", [])) > 0 and not has_valid_chains:
+            if (
+                node_data.get("is_chain_entry")
+                and len(node_data.get("exploit_chains", [])) > 0
+                and not has_valid_chains
+            ):
                 has_viable_attacker_path = False
 
             node_data["exploit_target_score"] = score

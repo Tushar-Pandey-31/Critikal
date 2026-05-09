@@ -110,6 +110,7 @@ function getTwapOnly() external view returns (uint256) {
 #  Helper: build minimal graph with function nodes
 # ════════════════════════════════════════════════════════════
 
+
 def _make_builder(functions: dict) -> tuple:
     """
     functions: dict of node_id -> {source_code, is_external_entry, ...}
@@ -120,20 +121,24 @@ def _make_builder(functions: dict) -> tuple:
         contract = node_id.split("::")[0]
         if not builder.graph.has_node(contract):
             builder.graph.add_node(contract, type="contract", name=contract, tier="CORE")
-        builder.graph.add_node(node_id, type="function", **{
-            "name": node_id.split("::")[-1],
-            "contract": contract,
-            "source_code": props.get("source_code", ""),
-            "is_external_entry": props.get("is_external_entry", True),
-            "writes_state": props.get("writes_state", False),
-            "risk_score": props.get("risk_score", 0),
-            "risk_categories": list(props.get("risk_categories", [])),
-            "state_variables_written": props.get("state_variables_written", []),
-            "is_view_or_pure": props.get("is_view_or_pure", False),
-            "is_constructor": False,
-            "visibility": props.get("visibility", "external"),
-            "stateMutability": props.get("stateMutability", "nonpayable"),
-        })
+        builder.graph.add_node(
+            node_id,
+            type="function",
+            **{
+                "name": node_id.split("::")[-1],
+                "contract": contract,
+                "source_code": props.get("source_code", ""),
+                "is_external_entry": props.get("is_external_entry", True),
+                "writes_state": props.get("writes_state", False),
+                "risk_score": props.get("risk_score", 0),
+                "risk_categories": list(props.get("risk_categories", [])),
+                "state_variables_written": props.get("state_variables_written", []),
+                "is_view_or_pure": props.get("is_view_or_pure", False),
+                "is_constructor": False,
+                "visibility": props.get("visibility", "external"),
+                "stateMutability": props.get("stateMutability", "nonpayable"),
+            },
+        )
         builder.graph.add_edge(contract, node_id, relationship="DEFINES")
     builder._detect_oracle_patterns()
     return builder, builder.graph, GraphQueries(builder.graph)
@@ -143,8 +148,8 @@ def _make_builder(functions: dict) -> tuple:
 #  Tests
 # ════════════════════════════════════════════════════════════
 
-class TestOracleDetection:
 
+class TestOracleDetection:
     def test_getReserves_flagged_as_spot(self):
         _, g, _ = _make_builder({"A::getPrice": {"source_code": SRC_UNISWAP_V2_SPOT}})
         assert g.nodes["A::getPrice"]["uses_spot_price_oracle"] is True
@@ -183,12 +188,14 @@ class TestOracleDetection:
         assert g.nodes["A::getTwapPrice"]["twap_window_short"] is False
 
     def test_internal_spot_no_risk(self):
-        _, g, _ = _make_builder({
-            "A::_getPrice": {
-                "source_code": SRC_INTERNAL_SPOT,
-                "is_external_entry": False,
+        _, g, _ = _make_builder(
+            {
+                "A::_getPrice": {
+                    "source_code": SRC_INTERNAL_SPOT,
+                    "is_external_entry": False,
+                }
             }
-        })
+        )
         d = g.nodes["A::_getPrice"]
         assert d["uses_spot_price_oracle"] is True
         assert d["oracle_manipulation_risk"] is False
@@ -198,9 +205,7 @@ class TestOracleDetection:
         assert g.nodes["A::getPrice"]["oracle_manipulation_risk"] is True
 
     def test_risk_score_plus_120(self):
-        _, g, _ = _make_builder({
-            "A::getPrice": {"source_code": SRC_UNISWAP_V2_SPOT, "risk_score": 10}
-        })
+        _, g, _ = _make_builder({"A::getPrice": {"source_code": SRC_UNISWAP_V2_SPOT, "risk_score": 10}})
         assert g.nodes["A::getPrice"]["risk_score"] == 10 + 120
 
     def test_risk_category_added(self):
@@ -227,13 +232,15 @@ class TestOracleDetection:
         assert d["oracle_manipulation_risk"] is False
 
     def test_hotspot_surfaced(self):
-        builder, g, queries = _make_builder({
-            "A::getPrice": {
-                "source_code": SRC_UNISWAP_V2_SPOT,
-                "risk_score": 0,
-                "writes_state": True,
+        builder, g, queries = _make_builder(
+            {
+                "A::getPrice": {
+                    "source_code": SRC_UNISWAP_V2_SPOT,
+                    "risk_score": 0,
+                    "writes_state": True,
+                }
             }
-        })
+        )
         g.nodes["A::getPrice"]["structural_score"] = 50
         g.nodes["A::getPrice"]["exploitability_score"] = 40
         g.nodes["A::getPrice"]["final_score"] = g.nodes["A::getPrice"]["risk_score"]
@@ -242,13 +249,15 @@ class TestOracleDetection:
         assert "A::getPrice" in node_ids
 
     def test_library_contract_excluded(self):
-        builder, g, queries = _make_builder({
-            "Lib::getPrice": {
-                "source_code": SRC_UNISWAP_V2_SPOT,
-                "risk_score": 0,
-                "writes_state": True,
+        builder, g, queries = _make_builder(
+            {
+                "Lib::getPrice": {
+                    "source_code": SRC_UNISWAP_V2_SPOT,
+                    "risk_score": 0,
+                    "writes_state": True,
+                }
             }
-        })
+        )
         g.nodes["Lib"]["tier"] = "LIBRARY"
         g.nodes["Lib::getPrice"]["structural_score"] = 50
         g.nodes["Lib::getPrice"]["exploitability_score"] = 40
@@ -272,10 +281,12 @@ class TestOracleDetection:
     def test_pipeline_position(self):
         """Oracle detection runs after _classify_external_calls,
         so is_external_entry is already populated."""
-        _, g, _ = _make_builder({
-            "A::getPrice": {
-                "source_code": SRC_UNISWAP_V2_SPOT,
-                "is_external_entry": True,
+        _, g, _ = _make_builder(
+            {
+                "A::getPrice": {
+                    "source_code": SRC_UNISWAP_V2_SPOT,
+                    "is_external_entry": True,
+                }
             }
-        })
+        )
         assert g.nodes["A::getPrice"]["oracle_manipulation_risk"] is True

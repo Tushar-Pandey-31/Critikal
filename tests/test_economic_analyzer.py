@@ -14,7 +14,7 @@ def _make_function(
     writes_total_supply: bool = False,
     mints_shares_proportionally: bool = False,
     is_protected: bool = False,
-    cap_enforcement_flags: list = None
+    cap_enforcement_flags: list = None,
 ):
     fid = f"{contract}::{name}"
     if cap_enforcement_flags is None:
@@ -32,9 +32,10 @@ def _make_function(
         writes_total_supply=writes_total_supply,
         mints_shares_proportionally=mints_shares_proportionally,
         is_protected=is_protected,
-        cap_enforcement_flags=cap_enforcement_flags
+        cap_enforcement_flags=cap_enforcement_flags,
     )
     return fid
+
 
 class TestEconomicAnalyzer:
     def test_denominator_manipulation(self):
@@ -51,10 +52,12 @@ class TestEconomicAnalyzer:
     def test_share_inflation_scenario(self):
         g = nx.DiGraph()
         s1 = _make_function(
-            g, "Vault", "deposit",
+            g,
+            "Vault",
+            "deposit",
             has_taint_risk=True,
             mints_shares_proportionally=True,
-            is_protected=False # unprotected -> implies missing cap
+            is_protected=False,  # unprotected -> implies missing cap
         )
 
         analyzer = EconomicAnalyzer(g)
@@ -68,10 +71,7 @@ class TestEconomicAnalyzer:
     def test_reward_index_drift_scenario(self):
         g = nx.DiGraph()
         s1 = _make_function(
-            g, "Farm", "updateReward",
-            has_taint_risk=True,
-            updates_reward_index=True,
-            uses_division=True
+            g, "Farm", "updateReward", has_taint_risk=True, updates_reward_index=True, uses_division=True
         )
 
         analyzer = EconomicAnalyzer(g)
@@ -85,11 +85,13 @@ class TestEconomicAnalyzer:
         g = nx.DiGraph()
         # Even if protected, if MISSING_CAP_ENFORCEMENT is present, it's a risk
         s1 = _make_function(
-            g, "Token", "mint",
+            g,
+            "Token",
+            "mint",
             has_taint_risk=True,
             writes_total_supply=True,
             is_protected=True,
-            cap_enforcement_flags=["MISSING_CAP_ENFORCEMENT"]
+            cap_enforcement_flags=["MISSING_CAP_ENFORCEMENT"],
         )
 
         analyzer = EconomicAnalyzer(g)
@@ -103,11 +105,13 @@ class TestEconomicAnalyzer:
         g = nx.DiGraph()
         # Has ratio math and unbounded mint, but NO taint risk
         s1 = _make_function(
-            g, "SafeVault", "deposit",
+            g,
+            "SafeVault",
+            "deposit",
             has_taint_risk=False,
             uses_ratio_math=True,
             writes_total_supply=True,
-            is_protected=False
+            is_protected=False,
         )
 
         analyzer = EconomicAnalyzer(g)
@@ -122,13 +126,15 @@ class TestEconomicAnalyzer:
         g = nx.DiGraph()
         # Multiple distortions in the same node
         s1 = _make_function(
-            g, "VulnerableEngine", "exploitMe",
+            g,
+            "VulnerableEngine",
+            "exploitMe",
             has_taint_risk=True,
-            uses_ratio_math=True,            # +0.2
-            updates_reward_index=True,       # +0.1
+            uses_ratio_math=True,  # +0.2
+            updates_reward_index=True,  # +0.1
             uses_division=True,
-            writes_total_supply=True,        # +0.5
-            is_protected=False
+            writes_total_supply=True,  # +0.5
+            is_protected=False,
         )
 
         analyzer = EconomicAnalyzer(g)

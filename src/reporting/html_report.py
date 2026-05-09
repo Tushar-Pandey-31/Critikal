@@ -123,19 +123,19 @@ def _build_sidebar_items(findings: list) -> str:
         sev_color = _SEV_COLORS.get(f.severity_estimate, "#8b949e")
         icon = "●" if is_proven else "○"
         icon_color = "#3fb950" if is_proven else sev_color
-        fid = getattr(f, 'report_id', '') or ''
+        fid = getattr(f, "report_id", "") or ""
         label = html.escape(f"{f.affected_contract}::{f.affected_function}")
         proven_tag = ' <span class="proven-tag">PROVEN</span>' if is_proven else ""
-        evidence_tag = getattr(f, 'evidence_tag', '') or ''
-        ev_html = f' <span class="evidence-tag">{html.escape(evidence_tag)}</span>' if evidence_tag else ''
+        evidence_tag = getattr(f, "evidence_tag", "") or ""
+        ev_html = f' <span class="evidence-tag">{html.escape(evidence_tag)}</span>' if evidence_tag else ""
         parts.append(
             f'<a class="sidebar-item" href="#finding-{idx}" data-idx="{idx}">'
             f'<span class="si-icon" style="color:{icon_color}">{icon}</span>'
             f'<span class="si-body">'
             f'<span class="si-sev" style="color:{sev_color}">{html.escape(fid)} {html.escape(f.severity_estimate)}</span>'
-            f'{proven_tag}{ev_html}'
+            f"{proven_tag}{ev_html}"
             f'<span class="si-name">{label}</span>'
-            f'</span></a>'
+            f"</span></a>"
         )
     return "\n".join(parts)
 
@@ -147,16 +147,16 @@ def _build_summary_table(severity_counts, total, proven) -> str:
         color = _SEV_COLORS.get(sev, "#8b949e")
         rows += (
             f'<tr><td><span class="dot" style="background:{color}"></span>{sev}</td>'
-            f'<td>{c["total"]}</td><td>{c["proven"]}</td></tr>'
+            f"<td>{c['total']}</td><td>{c['proven']}</td></tr>"
         )
     return (
         f'<div class="summary-totals">'
-        f'<span>{total} finding(s)</span>'
+        f"<span>{total} finding(s)</span>"
         f'<span class="proven-count">{proven} proven</span>'
-        f'</div>'
+        f"</div>"
         f'<table class="summary-table"><thead>'
-        f'<tr><th>Severity</th><th>Count</th><th>Proven</th></tr>'
-        f'</thead><tbody>{rows}</tbody></table>'
+        f"<tr><th>Severity</th><th>Count</th><th>Proven</th></tr>"
+        f"</thead><tbody>{rows}</tbody></table>"
     )
 
 
@@ -171,9 +171,11 @@ def _find_test_code_for_finding(finding, leads: list[dict], poc_files: list[dict
         if lead_node and lead_node == finding_node and lead.get("test_code"):
             return lead["test_code"]
     for lead in leads:
-        if (finding.affected_contract == lead.get("affected_contract")
-                and finding.affected_function == lead.get("affected_function")
-                and lead.get("test_code")):
+        if (
+            finding.affected_contract == lead.get("affected_contract")
+            and finding.affected_function == lead.get("affected_function")
+            and lead.get("test_code")
+        ):
             return lead["test_code"]
     return None
 
@@ -185,7 +187,7 @@ def _build_finding_panels(findings: list, leads: list[dict], poc_files: list[dic
         sev_color = _SEV_COLORS.get(f.severity_estimate, "#8b949e")
 
         # Status badges
-        fid = getattr(f, 'report_id', '') or ''
+        fid = getattr(f, "report_id", "") or ""
         sev_badge = _badge(f"{fid} {f.severity_estimate}" if fid else f.severity_estimate, sev_color, "sev-badge")
         status_badge = (
             _badge("PROVEN EXPLOIT", "#3fb950", "status-badge")
@@ -194,27 +196,31 @@ def _build_finding_panels(findings: list, leads: list[dict], poc_files: list[dic
         )
 
         # v2: Evidence tag badge
-        evidence_tag = getattr(f, 'evidence_tag', '') or ''
-        ev_badge_html = ''
+        evidence_tag = getattr(f, "evidence_tag", "") or ""
+        ev_badge_html = ""
         if evidence_tag:
             ev_colors = {
-                '[POC-PASS]': '#3fb950', '[POC-PASS-VARIANT]': '#56d364',
-                '[POC-FAIL]': '#f85149', '[CODE-TRACE]': '#d29922',
-                '[FUZZ-PASS]': '#79c0ff',
+                "[POC-PASS]": "#3fb950",
+                "[POC-PASS-VARIANT]": "#56d364",
+                "[POC-FAIL]": "#f85149",
+                "[CODE-TRACE]": "#d29922",
+                "[FUZZ-PASS]": "#79c0ff",
             }
-            ev_color = ev_colors.get(evidence_tag, '#8b949e')
-            ev_badge_html = _badge(evidence_tag, ev_color, 'evidence-badge')
+            ev_color = ev_colors.get(evidence_tag, "#8b949e")
+            ev_badge_html = _badge(evidence_tag, ev_color, "evidence-badge")
 
         # v2: Verdict badge
-        verdict = getattr(f, 'verdict', '') or ''
-        verdict_badge_html = ''
-        if verdict and verdict != 'UNASSESSED':
+        verdict = getattr(f, "verdict", "") or ""
+        verdict_badge_html = ""
+        if verdict and verdict != "UNASSESSED":
             v_colors = {
-                'CONFIRMED': '#3fb950', 'PARTIAL': '#d29922',
-                'CONTESTED': '#f78166', 'REFUTED': '#f85149',
+                "CONFIRMED": "#3fb950",
+                "PARTIAL": "#d29922",
+                "CONTESTED": "#f78166",
+                "REFUTED": "#f85149",
             }
-            v_color = v_colors.get(verdict, '#8b949e')
-            verdict_badge_html = _badge(f'VERDICT: {verdict}', v_color, 'verdict-badge')
+            v_color = v_colors.get(verdict, "#8b949e")
+            verdict_badge_html = _badge(f"VERDICT: {verdict}", v_color, "verdict-badge")
 
         # Attack path visualization
         attack_path_html = ""
@@ -222,44 +228,44 @@ def _build_finding_panels(findings: list, leads: list[dict], poc_files: list[dic
             steps = []
             for node in f.attack_path:
                 steps.append(f'<span class="path-node">{html.escape(node)}</span>')
-            attack_path_html = (
-                '<div class="attack-path">'
-                + '<span class="path-arrow"></span>'.join(steps)
-                + '</div>'
-            )
+            attack_path_html = '<div class="attack-path">' + '<span class="path-arrow"></span>'.join(steps) + "</div>"
 
         # Confidence bar
         conf = max(0, min(100, f.confidence))
         conf_color = "#3fb950" if conf >= 80 else ("#d29922" if conf >= 50 else "#f85149")
 
         # v2: Preconditions / postconditions
-        preconditions_html = ''
-        preconditions = getattr(f, 'preconditions', []) or []
-        preconditions_missing = getattr(f, 'preconditions_missing', []) or []
+        preconditions_html = ""
+        preconditions = getattr(f, "preconditions", []) or []
+        preconditions_missing = getattr(f, "preconditions_missing", []) or []
         if preconditions or preconditions_missing:
-            items = ''
+            items = ""
             for p in preconditions:
                 items += f'<li class="pre-met">✅ {html.escape(p)}</li>'
             for p in preconditions_missing:
                 items += f'<li class="pre-unmet">❌ {html.escape(p)} <em>(not currently met)</em></li>'
-            preconditions_html = f'<div class="section"><h3>Preconditions</h3><ul class="conditions-list">{items}</ul></div>'
+            preconditions_html = (
+                f'<div class="section"><h3>Preconditions</h3><ul class="conditions-list">{items}</ul></div>'
+            )
 
-        postconditions_html = ''
-        postconditions = getattr(f, 'postconditions', []) or []
+        postconditions_html = ""
+        postconditions = getattr(f, "postconditions", []) or []
         if postconditions:
-            items = ''.join(f'<li>{html.escape(p)}</li>' for p in postconditions)
+            items = "".join(f"<li>{html.escape(p)}</li>" for p in postconditions)
             postconditions_html = f'<div class="section"><h3>Postconditions (if exploited)</h3><ul class="conditions-list">{items}</ul></div>'
 
         # v2: RAG references
-        rag_html = ''
-        rag_matches = getattr(f, 'rag_matches', []) or []
+        rag_html = ""
+        rag_matches = getattr(f, "rag_matches", []) or []
         if rag_matches:
-            rag_items = ''
+            rag_items = ""
             for m in rag_matches[:3]:
-                source = html.escape(m.get('source', 'Unknown'))
-                snippet = html.escape(m.get('snippet', '')[:120])
-                rag_items += f'<li><strong>{source}</strong>: {snippet}...</li>'
-            rag_html = f'<div class="section"><h3>Historical References (RAG)</h3><ul class="rag-list">{rag_items}</ul></div>'
+                source = html.escape(m.get("source", "Unknown"))
+                snippet = html.escape(m.get("snippet", "")[:120])
+                rag_items += f"<li><strong>{source}</strong>: {snippet}...</li>"
+            rag_html = (
+                f'<div class="section"><h3>Historical References (RAG)</h3><ul class="rag-list">{rag_items}</ul></div>'
+            )
 
         # PoC code
         test_code = _find_test_code_for_finding(f, leads, poc_files)
@@ -268,7 +274,7 @@ def _build_finding_panels(findings: list, leads: list[dict], poc_files: list[dic
             escaped_code = html.escape(test_code)
             repro_cmd = (
                 f'forge test --match-path "test/ExploitTest_'
-                f'{html.escape(f.affected_contract)}_{html.escape(f.affected_function)}'
+                f"{html.escape(f.affected_contract)}_{html.escape(f.affected_function)}"
                 f'.t.sol" --match-test test_exploit -vvv'
             )
             poc_html = f"""
@@ -296,14 +302,14 @@ def _build_finding_panels(findings: list, leads: list[dict], poc_files: list[dic
       </div>
       <div class="section">
         <h3>Hypothesis</h3>
-        <p>{html.escape(f.hypothesis or 'No hypothesis available.')}</p>
+        <p>{html.escape(f.hypothesis or "No hypothesis available.")}</p>
       </div>
-      {f'<div class="section"><h3>Attack Path</h3>{attack_path_html}</div>' if attack_path_html else ''}
+      {f'<div class="section"><h3>Attack Path</h3>{attack_path_html}</div>' if attack_path_html else ""}
       {preconditions_html}
       {postconditions_html}
       <div class="section">
         <h3>Impact</h3>
-        <p>{html.escape(f.impact or 'Not specified.')}</p>
+        <p>{html.escape(f.impact or "Not specified.")}</p>
       </div>
       <div class="section">
         <h3>Confidence</h3>
@@ -331,12 +337,12 @@ def _build_leads_panel(leads: list[dict]) -> str:
         func = html.escape(lead.get("affected_function", "Unknown"))
         hyp = html.escape(lead.get("hypothesis", "No hypothesis provided."))
 
-        rows += f'''
+        rows += f"""
         <div class="section" style="border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;">
           <h3 style="color: var(--text-bright); font-size: 14px; margin-bottom: 4px;">{idx}. {sev} | {title} (Confidence: {conf}%)</h3>
           <p style="font-family: monospace; font-size: 12px; margin-bottom: 8px;">{contract}::{func}</p>
           <p style="font-size: 13px;">{hyp}</p>
-        </div>'''
+        </div>"""
 
     return """
     <article class="finding-panel" id="raw-leads">
@@ -357,16 +363,16 @@ def _build_token_sidebar(token_usage: dict) -> str:
     <div class="sidebar-section">
       <h2>Token Usage</h2>
       <div class="summary-totals">
-        <span>{total.get('call_count', 0)} LLM calls</span>
-        <span class="proven-count">${total.get('estimated_cost_usd', 0):.4f}</span>
+        <span>{total.get("call_count", 0)} LLM calls</span>
+        <span class="proven-count">${total.get("estimated_cost_usd", 0):.4f}</span>
       </div>
       <table class="summary-table">
         <thead><tr><th>Metric</th><th>Value</th></tr></thead>
         <tbody>
-          <tr><td>Input tokens</td><td>{total.get('input_tokens', 0):,}</td></tr>
-          <tr><td>Output tokens</td><td>{total.get('output_tokens', 0):,}</td></tr>
-          <tr><td>Total tokens</td><td>{total.get('total_tokens', 0):,}</td></tr>
-          <tr><td>Duration</td><td>{token_usage.get('elapsed_seconds', 0):.0f}s</td></tr>
+          <tr><td>Input tokens</td><td>{total.get("input_tokens", 0):,}</td></tr>
+          <tr><td>Output tokens</td><td>{total.get("output_tokens", 0):,}</td></tr>
+          <tr><td>Total tokens</td><td>{total.get("total_tokens", 0):,}</td></tr>
+          <tr><td>Duration</td><td>{token_usage.get("elapsed_seconds", 0):.0f}s</td></tr>
         </tbody>
       </table>
     </div>"""
@@ -383,20 +389,20 @@ def _build_token_panel(token_usage: dict) -> str:
     rows = ""
     for a in agents:
         rows += f"""<tr>
-          <td>{html.escape(a['agent_name'])}</td>
-          <td>{html.escape(a.get('model', ''))}</td>
-          <td>{a['call_count']}</td>
-          <td>{a['input_tokens']:,}</td>
-          <td>{a['output_tokens']:,}</td>
-          <td>{a['input_chars']:,}</td>
-          <td>{a['output_chars']:,}</td>
-          <td>${a['estimated_cost_usd']:.4f}</td>
+          <td>{html.escape(a["agent_name"])}</td>
+          <td>{html.escape(a.get("model", ""))}</td>
+          <td>{a["call_count"]}</td>
+          <td>{a["input_tokens"]:,}</td>
+          <td>{a["output_tokens"]:,}</td>
+          <td>{a["input_chars"]:,}</td>
+          <td>{a["output_chars"]:,}</td>
+          <td>${a["estimated_cost_usd"]:.4f}</td>
         </tr>"""
 
     return f"""
     <article class="finding-panel" id="token-usage">
       <div class="finding-header">
-        <div class="badges">{_badge('METRICS', '#58a6ff', 'sev-badge')}</div>
+        <div class="badges">{_badge("METRICS", "#58a6ff", "sev-badge")}</div>
         <h2>LLM Token Usage & Cost</h2>
         <p class="finding-title">Per-agent breakdown of LLM API usage across the pipeline</p>
       </div>
@@ -415,18 +421,18 @@ def _build_token_panel(token_usage: dict) -> str:
             <tr class="total-row">
               <td><strong>TOTAL</strong></td>
               <td>—</td>
-              <td><strong>{total.get('call_count', 0)}</strong></td>
-              <td><strong>{total.get('input_tokens', 0):,}</strong></td>
-              <td><strong>{total.get('output_tokens', 0):,}</strong></td>
-              <td><strong>{total.get('input_chars', 0):,}</strong></td>
-              <td><strong>{total.get('output_chars', 0):,}</strong></td>
-              <td><strong>${total.get('estimated_cost_usd', 0):.4f}</strong></td>
+              <td><strong>{total.get("call_count", 0)}</strong></td>
+              <td><strong>{total.get("input_tokens", 0):,}</strong></td>
+              <td><strong>{total.get("output_tokens", 0):,}</strong></td>
+              <td><strong>{total.get("input_chars", 0):,}</strong></td>
+              <td><strong>{total.get("output_chars", 0):,}</strong></td>
+              <td><strong>${total.get("estimated_cost_usd", 0):.4f}</strong></td>
             </tr>
           </tbody>
         </table>
       </div>
       <div class="section">
-        <p style="color:#8b949e;font-size:12px;">Pipeline duration: {elapsed:.0f}s &nbsp;|&nbsp; Total tokens: {total.get('total_tokens', 0):,} &nbsp;|&nbsp; Estimated cost: ${total.get('estimated_cost_usd', 0):.4f}</p>
+        <p style="color:#8b949e;font-size:12px;">Pipeline duration: {elapsed:.0f}s &nbsp;|&nbsp; Total tokens: {total.get("total_tokens", 0):,} &nbsp;|&nbsp; Estimated cost: ${total.get("estimated_cost_usd", 0):.4f}</p>
       </div>
     </article>"""
 

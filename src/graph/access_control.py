@@ -50,23 +50,23 @@ class AccessControlMixin:
                 post_segment = self._analyze_modifier_segment(post_nodes)
 
                 # Create modifier node
-                self.graph.add_node(mod_node_id, **{
-                    "type": "modifier",
-                    "name": modifier.name,
-                    "contract": contract.name,
-                    "conditions": conditions,
-                    "accesses_state_variables": accessed_state_vars,
-                    "is_access_control": is_access_control,
-                    "access_control_pattern": pattern,
-                    "pre_segment": pre_segment,
-                    "post_segment": post_segment
-                })
+                self.graph.add_node(
+                    mod_node_id,
+                    **{
+                        "type": "modifier",
+                        "name": modifier.name,
+                        "contract": contract.name,
+                        "conditions": conditions,
+                        "accesses_state_variables": accessed_state_vars,
+                        "is_access_control": is_access_control,
+                        "access_control_pattern": pattern,
+                        "pre_segment": pre_segment,
+                        "post_segment": post_segment,
+                    },
+                )
 
                 # Edge: Contract --HAS_MODIFIER--> Modifier
-                self.graph.add_edge(
-                    contract.name, mod_node_id,
-                    relationship="HAS_MODIFIER"
-                )
+                self.graph.add_edge(contract.name, mod_node_id, relationship="HAS_MODIFIER")
 
         # --- Phase 2: Build FunctionAccessProfile on each function node ---
         # Build inheritance-aware modifier resolution cache (Part 2)
@@ -84,10 +84,7 @@ class AccessControlMixin:
                     self._inheritance_modifier_cache[contract.name] = {}
                 if modifier.name not in self._inheritance_modifier_cache[contract.name]:
                     conditions = self._extract_modifier_conditions(modifier)
-                    accessed_vars = [
-                        f"{sv.contract.name}::{sv.name}"
-                        for sv in modifier.state_variables_read
-                    ]
+                    accessed_vars = [f"{sv.contract.name}::{sv.name}" for sv in modifier.state_variables_read]
                     pattern = self._classify_modifier_pattern(conditions, accessed_vars)
                     self._inheritance_modifier_cache[contract.name][modifier.name] = pattern
 
@@ -142,12 +139,14 @@ class AccessControlMixin:
                 ac_confidence = 0.0
 
             # Attach FunctionAccessProfile
-            self._update_access_control(node_id,
+            self._update_access_control(
+                node_id,
                 has_access_control=has_access_control,
                 ac_modifiers=ac_modifiers,
                 has_inline_check=has_inline_check,
                 is_protected=is_protected,
-                confidence=ac_confidence)
+                confidence=ac_confidence,
+            )
 
     def _extract_modifier_conditions(self, modifier) -> list[dict[str, Any]]:
         """
@@ -163,7 +162,7 @@ class AccessControlMixin:
                     ir_str = str(ir).lower()
 
                     # Detect require() or assert() calls
-                    if 'require(bool' in ir_str or 'assert(bool' in ir_str:
+                    if "require(bool" in ir_str or "assert(bool" in ir_str:
                         cond_type = "require" if "require" in ir_str else "assert"
 
                         # Get the full expression from the node
@@ -175,13 +174,15 @@ class AccessControlMixin:
                         # Try to find what variable is being compared
                         compared_variable = self._extract_compared_variable(expression_str)
 
-                        conditions.append({
-                            "type": cond_type,
-                            "expression": expression_str,
-                            "checks_msg_sender": checks_msg_sender,
-                            "checks_tx_origin": checks_tx_origin,
-                            "compared_variable": compared_variable
-                        })
+                        conditions.append(
+                            {
+                                "type": cond_type,
+                                "expression": expression_str,
+                                "checks_msg_sender": checks_msg_sender,
+                                "checks_tx_origin": checks_tx_origin,
+                                "compared_variable": compared_variable,
+                            }
+                        )
         except Exception:
             # Graceful fallback if IR parsing fails
             pass
@@ -196,27 +197,27 @@ class AccessControlMixin:
         """
 
         # Pattern: msg.sender == <variable>
-        match = re.search(r'msg\.sender\s*==\s*(\w+)', expression)
+        match = re.search(r"msg\.sender\s*==\s*(\w+)", expression)
         if match:
             return match.group(1)
 
         # Pattern: <variable> == msg.sender
-        match = re.search(r'(\w+)\s*==\s*msg\.sender', expression)
+        match = re.search(r"(\w+)\s*==\s*msg\.sender", expression)
         if match:
             return match.group(1)
 
         # Pattern: tx.origin == <variable>
-        match = re.search(r'tx\.origin\s*==\s*(\w+)', expression)
+        match = re.search(r"tx\.origin\s*==\s*(\w+)", expression)
         if match:
             return match.group(1)
 
         # Pattern: <mapping>[msg.sender] (e.g., admins[msg.sender])
-        match = re.search(r'(\w+)\[msg\.sender\]', expression)
+        match = re.search(r"(\w+)\[msg\.sender\]", expression)
         if match:
             return match.group(1)
 
         # Pattern: hasRole(..., msg.sender)
-        if 'hasRole' in expression or 'hasrole' in expression.lower():
+        if "hasRole" in expression or "hasrole" in expression.lower():
             return "roles"
 
         return ""
@@ -225,13 +226,17 @@ class AccessControlMixin:
     # Centralized Access Control Update Helper (Part 6)
     # ================================================================
 
-    def _update_access_control(self, node_id: str, *,
-                                has_access_control: bool = None,
-                                ac_modifiers: list = None,
-                                has_inline_check: bool = None,
-                                is_protected: bool = None,
-                                confidence: float = None,
-                                ac_type: str = None):
+    def _update_access_control(
+        self,
+        node_id: str,
+        *,
+        has_access_control: bool = None,
+        ac_modifiers: list = None,
+        has_inline_check: bool = None,
+        is_protected: bool = None,
+        confidence: float = None,
+        ac_type: str = None,
+    ):
         """
         Centralized helper — all access control updates flow through here.
         Only overwrites fields that are explicitly provided (not None).
@@ -247,9 +252,7 @@ class AccessControlMixin:
         if is_protected is not None:
             nd["is_protected"] = nd.get("is_protected", False) or is_protected
         if confidence is not None:
-            nd["access_control_confidence"] = max(
-                nd.get("access_control_confidence", 0.0), confidence
-            )
+            nd["access_control_confidence"] = max(nd.get("access_control_confidence", 0.0), confidence)
         if ac_type is not None:
             existing = nd.get("access_control_type", "none")
             if existing == "none":
@@ -261,8 +264,7 @@ class AccessControlMixin:
     # Part 2 — Inheritance-Aware Modifier Resolution
     # ================================================================
 
-    def _resolve_modifiers_with_inheritance(self, contract_name: str,
-                                            applied_modifiers: list[str]) -> dict[str, tuple]:
+    def _resolve_modifiers_with_inheritance(self, contract_name: str, applied_modifiers: list[str]) -> dict[str, tuple]:
         """
         BFS over INHERITS edges to resolve modifier definitions from parent
         contracts.  Returns {modifier_name: (pattern, is_local)} where
@@ -279,7 +281,7 @@ class AccessControlMixin:
         local_mods = self._inheritance_modifier_cache.get(contract_name, {})
         for m in list(needed):
             if m in local_mods:
-                result[m] = (local_mods[m], True)   # is_local = True
+                result[m] = (local_mods[m], True)  # is_local = True
                 needed.discard(m)
 
         if not needed:
@@ -319,9 +321,9 @@ class AccessControlMixin:
     # ================================================================
 
     _GUARD_NAME_RE = re.compile(
-        r'^_?(require|check|only|assert|verify|ensure|validate)'
-        r'(Admin|Owner|Role|Auth|Caller|Sender|Gov|Operator|Manager|Guardian|Pauser)',
-        re.IGNORECASE
+        r"^_?(require|check|only|assert|verify|ensure|validate)"
+        r"(Admin|Owner|Role|Auth|Caller|Sender|Gov|Operator|Manager|Guardian|Pauser)",
+        re.IGNORECASE,
     )
 
     def _detect_internal_guard_calls(self, slither_obj: Slither):
@@ -351,8 +353,7 @@ class AccessControlMixin:
             # Body analysis: contains require/assert/revert referencing msg.sender
             if not is_guard and source:
                 has_sender = "msg.sender" in source
-                has_check = ("require(" in source or "revert" in source
-                             or "assert(" in source)
+                has_check = "require(" in source or "revert" in source or "assert(" in source
                 if has_sender and has_check:
                     is_guard = True
 
@@ -415,14 +416,11 @@ class AccessControlMixin:
     # ================================================================
 
     _ROLE_CALL_SIGS = re.compile(
-        r'(hasRole|getRoleMember|canCall|isOperator|checkRole|'
-        r'_checkRole|onlyRole|hasPermission)\s*\(',
-        re.IGNORECASE
+        r"(hasRole|getRoleMember|canCall|isOperator|checkRole|"
+        r"_checkRole|onlyRole|hasPermission)\s*\(",
+        re.IGNORECASE,
     )
-    _ROLE_TARGET_KEYWORDS = re.compile(
-        r'(role|auth|access|registry|acl|permission)',
-        re.IGNORECASE
-    )
+    _ROLE_TARGET_KEYWORDS = re.compile(r"(role|auth|access|registry|acl|permission)", re.IGNORECASE)
 
     def _detect_external_role_registry_guards(self):
         """
@@ -435,10 +433,7 @@ class AccessControlMixin:
                 continue
 
             source = data.get("source_code", "")
-            has_require_context = bool(
-                source and ("require(" in source or "revert" in source
-                            or "assert(" in source)
-            )
+            has_require_context = bool(source and ("require(" in source or "revert" in source or "assert(" in source))
 
             for _, target, edata in self.graph.out_edges(node_id, data=True):
                 if edata.get("relationship") != "EXTERNAL_CALL":
@@ -537,17 +532,24 @@ class AccessControlMixin:
     # Part 8 — Governance Classification
     # ================================================================
 
-    _GOVERNANCE_PARENT_CONTRACTS = frozenset([
-        "Governor", "GovernorCompatibilityBravo", "TimelockController",
-        "GovernorTimelockControl", "GovernorCountingSimple",
-        "GovernorVotes", "GovernorVotesQuorumFraction",
-        "GovernorSettings", "GovernorTimelockCompound",
-    ])
+    _GOVERNANCE_PARENT_CONTRACTS = frozenset(
+        [
+            "Governor",
+            "GovernorCompatibilityBravo",
+            "TimelockController",
+            "GovernorTimelockControl",
+            "GovernorCountingSimple",
+            "GovernorVotes",
+            "GovernorVotesQuorumFraction",
+            "GovernorSettings",
+            "GovernorTimelockCompound",
+        ]
+    )
     _GOVERNANCE_KEYWORDS = re.compile(
-        r'(quorum|votingPeriod|proposalThreshold|castVote|castVoteBySig'
-        r'|proposalDeadline|proposalSnapshot|COUNTING_MODE'
-        r'|timelockDelay|queue|execute|cancel)',
-        re.IGNORECASE
+        r"(quorum|votingPeriod|proposalThreshold|castVote|castVoteBySig"
+        r"|proposalDeadline|proposalSnapshot|COUNTING_MODE"
+        r"|timelockDelay|queue|execute|cancel)",
+        re.IGNORECASE,
     )
 
     def _classify_governance_contracts(self):
@@ -606,10 +608,7 @@ class AccessControlMixin:
             ac_conf = data.get("access_control_confidence", 0.0)
 
             # Function is in or protected by a governance contract
-            func_under_gov = (
-                contract in governance_contracts
-                or ac_type in ("modifier", "require-based", "both")
-            )
+            func_under_gov = contract in governance_contracts or ac_type in ("modifier", "require-based", "both")
             if not func_under_gov:
                 continue
 
@@ -651,8 +650,7 @@ class AccessControlMixin:
                 continue
 
             ac_type = data.get("access_control_type", "none")
-            protected_types = ("modifier", "require-based", "both",
-                               "internal-guard", "external-role")
+            protected_types = ("modifier", "require-based", "both", "internal-guard", "external-role")
 
             effectively_protected = (
                 ac_type in protected_types
@@ -680,7 +678,7 @@ class AccessControlMixin:
                 expr = cond.get("expression", "")
 
                 # Mapping pattern: admins[msg.sender], roles[msg.sender]
-                if '[msg.sender]' in expr or 'hasRole' in expr or 'hasrole' in expr.lower():
+                if "[msg.sender]" in expr or "hasRole" in expr or "hasrole" in expr.lower():
                     return "role_mapping"
 
                 # Owner pattern: msg.sender == owner (compared to a single address variable)
@@ -699,10 +697,13 @@ class AccessControlMixin:
 
     # Compiled regex patterns for custom error / revert access control detection (Part 5)
     _REVERT_AC_PATTERNS = [
-        re.compile(r'if\s*\(\s*msg\.sender\s*!=', re.IGNORECASE),
-        re.compile(r'if\s*\(\s*\w+\s*!=\s*msg\.sender', re.IGNORECASE),
-        re.compile(r'if\s*\(\s*!\s*\w+\[msg\.sender\]', re.IGNORECASE),
-        re.compile(r'revert\s+(Unauthorized|NotOwner|NotAdmin|AccessDenied|Forbidden|OnlyOwner|OnlyAdmin|NotAuthorized)\s*\(', re.IGNORECASE),
+        re.compile(r"if\s*\(\s*msg\.sender\s*!=", re.IGNORECASE),
+        re.compile(r"if\s*\(\s*\w+\s*!=\s*msg\.sender", re.IGNORECASE),
+        re.compile(r"if\s*\(\s*!\s*\w+\[msg\.sender\]", re.IGNORECASE),
+        re.compile(
+            r"revert\s+(Unauthorized|NotOwner|NotAdmin|AccessDenied|Forbidden|OnlyOwner|OnlyAdmin|NotAuthorized)\s*\(",
+            re.IGNORECASE,
+        ),
     ]
 
     def _detect_inline_access_check(self, node_id: str, node_data: dict, slither_func=None) -> bool:
@@ -718,9 +719,9 @@ class AccessControlMixin:
                 for node in slither_func.nodes:
                     for ir in node.irs:
                         ir_str = str(ir).lower()
-                        if 'require(bool' in ir_str or 'assert(bool' in ir_str:
+                        if "require(bool" in ir_str or "assert(bool" in ir_str:
                             expr_str = str(node.expression) if node.expression else str(ir)
-                            if 'msg.sender' in expr_str:
+                            if "msg.sender" in expr_str:
                                 return True
             except Exception:
                 pass
@@ -728,9 +729,9 @@ class AccessControlMixin:
         # Fallback: source code regex (original patterns)
         source = node_data.get("source_code", "")
         if source:
-            if re.search(r'require\s*\(\s*msg\.sender\s*==', source):
+            if re.search(r"require\s*\(\s*msg\.sender\s*==", source):
                 return True
-            if re.search(r'require\s*\(\s*\w+\s*==\s*msg\.sender', source):
+            if re.search(r"require\s*\(\s*\w+\s*==\s*msg\.sender", source):
                 return True
             # Part 5: Custom error / revert pattern detection
             for pat in self._REVERT_AC_PATTERNS:
@@ -781,7 +782,8 @@ class AccessControlMixin:
                                 # Simple heuristic: if it matches name, use it
                                 underlying_var = node_idx
                                 break
-                    if underlying_var: break
+                    if underlying_var:
+                        break
 
             # Fallback: use accessed state variables
             if not underlying_var:
@@ -803,7 +805,7 @@ class AccessControlMixin:
                 "protected_functions": protected_functions,
                 "underlying_variable": underlying_var,
                 "how_verified": "modifier",
-                "pattern": pattern
+                "pattern": pattern,
             }
 
             if contract_name not in contract_roles:
@@ -825,11 +827,11 @@ class AccessControlMixin:
             # Parse source for the compared variable
             source = node_data.get("source_code", "")
             compared_var = ""
-            match = re.search(r'require\s*\(\s*msg\.sender\s*==\s*(\w+)', source)
+            match = re.search(r"require\s*\(\s*msg\.sender\s*==\s*(\w+)", source)
             if match:
                 compared_var = match.group(1)
             else:
-                match = re.search(r'require\s*\(\s*(\w+)\s*==\s*msg\.sender', source)
+                match = re.search(r"require\s*\(\s*(\w+)\s*==\s*msg\.sender", source)
                 if match:
                     compared_var = match.group(1)
 
@@ -841,7 +843,7 @@ class AccessControlMixin:
                 "protected_functions": [node_id],
                 "underlying_variable": compared_var,
                 "how_verified": "inline_require",
-                "pattern": "owner_check"
+                "pattern": "owner_check",
             }
 
             if contract_name not in contract_roles:
@@ -872,19 +874,19 @@ class AccessControlMixin:
         """
         name_lower = modifier_name.lower()
 
-        if 'owner' in name_lower:
-            return 'owner'
-        if 'admin' in name_lower:
-            return 'admin'
-        if 'role' in name_lower:
-            return 'role'
-        if 'pause' in name_lower:
-            return 'paused_flag'
-        if 'txorigin' in name_lower or 'tx_origin' in name_lower:
-            return 'tx_origin'
+        if "owner" in name_lower:
+            return "owner"
+        if "admin" in name_lower:
+            return "admin"
+        if "role" in name_lower:
+            return "role"
+        if "pause" in name_lower:
+            return "paused_flag"
+        if "txorigin" in name_lower or "tx_origin" in name_lower:
+            return "tx_origin"
 
         # Fallback: strip 'only' prefix if present
-        if name_lower.startswith('only'):
+        if name_lower.startswith("only"):
             return modifier_name[4:].lower() or modifier_name
 
         # Use the compared variable if available
@@ -997,25 +999,31 @@ class AccessControlMixin:
                     target_expression = f"{dest}.send"
 
                 if call_type:
-                    segment_data["external_calls"].append({
-                        "type": call_type,
-                        "desc": f"{ir_type}::{str(ir)[:80]}",
-                        "idx": idx,
-                        "forwards_gas": forwards_gas,
-                        "target_expression": target_expression,
-                        "return_value_checked": True,
-                        "resolved_target": resolved_target,
-                    })
+                    segment_data["external_calls"].append(
+                        {
+                            "type": call_type,
+                            "desc": f"{ir_type}::{str(ir)[:80]}",
+                            "idx": idx,
+                            "forwards_gas": forwards_gas,
+                            "target_expression": target_expression,
+                            "return_value_checked": True,
+                            "resolved_target": resolved_target,
+                        }
+                    )
 
                 if ir_type == "InternalCall":
                     target_func = getattr(ir, "function", None)
                     if target_func:
-                        target_contract = getattr(target_func, "contract_declarer", None) or getattr(target_func, "contract", None)
+                        target_contract = getattr(target_func, "contract_declarer", None) or getattr(
+                            target_func, "contract", None
+                        )
                         if target_contract:
-                            segment_data["internal_calls"].append({
-                                "target_id": f"{target_contract.name}::{target_func.name}",
-                                "idx": idx,
-                            })
+                            segment_data["internal_calls"].append(
+                                {
+                                    "target_id": f"{target_contract.name}::{target_func.name}",
+                                    "idx": idx,
+                                }
+                            )
 
             if hasattr(node, "state_variables_written") and node.state_variables_written:
                 segment_data["direct_writes"].append(idx)
@@ -1049,11 +1057,7 @@ class AccessControlMixin:
 
             is_externally_callable = visibility in ["public", "external"]
 
-            if (is_externally_callable
-                and writes_state
-                and not is_protected
-                and not is_constructor):
-
+            if is_externally_callable and writes_state and not is_protected and not is_constructor:
                 # Determine risk level
                 risk_level = "HIGH" if is_payable else "MEDIUM"
 
@@ -1102,12 +1106,22 @@ class AccessControlMixin:
                             break
                         for ir in cfg_node.irs:
                             ir_str = str(ir).lower()
-                            if 'require(bool' not in ir_str and 'assert(bool' not in ir_str:
+                            if "require(bool" not in ir_str and "assert(bool" not in ir_str:
                                 continue
                             expr_str = str(cfg_node.expression) if cfg_node.expression else str(ir)
                             expr_lower = expr_str.lower()
                             # Check for both standard and Compound patterns in IR/Expression
-                            if any(kw in expr_lower for kw in ("initialized", "_initialized", "initializing", "_initializing", "accrualblocknumber", "borrowindex")):
+                            if any(
+                                kw in expr_lower
+                                for kw in (
+                                    "initialized",
+                                    "_initialized",
+                                    "initializing",
+                                    "_initializing",
+                                    "accrualblocknumber",
+                                    "borrowindex",
+                                )
+                            ):
                                 has_guard = True
                                 break
                 except Exception:
@@ -1171,10 +1185,10 @@ class AccessControlMixin:
                     for cfg_node in slither_func.nodes:
                         for ir in cfg_node.irs:
                             ir_str = str(ir).lower()
-                            if 'require(bool' not in ir_str and 'assert(bool' not in ir_str:
+                            if "require(bool" not in ir_str and "assert(bool" not in ir_str:
                                 continue
                             expr_str = str(cfg_node.expression) if cfg_node.expression else str(ir)
-                            if 'msg.sender' not in expr_str:
+                            if "msg.sender" not in expr_str:
                                 continue
 
                             has_require_ac = True
@@ -1188,8 +1202,7 @@ class AccessControlMixin:
                                     require_targets.append(var_id)
                                 else:
                                     for nid, ndata in self.graph.nodes(data=True):
-                                        if (ndata.get("type") == "state_variable"
-                                                and ndata.get("name") == target):
+                                        if ndata.get("type") == "state_variable" and ndata.get("name") == target:
                                             require_targets.append(nid)
                                             break
                                     else:
@@ -1198,10 +1211,13 @@ class AccessControlMixin:
                             # Also detect function-call-style checks
                             if not target:
                                 call_patterns = [
-                                    r'hasRole\s*\(', r'_isAdmin\s*\(',
-                                    r'isOwner\s*\(', r'_checkRole\s*\(',
-                                    r'_checkOwner\s*\(', r'onlyRole\s*\(',
-                                    r'_requireAuth\s*\(',
+                                    r"hasRole\s*\(",
+                                    r"_isAdmin\s*\(",
+                                    r"isOwner\s*\(",
+                                    r"_checkRole\s*\(",
+                                    r"_checkOwner\s*\(",
+                                    r"onlyRole\s*\(",
+                                    r"_requireAuth\s*\(",
                                 ]
                                 for cp in call_patterns:
                                     if re.search(cp, expr_str):
@@ -1214,11 +1230,11 @@ class AccessControlMixin:
             # Source-code fallback
             if not has_require_ac:
                 source = node_data.get("source_code", "")
-                if source and 'msg.sender' in source:
+                if source and "msg.sender" in source:
                     sender_patterns = [
-                        r'require\s*\(\s*msg\.sender\s*==\s*(\w+)',
-                        r'require\s*\(\s*(\w+)\s*==\s*msg\.sender',
-                        r'if\s*\(\s*msg\.sender\s*!=\s*(\w+)',
+                        r"require\s*\(\s*msg\.sender\s*==\s*(\w+)",
+                        r"require\s*\(\s*(\w+)\s*==\s*msg\.sender",
+                        r"if\s*\(\s*msg\.sender\s*!=\s*(\w+)",
                     ]
                     for pat in sender_patterns:
                         m = re.search(pat, source)
@@ -1234,9 +1250,9 @@ class AccessControlMixin:
                             break
                     if not has_require_ac:
                         call_patterns = [
-                            r'require\s*\(\s*hasRole\s*\(',
-                            r'require\s*\(\s*_isAdmin\s*\(',
-                            r'require\s*\(\s*isOwner\s*\(',
+                            r"require\s*\(\s*hasRole\s*\(",
+                            r"require\s*\(\s*_isAdmin\s*\(",
+                            r"require\s*\(\s*isOwner\s*\(",
                         ]
                         for pat in call_patterns:
                             if re.search(pat, source):
@@ -1347,33 +1363,87 @@ class AccessControlMixin:
 
     _SENSITIVITY_PATTERNS: dict[str, list[str]] = {
         "ACCOUNTING_CRITICAL": [
-            "totalSupply", "totalBorrow", "totalBorrows", "totalDebt",
-            "balance", "balances", "totalBalance", "reserve", "reserves",
-            "exchangeRate", "borrowIndex", "supplyIndex", "accrued",
-            "debt", "totalAssets", "totalShares", "totalStaked",
-            "totalDeposits", "accountBorrows", "totalCash",
-            "interestIndex", "borrowRate", "supplyRate", "totalReserves",
-            "shares", "assets",
+            "totalSupply",
+            "totalBorrow",
+            "totalBorrows",
+            "totalDebt",
+            "balance",
+            "balances",
+            "totalBalance",
+            "reserve",
+            "reserves",
+            "exchangeRate",
+            "borrowIndex",
+            "supplyIndex",
+            "accrued",
+            "debt",
+            "totalAssets",
+            "totalShares",
+            "totalStaked",
+            "totalDeposits",
+            "accountBorrows",
+            "totalCash",
+            "interestIndex",
+            "borrowRate",
+            "supplyRate",
+            "totalReserves",
+            "shares",
+            "assets",
         ],
         "ACCESS_CRITICAL": [
-            "owner", "_owner", "admin", "governance", "authority",
-            "operator", "pendingOwner", "roles", "minters", "guardian",
-            "comptroller", "paused", "pauseGuardian",
+            "owner",
+            "_owner",
+            "admin",
+            "governance",
+            "authority",
+            "operator",
+            "pendingOwner",
+            "roles",
+            "minters",
+            "guardian",
+            "comptroller",
+            "paused",
+            "pauseGuardian",
         ],
         "CAP_CRITICAL": [
-            "cap", "maxSupply", "supplyCap", "borrowCap", "maxDeposit",
-            "maxMint", "ceiling", "limit", "threshold", "maxBorrow",
-            "mintCap", "maxWithdraw", "collateralFactor",
+            "cap",
+            "maxSupply",
+            "supplyCap",
+            "borrowCap",
+            "maxDeposit",
+            "maxMint",
+            "ceiling",
+            "limit",
+            "threshold",
+            "maxBorrow",
+            "mintCap",
+            "maxWithdraw",
+            "collateralFactor",
         ],
         "REWARD_CRITICAL": [
-            "rewardRate", "rewardPerToken", "rewardPerBlock", "rewards",
-            "earned", "accRewardPerShare", "bonusMultiplier",
-            "emissionRate", "compRate", "compSpeeds", "compAccrued",
+            "rewardRate",
+            "rewardPerToken",
+            "rewardPerBlock",
+            "rewards",
+            "earned",
+            "accRewardPerShare",
+            "bonusMultiplier",
+            "emissionRate",
+            "compRate",
+            "compSpeeds",
+            "compAccrued",
             "rewardIndex",
         ],
         "LIQUIDITY_CRITICAL": [
-            "totalLiquidity", "poolBalance", "sqrtPrice", "liquidity",
-            "tickLower", "tickUpper", "fee", "feeGrowth",
-            "protocolFees", "kLast",
+            "totalLiquidity",
+            "poolBalance",
+            "sqrtPrice",
+            "liquidity",
+            "tickLower",
+            "tickUpper",
+            "fee",
+            "feeGrowth",
+            "protocolFees",
+            "kLast",
         ],
     }

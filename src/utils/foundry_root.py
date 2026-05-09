@@ -54,9 +54,7 @@ def resolve_foundry_root(base: Path) -> Path:
             if depth > 7:
                 continue
             candidate_dir = toml.parent
-            has_src = (candidate_dir / "src").is_dir() and any(
-                (candidate_dir / "src").rglob("*.sol")
-            )
+            has_src = (candidate_dir / "src").is_dir() and any((candidate_dir / "src").rglob("*.sol"))
             effective_depth = depth - (1 if has_src else 0)
             if effective_depth < best_depth:
                 best_depth = effective_depth

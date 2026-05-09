@@ -15,21 +15,38 @@ from src.utils.graph_queries import (
 
 # Keywords that indicate deliberate design choices — NOT vulnerabilities
 DESIGN_INTENT_KEYWORDS = [
-    "permissionless", "anyone can", "no access control", "by design",
-    "intentionally", "trusted", "not supported", "known limitation",
-    "on behalf of", "on behalf", "delegated", "authorized caller",
+    "permissionless",
+    "anyone can",
+    "no access control",
+    "by design",
+    "intentionally",
+    "trusted",
+    "not supported",
+    "known limitation",
+    "on behalf of",
+    "on behalf",
+    "delegated",
+    "authorized caller",
     "fee-on-transfer tokens are not supported",
     "rebasing tokens are not supported",
 ]
 
 # Doc files to scan in any repo (case-insensitive)
 DOC_FILE_PATTERNS = [
-    "README.md", "readme.md", "README.rst",
-    "WHITEPAPER.md", "whitepaper.md", "WHITEPAPER.pdf",
-    "SECURITY.md", "security.md",
-    "SPECIFICATION.md", "specification.md",
-    "DESIGN.md", "design.md",
-    "ARCHITECTURE.md", "architecture.md",
+    "README.md",
+    "readme.md",
+    "README.rst",
+    "WHITEPAPER.md",
+    "whitepaper.md",
+    "WHITEPAPER.pdf",
+    "SECURITY.md",
+    "security.md",
+    "SPECIFICATION.md",
+    "specification.md",
+    "DESIGN.md",
+    "design.md",
+    "ARCHITECTURE.md",
+    "architecture.md",
 ]
 
 # Directories to scan for docs
@@ -133,7 +150,15 @@ class ReconWorker(WorkerAgent):
         repo_path: str | None = input_data.get("repo_path")
 
         # Run all SEVEN intel sources in parallel
-        graph_intel, rag_intel, onchain_intel, docs_intel, natspec_intel, compiler_intel, test_intel = await asyncio.gather(
+        (
+            graph_intel,
+            rag_intel,
+            onchain_intel,
+            docs_intel,
+            natspec_intel,
+            compiler_intel,
+            test_intel,
+        ) = await asyncio.gather(
             self._gather_graph_intel(contract_names),
             self._gather_rag_intel(contract_names),
             self._gather_onchain_intel(contract_addresses),
@@ -166,22 +191,20 @@ class ReconWorker(WorkerAgent):
             "compiler_info": compiler_intel,
             "tested_areas": test_intel,
         }
-        print(f"  [Recon] Design context: {len(design_context['doc_files_read'])} docs, "
-              f"{len(design_context['intentional_patterns'])} intentional patterns, "
-              f"solidity={compiler_intel.get('solidity_version', '?')}, "
-              f"safe_math={compiler_intel.get('has_safe_math', '?')}")
+        print(
+            f"  [Recon] Design context: {len(design_context['doc_files_read'])} docs, "
+            f"{len(design_context['intentional_patterns'])} intentional patterns, "
+            f"solidity={compiler_intel.get('solidity_version', '?')}, "
+            f"safe_math={compiler_intel.get('has_safe_math', '?')}"
+        )
 
         raw_output = {
-            "protocol_summary": self._generate_summary(
-                contract_names, protocol_type, graph_intel, onchain_intel
-            ),
+            "protocol_summary": self._generate_summary(contract_names, protocol_type, graph_intel, onchain_intel),
             "protocol_type": protocol_type,
             "trust_assumptions": trust_assumptions,
             "upgradeability_model": upgradeability,
             "known_attack_patterns": all_patterns,
-            "recommended_focus_areas": self._recommend_focus(
-                protocol_type, graph_intel, onchain_intel
-            ),
+            "recommended_focus_areas": self._recommend_focus(protocol_type, graph_intel, onchain_intel),
             "rag_sources_used": rag_intel.get("sources_used", []),
             "onchain_risk_signals": {
                 "contract_age_days": onchain_intel.get("contract_age_days"),
@@ -197,10 +220,10 @@ class ReconWorker(WorkerAgent):
 
         return WorkerOutput(
             worker_type="recon",
-            hypothesis=None,        # Recon never generates hypotheses
-            evidence_node_ids=[],   # Contract-level only — no function node IDs
-            attack_path=[],         # Always empty — Recon has no exploit path
-            confidence=0,           # Always 0 — Recon is context, not a finding
+            hypothesis=None,  # Recon never generates hypotheses
+            evidence_node_ids=[],  # Contract-level only — no function node IDs
+            attack_path=[],  # Always empty — Recon has no exploit path
+            confidence=0,  # Always 0 — Recon is context, not a finding
             raw_output=raw_output,
         )
 
@@ -245,10 +268,12 @@ class ReconWorker(WorkerAgent):
 
         # Add broad queries only if we have few contracts
         if len(contract_names) <= 2:
-            queries.extend([
-                "lending protocol liquidation vulnerability exploit",
-                "DeFi callback reentrancy CEI violation",
-            ])
+            queries.extend(
+                [
+                    "lending protocol liquidation vulnerability exploit",
+                    "DeFi callback reentrancy CEI violation",
+                ]
+            )
 
         all_results = []
         sources_used = []
@@ -305,8 +330,7 @@ class ReconWorker(WorkerAgent):
             if exploit_history.previous_exploits_detected and exploit_history.exploits:
                 top = exploit_history.exploits[0]
                 exploit_summary = (
-                    f"Largest suspicious outflow: {top.value_lost_eth:.2f} ETH "
-                    f"in tx {top.tx_hash[:10]}..."
+                    f"Largest suspicious outflow: {top.value_lost_eth:.2f} ETH in tx {top.tx_hash[:10]}..."
                 )
 
             return {
@@ -342,10 +366,7 @@ class ReconWorker(WorkerAgent):
 
         scores = {}
         for protocol_type, signatures in PROTOCOL_SIGNATURES.items():
-            score = sum(
-                1 for sig in signatures
-                if any(sig.lower() in fname for fname in function_names_lower)
-            )
+            score = sum(1 for sig in signatures if any(sig.lower() in fname for fname in function_names_lower))
             scores[protocol_type] = score
 
         best_type = max(scores, key=scores.get)
@@ -490,20 +511,26 @@ class ReconWorker(WorkerAgent):
         all_docs = "\n\n".join(collected_text)[:12000]  # cap total input
         try:
             response = await asyncio.wait_for(
-                asyncio.to_thread(self.llm.invoke, [
-                    {"role": "system", "content": (
-                        "You are a security auditor pre-reading protocol documentation. "
-                        "Summarise in 3-5 bullet points:\n"
-                        "1. What is this protocol? (1 sentence)\n"
-                        "2. What functions are INTENTIONALLY permissionless? (list them)\n"
-                        "3. What token types are NOT supported? (e.g. fee-on-transfer, rebasing)\n"
-                        "4. What security assumptions does the protocol make?\n"
-                        "5. Any known limitations or prior audit findings mentioned?\n"
-                        "Be concise. Output only the bullet points."
-                    )},
-                    {"role": "user", "content": all_docs}
-                ]),
-                timeout=60
+                asyncio.to_thread(
+                    self.llm.invoke,
+                    [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a security auditor pre-reading protocol documentation. "
+                                "Summarise in 3-5 bullet points:\n"
+                                "1. What is this protocol? (1 sentence)\n"
+                                "2. What functions are INTENTIONALLY permissionless? (list them)\n"
+                                "3. What token types are NOT supported? (e.g. fee-on-transfer, rebasing)\n"
+                                "4. What security assumptions does the protocol make?\n"
+                                "5. Any known limitations or prior audit findings mentioned?\n"
+                                "Be concise. Output only the bullet points."
+                            ),
+                        },
+                        {"role": "user", "content": all_docs},
+                    ],
+                ),
+                timeout=60,
             )
             summary = response.content if hasattr(response, "content") else str(response)
         except Exception as e:
@@ -532,8 +559,8 @@ class ReconWorker(WorkerAgent):
         if not src_dirs:
             src_dirs = [root]  # fallback: scan from root
 
-        natspec_re = re.compile(r'///\s*(@\w+)?\s*(.*)', re.MULTILINE)
-        function_re = re.compile(r'function\s+(\w+)\s*\(')
+        natspec_re = re.compile(r"///\s*(@\w+)?\s*(.*)", re.MULTILINE)
+        function_re = re.compile(r"function\s+(\w+)\s*\(")
 
         function_natspec: dict[str, list[str]] = {}
         intentional_patterns: list[str] = []
@@ -581,8 +608,10 @@ class ReconWorker(WorkerAgent):
                         if stripped and not stripped.startswith("*") and not stripped.startswith("/*"):
                             current_natspec = []
 
-        print(f"  [Recon] Natspec: {len(function_natspec)} functions documented, "
-              f"{len(intentional_patterns)} intentional pattern(s)")
+        print(
+            f"  [Recon] Natspec: {len(function_natspec)} functions documented, "
+            f"{len(intentional_patterns)} intentional pattern(s)"
+        )
         return {
             "function_natspec": function_natspec,
             "intentional_patterns": intentional_patterns,
@@ -605,8 +634,8 @@ class ReconWorker(WorkerAgent):
             return result
 
         root = Path(repo_path)
-        pragma_re = re.compile(r'pragma\s+solidity\s+[\^~>=<]*\s*(0\.\d+\.\d+)')
-        unchecked_re = re.compile(r'unchecked\s*\{')
+        pragma_re = re.compile(r"pragma\s+solidity\s+[\^~>=<]*\s*(0\.\d+\.\d+)")
+        unchecked_re = re.compile(r"unchecked\s*\{")
 
         versions: set[str] = set()
         has_unchecked = False
@@ -652,9 +681,11 @@ class ReconWorker(WorkerAgent):
 
         result["has_unchecked_blocks"] = has_unchecked
 
-        print(f"  [Recon] Compiler: solidity={result['solidity_version']}, "
-              f"safe_math={result['has_safe_math']}, "
-              f"unchecked={result['has_unchecked_blocks']}")
+        print(
+            f"  [Recon] Compiler: solidity={result['solidity_version']}, "
+            f"safe_math={result['has_safe_math']}, "
+            f"unchecked={result['has_unchecked_blocks']}"
+        )
         return result
 
     async def _gather_test_intent_intel(self, repo_path: str | None) -> dict:
@@ -676,15 +707,13 @@ class ReconWorker(WorkerAgent):
 
         root = Path(repo_path)
         test_dirs = list(root.rglob("test"))
-        test_dirs = [d for d in test_dirs if d.is_dir()
-                     and "node_modules" not in str(d)
-                     and "/lib/" not in str(d)]
+        test_dirs = [d for d in test_dirs if d.is_dir() and "node_modules" not in str(d) and "/lib/" not in str(d)]
 
         if not test_dirs:
             return result
 
-        test_fn_re = re.compile(r'function\s+(test\w+|invariant_\w+|testFuzz_\w+|testFail_\w+)\s*\(')
-        fork_re = re.compile(r'vm\.createFork|vm\.selectFork|fork', re.IGNORECASE)
+        test_fn_re = re.compile(r"function\s+(test\w+|invariant_\w+|testFuzz_\w+|testFail_\w+)\s*\(")
+        fork_re = re.compile(r"vm\.createFork|vm\.selectFork|fork", re.IGNORECASE)
 
         tested = set()
         fuzz = set()
@@ -717,6 +746,8 @@ class ReconWorker(WorkerAgent):
         result["invariant_targets"] = sorted(invariant)[:20]
         result["has_fork_tests"] = has_fork
 
-        print(f"  [Recon] Tests: {file_count} file(s), {len(tested)} test fn(s), "
-              f"{len(fuzz)} fuzz, {len(invariant)} invariant")
+        print(
+            f"  [Recon] Tests: {file_count} file(s), {len(tested)} test fn(s), "
+            f"{len(fuzz)} fuzz, {len(invariant)} invariant"
+        )
         return result

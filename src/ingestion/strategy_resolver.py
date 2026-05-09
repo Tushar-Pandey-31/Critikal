@@ -18,31 +18,33 @@ logger = logging.getLogger(__name__)
 
 # Directories excluded from scanning — these never contain
 # user-authored contract source that should be compiled.
-_EXCLUDED_DIRS = frozenset({
-    "node_modules",
-    "lib",
-    "test",
-    "tests",
-    "scripts",
-    "script",
-    "build",
-    "coverage",
-    "dist",
-    "artifacts",
-    "out",
-    "cache",
-    ".git",
-    ".github",
-    "__pycache__",
-    "mock",
-    "mocks",
-    "migrations",
-    ".venv",
-    "venv",
-    "typechain",
-    "typechain-types",
-    "deployments",
-})
+_EXCLUDED_DIRS = frozenset(
+    {
+        "node_modules",
+        "lib",
+        "test",
+        "tests",
+        "scripts",
+        "script",
+        "build",
+        "coverage",
+        "dist",
+        "artifacts",
+        "out",
+        "cache",
+        ".git",
+        ".github",
+        "__pycache__",
+        "mock",
+        "mocks",
+        "migrations",
+        ".venv",
+        "venv",
+        "typechain",
+        "typechain-types",
+        "deployments",
+    }
+)
 
 
 class CompilationStrategyResolver:
@@ -102,10 +104,7 @@ class CompilationStrategyResolver:
         # Sort by score descending (highest priority first)
         roots.sort(key=lambda r: r.score, reverse=True)
 
-        logger.info(
-            f"StrategyResolver: found {len(roots)} contract root(s) "
-            f"in {repo_path}"
-        )
+        logger.info(f"StrategyResolver: found {len(roots)} contract root(s) in {repo_path}")
         return roots
 
     def count_all_sol_files(self, repo_path: str) -> int:

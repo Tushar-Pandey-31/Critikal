@@ -55,25 +55,29 @@ def _graph_to_d3_data(graph, findings) -> dict:
         else:
             visual_type = node_type
 
-        nodes.append({
-            "id": node_id,
-            "type": node_type,
-            "visualType": visual_type,
-            "riskScore": risk_score,
-            "proven": is_proven,
-            "label": node_id.split("::")[-1] if "::" in node_id else node_id,
-        })
+        nodes.append(
+            {
+                "id": node_id,
+                "type": node_type,
+                "visualType": visual_type,
+                "riskScore": risk_score,
+                "proven": is_proven,
+                "label": node_id.split("::")[-1] if "::" in node_id else node_id,
+            }
+        )
 
     links = []
     for src, dst, data in graph.edges(data=True):
         if src not in node_ids_in_graph or dst not in node_ids_in_graph:
             continue
         rel = data.get("relationship", "CALLS")
-        links.append({
-            "source": src,
-            "target": dst,
-            "type": rel,
-        })
+        links.append(
+            {
+                "source": src,
+                "target": dst,
+                "type": rel,
+            }
+        )
 
     return {"nodes": nodes, "links": links}
 

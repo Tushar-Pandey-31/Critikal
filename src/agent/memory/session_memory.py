@@ -17,10 +17,12 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # ── Constants ──
-MEMORY_BASE_DIR = Path(os.getenv(
-    "CRITIKAL_MEMORY_DIR",
-    os.path.expanduser("~/.critikal/memory"),
-))
+MEMORY_BASE_DIR = Path(
+    os.getenv(
+        "CRITIKAL_MEMORY_DIR",
+        os.path.expanduser("~/.critikal/memory"),
+    )
+)
 EXTRACT_EVERY_N_TURNS = int(os.getenv("MEMORY_EXTRACT_INTERVAL", "10"))
 MAX_MEMORIES_PER_QUERY = 5
 MAX_MEMORY_FILES = 200
@@ -130,10 +132,7 @@ class SessionMemory:
 
         for entry in entries:
             # Build searchable text from description + first N chars of content
-            searchable = (
-                entry.description.lower() + " " +
-                entry.content[:FRONTMATTER_MAX_CHARS].lower()
-            )
+            searchable = entry.description.lower() + " " + entry.content[:FRONTMATTER_MAX_CHARS].lower()
             entry_words = set(searchable.split())
 
             # Jaccard-ish overlap score
@@ -186,10 +185,12 @@ class SessionMemory:
         try:
             # Use a fast, cheap model for extraction
             from src.llm.providers import get_worker_llm
+
             extract_model = os.getenv("MEMORY_EXTRACT_MODEL", "gpt-5.4-mini")
             llm = get_worker_llm(model_name=extract_model, temperature=0.0)
 
             from langchain_core.messages import HumanMessage
+
             response = await llm.ainvoke([HumanMessage(content=prompt)])
 
             # Parse response as JSON array of memory entries
@@ -198,7 +199,9 @@ class SessionMemory:
 
             if entries:
                 self.store_many(entries)
-                logger.info(f"[memory] Extracted {len(entries)} memories from turns {current_turn - EXTRACT_EVERY_N_TURNS}–{current_turn}")
+                logger.info(
+                    f"[memory] Extracted {len(entries)} memories from turns {current_turn - EXTRACT_EVERY_N_TURNS}–{current_turn}"
+                )
 
         except Exception as e:
             logger.warning(f"[memory] Extraction failed (non-fatal): {e}")
@@ -211,10 +214,7 @@ class SessionMemory:
             content = msg.get("content", "")
             if isinstance(content, list):
                 # Tool results
-                content = "\n".join(
-                    r.get("content", "")[:500] for r in content
-                    if isinstance(r, dict)
-                )
+                content = "\n".join(r.get("content", "")[:500] for r in content if isinstance(r, dict))
             if isinstance(content, str) and len(content) > 1000:
                 content = content[:500] + "\n...\n" + content[-500:]
             parts.append(f"[{role}] {content}")
@@ -251,9 +251,7 @@ CONVERSATION:
 
 OUTPUT (valid JSON array only, no markdown fences):"""
 
-    def _parse_extraction_response(
-        self, text: str, current_turn: int
-    ) -> list[MemoryEntry]:
+    def _parse_extraction_response(self, text: str, current_turn: int) -> list[MemoryEntry]:
         """Parse the LLM's extraction response into MemoryEntry objects."""
         # Strip markdown code fences if present
         text = text.strip()
@@ -268,7 +266,8 @@ OUTPUT (valid JSON array only, no markdown fences):"""
         except json.JSONDecodeError:
             # Try to find a JSON array within the text
             import re
-            match = re.search(r'\[.*\]', text, re.DOTALL)
+
+            match = re.search(r"\[.*\]", text, re.DOTALL)
             if match:
                 try:
                     data = json.loads(match.group())
@@ -288,13 +287,15 @@ OUTPUT (valid JSON array only, no markdown fences):"""
             mem_type = item.get("type", "feedback")
             if mem_type not in MEMORY_TYPES:
                 mem_type = "feedback"
-            entries.append(MemoryEntry(
-                type=mem_type,
-                description=item.get("description", "")[:200],
-                content=item.get("content", "")[:2000],
-                source_turn=current_turn,
-                engagement_id=self.engagement_id,
-            ))
+            entries.append(
+                MemoryEntry(
+                    type=mem_type,
+                    description=item.get("description", "")[:200],
+                    content=item.get("content", "")[:2000],
+                    source_turn=current_turn,
+                    engagement_id=self.engagement_id,
+                )
+            )
 
         return entries
 

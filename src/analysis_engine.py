@@ -47,7 +47,10 @@ def _ensure_framework_deps(fw_dir: str) -> None:
         try:
             subprocess.run(
                 ["git", "submodule", "update", "--init", "--recursive"],
-                cwd=fw_dir, check=True, capture_output=True, timeout=30,
+                cwd=fw_dir,
+                check=True,
+                capture_output=True,
+                timeout=30,
             )
             logger.info(f"  [deps] submodules initialized in {fw_dir}")
         except subprocess.TimeoutExpired:
@@ -62,7 +65,10 @@ def _ensure_framework_deps(fw_dir: str) -> None:
         try:
             subprocess.run(
                 ["forge", "install"],
-                cwd=fw_dir, capture_output=True, text=True, timeout=120,
+                cwd=fw_dir,
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
             logger.info(f"  [deps] forge install done in {fw_dir}")
         except FileNotFoundError:
@@ -133,21 +139,16 @@ def _apply_slither_fault_tolerance_patch():
                     func.generate_slithir_and_analyze()
                 except AttributeError as e:
                     self._underlying_contract_to_parser[contract].log_incorrect_parsing(
-                        f"Impossible to generate IR for {contract.name}.{func.name} "
-                        f"({func.source_mapping}):\n {e}"
+                        f"Impossible to generate IR for {contract.name}.{func.name} ({func.source_mapping}):\n {e}"
                     )
                 except Exception as e:
-                    logger.warning(
-                        f"Skipping IR generation for {contract.name}.{func.name}: {e}"
-                    )
+                    logger.warning(f"Skipping IR generation for {contract.name}.{func.name}: {e}")
                     failed_contracts.add(contract.name)
 
             try:
                 contract.convert_expression_to_slithir_ssa()
             except Exception as e:
-                logger.warning(
-                    f"Skipping SSA conversion for {contract.name}: {type(e).__name__}"
-                )
+                logger.warning(f"Skipping SSA conversion for {contract.name}: {type(e).__name__}")
                 failed_contracts.add(contract.name)
 
         for func in self._compilation_unit.functions_top_level:
@@ -187,6 +188,7 @@ def _apply_slither_fault_tolerance_patch():
 # ════════════════════════════════════════════════════════════
 #  Analysis Engine
 # ════════════════════════════════════════════════════════════
+
 
 class AnalysisEngine:
     """
@@ -274,9 +276,7 @@ class AnalysisEngine:
                     f"  Found {len(frameworks)} framework instance(s): "
                     f"{', '.join(f'{fi.framework} @ {os.path.relpath(fi.path, repo_path)}' for fi in frameworks)}"
                 )
-            report.repo_type = (
-                report.frameworks_detected[0] if report.frameworks_detected else "raw_solidity"
-            )
+            report.repo_type = report.frameworks_detected[0] if report.frameworks_detected else "raw_solidity"
 
             # ── Step 2: Classify repo size ─────────────────────
             total_sol = self._strategy_resolver.count_all_sol_files(repo_path)
@@ -310,15 +310,14 @@ class AnalysisEngine:
                     _is_nested_lib = any(
                         fw_abs.startswith(parent + os.sep)
                         and (
-                            f"{os.sep}lib{os.sep}" in fw_abs[len(parent):]
-                            or f"{os.sep}node_modules{os.sep}" in fw_abs[len(parent):]
+                            f"{os.sep}lib{os.sep}" in fw_abs[len(parent) :]
+                            or f"{os.sep}node_modules{os.sep}" in fw_abs[len(parent) :]
                         )
                         for parent in framework_covered_dirs
                     )
                     if _is_nested_lib:
                         logger.info(
-                            f"\n─── Skipping nested lib framework: {fw_name} @ {rel} "
-                            f"(already compiled by parent) ───"
+                            f"\n─── Skipping nested lib framework: {fw_name} @ {rel} (already compiled by parent) ───"
                         )
                         continue
                     logger.info(f"\n─── Framework: {fw_name} @ {rel} ───")
@@ -364,8 +363,7 @@ class AnalysisEngine:
             for root in roots:
                 root_abs = os.path.abspath(root.path)
                 covered = any(
-                    root_abs.startswith(fw_dir + os.sep) or root_abs == fw_dir
-                    for fw_dir in framework_covered_dirs
+                    root_abs.startswith(fw_dir + os.sep) or root_abs == fw_dir for fw_dir in framework_covered_dirs
                 )
                 if not covered:
                     orphan_roots.append(root)
@@ -377,10 +375,7 @@ class AnalysisEngine:
 
                 for c in clusters:
                     report.clusters_detected += 1
-                    logger.info(
-                        f"    - {c.cluster_id}: {len(c.sol_files)} files, "
-                        f"solc={c.solc_version}"
-                    )
+                    logger.info(f"    - {c.cluster_id}: {len(c.sol_files)} files, solc={c.solc_version}")
 
                 if not clusters and not successful_slithers:
                     return self._legacy_fallback(repo_path, targets, frameworks, report)
@@ -403,11 +398,13 @@ class AnalysisEngine:
                         logger.error(f"Cluster {cluster.cluster_id} crashed: {e}")
                         traceback.print_exc()
                         report.clusters_failed += 1
-                        report.cluster_results.append(ClusterResult(
-                            cluster_id=cluster.cluster_id,
-                            success=False,
-                            error=str(e),
-                        ))
+                        report.cluster_results.append(
+                            ClusterResult(
+                                cluster_id=cluster.cluster_id,
+                                success=False,
+                                error=str(e),
+                            )
+                        )
             elif not successful_slithers:
                 # No framework compilations succeeded, no orphan roots
                 if not roots:
@@ -508,7 +505,7 @@ class AnalysisEngine:
         logger.info("  [Legacy] Falling back to direct Slither invocation...")
 
         if targets is None:
-            targets = ['.']
+            targets = ["."]
         elif isinstance(targets, str):
             targets = [targets]
 
@@ -582,8 +579,7 @@ class AnalysisEngine:
                             pass
                 else:
                     report.warnings.append(
-                        f"Repo has {len(sol_files)} .sol files, "
-                        "exceeds per-file fallback limit (50)."
+                        f"Repo has {len(sol_files)} .sol files, exceeds per-file fallback limit (50)."
                     )
 
             if combined_slither:
