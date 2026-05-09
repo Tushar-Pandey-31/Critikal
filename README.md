@@ -79,12 +79,8 @@ cp .env.example .env
 
 Edit `.env` and fill in your keys (use any editor, e.g. `nano .env`).
 
-> **Heads-up — model IDs.** The built-in defaults reference frontier models
-> (`grok-4-1-fast-reasoning`, `gpt-5.4-mini`, `gpt-5.5`, `grok-code-fast-1`)
-> that are not yet generally available on every account. If your API keys
-> don't have access to those exact IDs you'll get a 404 from the provider on
-> the first run. Override every `*_MODEL_NAME` env var in `.env` to a model
-> your account can actually call — see the **Model Routing** table below for
+> **Model Picker** now allows you to pick any model from all the available provider api keys, use /model to check it out
+> **Model Routing** table below for
 > the full list.
 
 ### 3. Run
