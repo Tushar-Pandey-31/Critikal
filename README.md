@@ -44,7 +44,7 @@ this, jump to the [Docker](#docker) section — the image bundles everything.
 
 You'll also need at least these API keys (see step 2):
 
-- `OPENAI_API_KEY` and `XAI_API_KEY` — required for the default model routing
+- `OPENAI OR GEMINI OR ANTHROPIC OR XAI` — recommended to use multiple api keys for a strong JURY decision.
 - `ETHERSCAN_API_KEY` — recommended for on-chain recon
 
 ### 1. Install
